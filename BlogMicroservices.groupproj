@@ -1,0 +1,132 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{F0B10800-0000-4000-8000-000000000000}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include=".template\ms.template.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ms.auth\ms.auth.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ms.comments\ms.comments.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ms.controller\ms.controller.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ms.gateway\ms.gateway.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ms.media\ms.media.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ms.posts\ms.posts.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ms.tags\ms.tags.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ms.users\ms.users.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="ms_template">
+        <MSBuild Projects=".template\ms.template.dproj"/>
+    </Target>
+    <Target Name="ms_template:Clean">
+        <MSBuild Projects=".template\ms.template.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_template:Make">
+        <MSBuild Projects=".template\ms.template.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_auth">
+        <MSBuild Projects="ms.auth\ms.auth.dproj"/>
+    </Target>
+    <Target Name="ms_auth:Clean">
+        <MSBuild Projects="ms.auth\ms.auth.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_auth:Make">
+        <MSBuild Projects="ms.auth\ms.auth.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_comments">
+        <MSBuild Projects="ms.comments\ms.comments.dproj"/>
+    </Target>
+    <Target Name="ms_comments:Clean">
+        <MSBuild Projects="ms.comments\ms.comments.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_comments:Make">
+        <MSBuild Projects="ms.comments\ms.comments.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_controller">
+        <MSBuild Projects="ms.controller\ms.controller.dproj"/>
+    </Target>
+    <Target Name="ms_controller:Clean">
+        <MSBuild Projects="ms.controller\ms.controller.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_controller:Make">
+        <MSBuild Projects="ms.controller\ms.controller.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_gateway">
+        <MSBuild Projects="ms.gateway\ms.gateway.dproj"/>
+    </Target>
+    <Target Name="ms_gateway:Clean">
+        <MSBuild Projects="ms.gateway\ms.gateway.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_gateway:Make">
+        <MSBuild Projects="ms.gateway\ms.gateway.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_media">
+        <MSBuild Projects="ms.media\ms.media.dproj"/>
+    </Target>
+    <Target Name="ms_media:Clean">
+        <MSBuild Projects="ms.media\ms.media.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_media:Make">
+        <MSBuild Projects="ms.media\ms.media.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_posts">
+        <MSBuild Projects="ms.posts\ms.posts.dproj"/>
+    </Target>
+    <Target Name="ms_posts:Clean">
+        <MSBuild Projects="ms.posts\ms.posts.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_posts:Make">
+        <MSBuild Projects="ms.posts\ms.posts.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_tags">
+        <MSBuild Projects="ms.tags\ms.tags.dproj"/>
+    </Target>
+    <Target Name="ms_tags:Clean">
+        <MSBuild Projects="ms.tags\ms.tags.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_tags:Make">
+        <MSBuild Projects="ms.tags\ms.tags.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_users">
+        <MSBuild Projects="ms.users\ms.users.dproj"/>
+    </Target>
+    <Target Name="ms_users:Clean">
+        <MSBuild Projects="ms.users\ms.users.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_users:Make">
+        <MSBuild Projects="ms.users\ms.users.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="ms_template;ms_auth;ms_comments;ms_controller;ms_gateway;ms_media;ms_posts;ms_tags;ms_users"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="ms_template:Clean;ms_auth:Clean;ms_comments:Clean;ms_controller:Clean;ms_gateway:Clean;ms_media:Clean;ms_posts:Clean;ms_tags:Clean;ms_users:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="ms_template:Make;ms_auth:Make;ms_comments:Make;ms_controller:Make;ms_gateway:Make;ms_media:Make;ms_posts:Make;ms_tags:Make;ms_users:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>
