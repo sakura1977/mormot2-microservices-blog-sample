@@ -1,0 +1,5 @@
+{
+  "Port": "8082",
+  "Database": "users.db",
+  "LogLevel": "debug"
+}
