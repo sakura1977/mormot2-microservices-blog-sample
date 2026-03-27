@@ -10,7 +10,7 @@ This project serves as both a working application and a learning resource for de
 
 Most microservice tutorials use Node.js, Go, or Java. But what about Delphi? With its native compilation, minimal runtime dependencies, and the powerful mORMot2 framework, Delphi is an excellent -- and underappreciated -- choice for microservices:
 
-- **Single-EXE deployment** -- no runtime, no container, no VM needed
+- **Multi-EXE deployment** -- no runtime, no container, no VM needed
 - **Tiny footprint** -- each service uses ~5 MB RAM
 - **Fast startup** -- services are ready in milliseconds
 - **SQLite embedded** -- no external database server required
@@ -61,7 +61,7 @@ For detailed diagrams (request flows, data model, routing map), see [ARCHITECTUR
 
 1. Clone the mORMot2 repository
 2. Ensure the mORMot2 `src` and `static` directories are accessible
-3. Adjust the search paths in the `.dproj` files (or the `pp32_git` environment variable) to point to your mORMot2 installation
+3. Adjust the search paths in the `.dproj` files (or the `gitroot` environment variable) to point to your mORMot2 installation
 
 ---
 
@@ -326,7 +326,8 @@ This project covers a wide range of topics relevant to modern software architect
 
 ## License
 
-This project is provided as an educational resource. Feel free to use it as a starting point for your own Delphi microservice projects.
+This project is provided as an educational resource. 
+GNU GENERAL PUBLIC LICENSE, Version 3, 29 June 2007
 
 ---
 
