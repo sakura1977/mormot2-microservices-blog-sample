@@ -1,0 +1,7 @@
+{
+  "Port": "8081",
+  "Database": "auth.db",
+  "LogLevel": "debug",
+  "JwtSecret": "blog-microservices-change-me-in-production",
+  "UsersUrl": "http://localhost:8082"
+}
