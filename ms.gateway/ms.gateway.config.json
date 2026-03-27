@@ -1,0 +1,10 @@
+{
+  "Port": "8080",
+  "LogLevel": "debug",
+  "AuthUrl": "http://localhost:8081",
+  "UsersUrl": "http://localhost:8082",
+  "PostsUrl": "http://localhost:8083",
+  "TagsUrl": "http://localhost:8084",
+  "CommentsUrl": "http://localhost:8085",
+  "MediaUrl": "http://localhost:8086"
+}
