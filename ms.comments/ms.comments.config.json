@@ -1,0 +1,5 @@
+{
+  "Port": "8085",
+  "Database": "comments.db",
+  "LogLevel": "debug"
+}
