@@ -1,6 +1,7 @@
-﻿/// <summary>
+/// <summary>
 ///   HTTP server for the Auth service.
-///   Login, registration, token validation, password change.
+///   SCRAM-MCF authentication (challenge/authenticate),
+///   registration, token validation, password change.
 /// </summary>
 unit ms.auth.server;
 
@@ -21,6 +22,7 @@ uses
   mormot.core.text,
   mormot.core.variants,
   mormot.crypt.core,
+  mormot.crypt.secure,
   mormot.db.raw.sqlite3,
   mormot.net.http,
   mormot.net.server,
@@ -32,75 +34,72 @@ uses
   ms.shared.jwt,
   ms.shared.service;
 
+const
+  /// Maximum age of a SCRAM challenge in seconds.
+  CHALLENGE_TTL_SEC = 60;
+
 type
 
   /// <summary>
-  ///   Microservice server handling authentication endpoints.
+  ///   Pending SCRAM challenge awaiting client proof.
+  /// </summary>
+  TScramChallenge = record
+    Email: RawUtf8;
+    ServerNonce: RawUtf8;
+    McfInfo: RawUtf8;
+    PersistedKey: RawUtf8;
+    UserId: TID;
+    IsReal: boolean;
+    CreatedAt: TDateTime;
+  end;
+
+  TScramChallenges = array of TScramChallenge;
+
+  /// <summary>
+  ///   Microservice server handling authentication endpoints
+  ///   using SCRAM-MCF for password verification.
   /// </summary>
   TAuthServer = class(TMicroService)
   private
     FModel: TOrmModel;
     FRest: TRestServerDB;
     FJwt: TBlogJwt;
+    FChallenges: TScramChallenges;
+    FChallengeSafe: TLightLock;
 
     /// <summary>
     ///   Finds a user record by email address.
     /// </summary>
-    /// <param name="aEmail">
-    ///   The email address to search for.
-    /// </param>
-    /// <returns>
-    ///   The matching TOrmAuthUser instance, or nil if not found.
-    ///   Caller must free the returned object.
-    /// </returns>
     function FindUserByEmail(
       const aEmail: RawUtf8
     ): TOrmAuthUser;
 
     /// <summary>
-    ///   Generates a cryptographically random salt value.
+    ///   Computes a new MCF hash and SCRAM persisted key for a password.
     /// </summary>
-    /// <returns>
-    ///   A hex-encoded random salt string.
-    /// </returns>
-    function GenerateSalt: RawUtf8;
+    procedure ComputeScramCredentials(
+      const aEmail, aPassword: RawUtf8;
+      out aMcfInfo, aPersistedKey: RawUtf8
+    );
 
     /// <summary>
-    ///   Hashes a password with the given salt using SHA-256.
+    ///   Adds a challenge entry and removes expired ones.
     /// </summary>
-    /// <param name="aPassword">
-    ///   The plaintext password to hash.
-    /// </param>
-    /// <param name="aSalt">
-    ///   The salt to prepend before hashing.
-    /// </param>
-    /// <returns>
-    ///   The hex-encoded SHA-256 hash of the salted password.
-    /// </returns>
-    function HashPassword(
-      const aPassword, aSalt: RawUtf8
-    ): RawUtf8;
+    procedure StoreChallenge(
+      const aChallenge: TScramChallenge
+    );
+
+    /// <summary>
+    ///   Finds and removes a challenge by server nonce.
+    ///   Returns True if found and not expired.
+    /// </summary>
+    function ConsumeChallenge(
+      const aServerNonce: RawUtf8;
+      out aChallenge: TScramChallenge
+    ): boolean;
   protected
-
-    /// <summary>
-    ///   Initializes the database, ORM and JWT handler.
-    /// </summary>
     procedure DoInitialize; override;
-
-    /// <summary>
-    ///   Releases the JWT handler, REST server and ORM model.
-    /// </summary>
     procedure DoFinalize; override;
-
-    /// <summary>
-    ///   Dispatches incoming HTTP requests to authentication endpoints.
-    /// </summary>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <returns>
-    ///   The HTTP status code for the response.
-    /// </returns>
     function OnRequest(
       aCtxt: THttpServerRequestAbstract
     ): cardinal; override;
@@ -139,24 +138,84 @@ begin
     FreeAndNil(Result);
 end;
 
-function TAuthServer.GenerateSalt: RawUtf8;
+procedure TAuthServer.ComputeScramCredentials(
+  const aEmail, aPassword: RawUtf8;
+  out aMcfInfo, aPersistedKey: RawUtf8
+);
 var
-  RandomData: THash128;
+  McfHash: RawUtf8;
 begin
-  RandomBytes(@RandomData, SizeOf(RandomData));
-  Result := BinToHex(@RandomData, SizeOf(RandomData));
+  McfHash := ModularCryptHash(mcfPbkdf2Sha256, aPassword);
+  ModularCryptIdentify(McfHash, @aMcfInfo);
+  aPersistedKey := ScramPersistedKey(McfHash, aEmail);
+  FillZero(RawByteString(McfHash));
 end;
 
-function TAuthServer.HashPassword(
-  const aPassword, aSalt: RawUtf8
-): RawUtf8;
+procedure TAuthServer.StoreChallenge(
+  const aChallenge: TScramChallenge
+);
 var
-  Combined: RawUtf8;
-  Digest: THash256;
+  Idx, Count: PtrInt;
+  Now: TDateTime;
 begin
-  Combined := aSalt + aPassword;
-  Digest := Sha256Digest(pointer(Combined), Length(Combined));
-  Result := Sha256DigestToString(Digest);
+  Now := NowUtc;
+  FChallengeSafe.Lock;
+  try
+    // Remove expired entries
+    Count := Length(FChallenges);
+    Idx := 0;
+    while Idx < Count do
+    begin
+      if (Now - FChallenges[Idx].CreatedAt) * SecsPerDay > CHALLENGE_TTL_SEC then
+      begin
+        Dec(Count);
+        if Idx < Count then
+          FChallenges[Idx] := FChallenges[Count];
+        SetLength(FChallenges, Count);
+      end
+      else
+        Inc(Idx);
+    end;
+    // Add new challenge
+    SetLength(FChallenges, Count + 1);
+    FChallenges[Count] := aChallenge;
+  finally
+    FChallengeSafe.UnLock;
+  end;
+end;
+
+function TAuthServer.ConsumeChallenge(
+  const aServerNonce: RawUtf8;
+  out aChallenge: TScramChallenge
+): boolean;
+var
+  Idx, Count: PtrInt;
+begin
+  Result := False;
+  FChallengeSafe.Lock;
+  try
+    Count := Length(FChallenges);
+    for Idx := 0 to Count - 1 do
+    begin
+      if FChallenges[Idx].ServerNonce = aServerNonce then
+      begin
+        if (NowUtc - FChallenges[Idx].CreatedAt) * SecsPerDay <=
+          CHALLENGE_TTL_SEC then
+        begin
+          aChallenge := FChallenges[Idx];
+          Result := True;
+        end;
+        // Remove consumed or expired entry
+        Dec(Count);
+        if Idx < Count then
+          FChallenges[Idx] := FChallenges[Count];
+        SetLength(FChallenges, Count);
+        Exit;
+      end;
+    end;
+  finally
+    FChallengeSafe.UnLock;
+  end;
 end;
 
 function TAuthServer.OnRequest(
@@ -169,49 +228,112 @@ var
   Token: RawUtf8;
   UserId: TID;
   NewId: TID;
-  Salt, Hash: RawUtf8;
+  McfInfo, PersistedKey: RawUtf8;
+  Challenge: TScramChallenge;
+  ServerProof: RawUtf8;
+  RandomData: THash128;
 begin
   Path := aCtxt.Url;
 
-  // POST /api/auth/login
-  if (aCtxt.Method = 'POST') and (Path = '/api/auth/login') then
+  // POST /api/auth/challenge
+  // Phase 1 of SCRAM-MCF: return MCF info and server nonce
+  if (aCtxt.Method = 'POST') and (Path = '/api/auth/challenge') then
   begin
     Doc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    User := FindUserByEmail(Doc.U['Email']);
-    try
-      if User = nil then
-      begin
-        aCtxt.OutContent := '{"error":"invalid credentials"}';
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_FORBIDDEN;
-        Exit;
+    Finalize(Challenge);
+    FillCharFast(Challenge, SizeOf(Challenge), 0);
+    Challenge.Email := Doc.U['Email'];
+    // Generate server nonce
+    RandomBytes(@RandomData, SizeOf(RandomData));
+    Challenge.ServerNonce := BinToBase64uri(@RandomData, SizeOf(RandomData));
+    Challenge.CreatedAt := NowUtc;
+    // Look up user
+    User := FindUserByEmail(Challenge.Email);
+    if (User <> nil) and User.IsActive then
+    begin
+      try
+        Challenge.McfInfo := User.McfInfo;
+        Challenge.PersistedKey := User.PersistedKey;
+        Challenge.UserId := User.UserId;
+        Challenge.IsReal := True;
+      finally
+        User.Free;
       end;
-      if not User.IsActive then
-      begin
-        aCtxt.OutContent := '{"error":"account disabled"}';
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_FORBIDDEN;
-        Exit;
-      end;
-      Hash := HashPassword(Doc.U['Password'], User.Salt);
-      if Hash <> User.PasswordHash then
-      begin
-        aCtxt.OutContent := '{"error":"invalid credentials"}';
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_FORBIDDEN;
-        Exit;
-      end;
-      // Login successful
-      Token := FJwt.CreateToken(User.UserId);
-      User.LastLogin := NowUtc;
-      FRest.Orm.Update(User, 'LastLogin');
-      aCtxt.OutContent := FormatUtf8(
-        '{"token":"%","userId":%}', [Token, User.UserId]);
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
-      Result := HTTP_SUCCESS;
-    finally
+    end
+    else
+    begin
       User.Free;
+      // Anti-enumeration: return fake MCF info
+      Challenge.McfInfo := ModularCryptFakeInfo(
+        Challenge.Email, mcfPbkdf2Sha256);
+      Challenge.IsReal := False;
     end;
+    StoreChallenge(Challenge);
+    aCtxt.OutContent := JsonEncode([
+      'McfInfo', Challenge.McfInfo,
+      'ServerNonce', Challenge.ServerNonce]);
+    aCtxt.OutContentType := JSON_CONTENT_TYPE;
+    Result := HTTP_SUCCESS;
+  end
+
+  // POST /api/auth/authenticate
+  // Phase 2 of SCRAM-MCF: verify client proof, return JWT + server proof
+  else if (aCtxt.Method = 'POST') and
+    (Path = '/api/auth/authenticate') then
+  begin
+    Doc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
+    if not ConsumeChallenge(Doc.U['ServerNonce'], Challenge) then
+    begin
+      aCtxt.OutContent := '{"error":"invalid or expired challenge"}';
+      aCtxt.OutContentType := JSON_CONTENT_TYPE;
+      Result := HTTP_FORBIDDEN;
+      Exit;
+    end;
+    if Challenge.Email <> Doc.U['Email'] then
+    begin
+      aCtxt.OutContent := '{"error":"invalid credentials"}';
+      aCtxt.OutContentType := JSON_CONTENT_TYPE;
+      Result := HTTP_FORBIDDEN;
+      Exit;
+    end;
+    if not Challenge.IsReal then
+    begin
+      aCtxt.OutContent := '{"error":"invalid credentials"}';
+      aCtxt.OutContentType := JSON_CONTENT_TYPE;
+      Result := HTTP_FORBIDDEN;
+      Exit;
+    end;
+    // Verify client proof using SCRAM
+    ServerProof := ScramServerProof(
+      Challenge.PersistedKey,
+      Doc.U['ClientProof'],
+      [Challenge.Email, Challenge.ServerNonce]);
+    if ServerProof = '' then
+    begin
+      aCtxt.OutContent := '{"error":"invalid credentials"}';
+      aCtxt.OutContentType := JSON_CONTENT_TYPE;
+      Result := HTTP_FORBIDDEN;
+      Exit;
+    end;
+    // Authentication successful
+    Token := FJwt.CreateToken(Challenge.UserId);
+    // Update last login
+    User := FindUserByEmail(Challenge.Email);
+    if User <> nil then
+    begin
+      try
+        User.LastLogin := NowUtc;
+        FRest.Orm.Update(User, 'LastLogin');
+      finally
+        User.Free;
+      end;
+    end;
+    aCtxt.OutContent := JsonEncode([
+      'token', Token,
+      'userId', Challenge.UserId,
+      'ServerProof', ServerProof]);
+    aCtxt.OutContentType := JSON_CONTENT_TYPE;
+    Result := HTTP_SUCCESS;
   end
 
   // POST /api/auth/register
@@ -231,9 +353,10 @@ begin
     User := TOrmAuthUser.Create;
     try
       User.Email := Doc.U['Email'];
-      Salt := GenerateSalt;
-      User.Salt := Salt;
-      User.PasswordHash := HashPassword(Doc.U['Password'], Salt);
+      ComputeScramCredentials(
+        User.Email, Doc.U['Password'], McfInfo, PersistedKey);
+      User.McfInfo := McfInfo;
+      User.PersistedKey := PersistedKey;
       User.UserId := Doc.I['UserId'];
       User.IsActive := True;
       User.CreatedAt := NowUtc;
@@ -289,9 +412,12 @@ begin
         Result := HTTP_NOTFOUND;
         Exit;
       end;
-      // Verify old password
-      Hash := HashPassword(Doc.U['OldPassword'], User.Salt);
-      if Hash <> User.PasswordHash then
+      // Verify old password: re-derive MCF hash from stored format
+      // info and compare the resulting persisted key
+      McfInfo := ModularCryptHash(User.McfInfo, Doc.U['OldPassword']);
+      PersistedKey := ScramPersistedKey(McfInfo, User.Email);
+      FillZero(RawByteString(McfInfo));
+      if PersistedKey <> User.PersistedKey then
       begin
         aCtxt.OutContent := '{"error":"wrong password"}';
         aCtxt.OutContentType := JSON_CONTENT_TYPE;
@@ -299,10 +425,11 @@ begin
         Exit;
       end;
       // Set new password
-      Salt := GenerateSalt;
-      User.Salt := Salt;
-      User.PasswordHash := HashPassword(Doc.U['NewPassword'], Salt);
-      FRest.Orm.Update(User, 'Salt,PasswordHash');
+      ComputeScramCredentials(
+        User.Email, Doc.U['NewPassword'], McfInfo, PersistedKey);
+      User.McfInfo := McfInfo;
+      User.PersistedKey := PersistedKey;
+      FRest.Orm.Update(User, 'McfInfo,PersistedKey');
       aCtxt.OutContent := '{"success":true}';
       aCtxt.OutContentType := JSON_CONTENT_TYPE;
       Result := HTTP_SUCCESS;

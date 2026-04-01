@@ -23,8 +23,8 @@ type
   TOrmAuthUser = class(TOrm)
   private
     FEmail: RawUtf8;
-    FPasswordHash: RawUtf8;
-    FSalt: RawUtf8;
+    FMcfInfo: RawUtf8;
+    FPersistedKey: RawUtf8;
     FUserId: TID;
     FIsActive: boolean;
     FCreatedAt: TDateTime;
@@ -38,16 +38,18 @@ type
       read FEmail write FEmail stored AS_UNIQUE;
 
     /// <summary>
-    ///   Hashed password for secure credential storage.
+    ///   MCF format string without checksum, sent to the client
+    ///   during SCRAM challenge (e.g. '$pbkdf2-sha256$310000$salt$').
     /// </summary>
-    property PasswordHash: RawUtf8 index 200
-      read FPasswordHash write FPasswordHash;
+    property McfInfo: RawUtf8 index 200
+      read FMcfInfo write FMcfInfo;
 
     /// <summary>
-    ///   Cryptographic salt used for password hashing.
+    ///   SCRAM persisted key derived from MCF hash and email.
+    ///   Contains StoredKey and ServerKey for proof verification.
     /// </summary>
-    property Salt: RawUtf8 index 100
-      read FSalt write FSalt;
+    property PersistedKey: RawUtf8 index 200
+      read FPersistedKey write FPersistedKey;
 
     /// <summary>
     ///   Foreign key referencing the associated user profile.

@@ -236,15 +236,24 @@ function hideLogin() { $('#login-modal').classList.add('hidden'); $('#login-erro
 
 async function doLogin(e) {
   e.preventDefault();
-  const r = await API.login($('#login-email').value, $('#login-password').value);
-  if (r.ok) {
-    hideLogin();
-    updateAuthNav();
-    loadDashboard();
-  } else {
-    const err = $('#login-error');
-    err.textContent = r.data?.error || 'Login failed.';
-    err.classList.remove('hidden');
+  const btn = e.target.querySelector('button[type="submit"]');
+  const origText = btn.textContent;
+  btn.textContent = 'Signing in\u2026';
+  btn.disabled = true;
+  try {
+    const r = await API.login($('#login-email').value, $('#login-password').value);
+    if (r.ok) {
+      hideLogin();
+      updateAuthNav();
+      loadDashboard();
+    } else {
+      const err = $('#login-error');
+      err.textContent = r.data?.error || 'Login failed.';
+      err.classList.remove('hidden');
+    }
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
   }
 }
 
