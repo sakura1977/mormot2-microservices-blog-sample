@@ -156,7 +156,7 @@
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
-                <DeployFile LocalName="Win32\Debug\ms.gateway.exe" Configuration="Debug" Class="ProjectOutput">
+                <DeployFile LocalName="..\..\_out\Win32-Debug\APP\ms.gateway.exe" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Win32">
                         <RemoteName>ms.gateway.exe</RemoteName>
                         <Overwrite>true</Overwrite>
