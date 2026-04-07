@@ -1,6 +1,6 @@
 # Blog Microservices with Delphi and mORMot2
 
-A fully functional blog platform built as a microservice architecture using **Delphi 13** and the **mORMot2** framework. Each feature -- authentication, posts, tags, comments, media -- runs as an independent console application with its own SQLite database, communicating exclusively via REST/JSON.
+A fully functional blog platform built as a microservice architecture using **Delphi 13** and the **mORMot2** framework. Each feature -- authentication, posts, tags, comments, media -- runs as an independent console application with its own SQLite database, communicating via mORMot2 SOA (interface-based services).
 
 This project serves as both a working application and a learning resource for developers interested in building microservices with native Delphi.
 
@@ -14,7 +14,7 @@ Most microservice tutorials use Node.js, Go, or Java. But what about Delphi? Wit
 - **Tiny footprint** -- each service uses ~5 MB RAM
 - **Fast startup** -- services are ready in milliseconds
 - **SQLite embedded** -- no external database server required
-- **mORMot2 ORM** -- type-safe database access with automatic table creation
+- **mORMot2 SOA** -- interface-based services with automatic JSON serialization
 
 The blog platform demonstrates how to decompose a monolithic application into independent services that can be developed, deployed, and scaled separately.
 
@@ -34,18 +34,17 @@ The blog platform demonstrates how to decompose a monolithic application into in
                    .db   .db  .db    .db      .db
 ```
 
-Eight independent services, each a standalone console application:
+Seven independent services, each a standalone console application:
 
-| Service | Port | Responsibility |
-|---------|------|----------------|
-| **ms.gateway** | 8080 | API routing, JWT validation, response aggregation, SPA frontend |
-| **ms.auth** | 8081 | Login, registration, JWT token management |
-| **ms.users** | 8082 | Author profiles |
-| **ms.posts** | 8083 | Blog post CRUD with pagination and filtering |
-| **ms.tags** | 8084 | Tag management and post-tag associations (m:n) |
-| **ms.comments** | 8085 | Comments with moderation workflow |
-| **ms.media** | 8086 | File uploads with Base64 encoding |
-| **ms.controller** | 8090 | Service orchestrator with health monitoring |
+| Service | Port | SOA Interface | Responsibility |
+|---------|------|---------------|----------------|
+| **ms.gateway** | 8080 | IBlog + Proxies | API routing, response aggregation, SPA frontend |
+| **ms.auth** | 8081 | IAuth | SCRAM-MCF authentication, JWT token management |
+| **ms.users** | 8082 | IUser | Author profiles |
+| **ms.posts** | 8083 | IPost | Blog post CRUD with pagination and filtering |
+| **ms.tags** | 8084 | ITag | Tag management and post-tag associations (m:n) |
+| **ms.comments** | 8085 | IComment | Comments with moderation workflow |
+| **ms.media** | 8086 | IMedia | File uploads with Base64 encoding |
 
 For detailed diagrams (request flows, data model, routing map), see [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -69,27 +68,15 @@ For detailed diagrams (request flows, data model, routing map), see [ARCHITECTUR
 
 ### 1. Compile
 
-Open `BlogMicroservices.groupproj` in the Delphi IDE and build all projects (Ctrl+Shift+F9). This compiles all 8 services into the configured output directory.
-
-Alternatively, compile each `.dproj` individually.
+Open `BlogMicroservices.groupproj` in the Delphi IDE and build all projects (Ctrl+Shift+F9). This compiles all services into the configured output directory.
 
 ### 2. Start the Services
-
-**Option A -- Using the Controller (recommended):**
-
-```
-ms.controller.exe
-```
-
-The controller starts all 7 services in the correct dependency order, monitors their health every 10 seconds, and auto-restarts crashed services (up to 3 times). Press Enter or POST to `/api/shutdown` to stop everything gracefully.
-
-**Option B -- Using the script:**
 
 ```
 start-all.cmd
 ```
 
-This starts each service in a minimized console window. Use `stop-all.cmd` to shut them down.
+This starts each service in a minimized console window. Use `stop-all.cmd` to shut them down gracefully via `POST /api/shutdown`.
 
 ### 3. Populate Demo Data
 
@@ -97,7 +84,7 @@ This starts each service in a minimized console window. Use `stop-all.cmd` to sh
 seed-data.cmd
 ```
 
-Creates a demo author (Max Mustermann), 4 tags, and 3 sample blog posts with tag assignments. Login credentials: `max@example.com` / `demo1234`.
+Creates a demo author (Max), 4 tags, and 3 sample blog posts with tag assignments. Login credentials: `max@example.com` / `demo1234`.
 
 ### 4. Open the Blog
 
@@ -109,11 +96,44 @@ Navigate to [http://localhost:8080](http://localhost:8080) in your browser.
 status.cmd
 ```
 
-Or query the controller API:
+Queries `GET /api/health` on each service and reports the HTTP status.
+
+---
+
+## API Style: mORMot2 SOA
+
+This project uses **interface-based services** (SOA), not classical REST endpoints.
+
+- **URL format**: `POST /api/{InterfaceName}/{MethodName}`
+- **Request body**: JSON array of positional parameters `[param1, param2, ...]`
+- **Response**: JSON object with named output parameters
+
+### Example: Create a tag
 
 ```
-curl http://localhost:8090/api/status
+POST /api/Tag/Add
+Body: [{"Name":"Delphi","Description":"Everything about Delphi"}]
+Response: {"Result":1}
 ```
+
+### Example: Get paginated posts
+
+```
+POST /api/Post/GetList
+Body: [1, 10, 1, 0]    // page, limit, status, authorId
+Response: {"Result":{"items":[...],"total":3,"page":1}}
+```
+
+### Authentication: SCRAM-MCF
+
+Login uses the SCRAM protocol (RFC 5802) with MCF format:
+
+1. `IAuth.Challenge(email)` -- server returns MCF info (salt, rounds) + nonce
+2. Browser computes PBKDF2 locally, derives SCRAM client proof
+3. `IAuth.Authenticate(email, nonce, proof)` -- server verifies, returns JWT + server proof
+4. Browser verifies server proof (mutual authentication)
+
+All subsequent requests include the JWT in the `Authorization: Bearer` header.
 
 ---
 
@@ -124,40 +144,40 @@ mormot2-microservices/
 |
 |-- shared/                      Shared units (used by all services)
 |   |-- ms.shared.pas              Constants, config loading, slug generation
-|   |-- ms.shared.service.pas      Base service class (HTTP server, health, shutdown)
+|   |-- ms.shared.api.pas          SOA interface definitions (IAuth, IUser, ...)
 |   |-- ms.shared.jwt.pas          JWT token creation and validation
-|   |-- ms.shared.client.pas       HTTP client for inter-service communication
-|   +-- ms.shared.dto.pas          Data transfer objects
+|   +-- ms.shared.service.pas      Base service class (HTTP server, health, shutdown)
 |
 |-- ms.auth/                     Authentication service
 |   |-- ms.auth.dpr                Entry point
-|   |-- ms.auth.model.pas          TOrmAuthUser (email, password hash, salt)
-|   +-- ms.auth.server.pas         Login, register, validate, change-password
+|   |-- ms.auth.model.pas          TOrmAuthUser (email, MCF hash)
+|   +-- ms.auth.server.pas         SCRAM-MCF auth, register, validate
 |
 |-- ms.users/                    User/author profiles
+|   +-- ms.users.model.pas         TOrmAuthor
 |-- ms.posts/                    Blog posts with pagination
+|   +-- ms.posts.model.pas         TOrmBlogPost
 |-- ms.tags/                     Tags and post-tag associations
+|   +-- ms.tags.model.pas          TOrmBlogTag, TOrmPostTag
 |-- ms.comments/                 Comments with moderation
+|   +-- ms.comments.model.pas      TOrmBlogComment
 |-- ms.media/                    File upload and storage
+|   +-- ms.media.model.pas         TOrmMediaFile
 |
 |-- ms.gateway/                  API Gateway
 |   |-- ms.gateway.dpr
-|   |-- ms.gateway.server.pas      Routing, proxying, JWT validation, aggregation
+|   |-- ms.gateway.server.pas      Proxy classes, IBlog aggregation, static files
 |   +-- www/                       Frontend SPA
-|       |-- index.html               Single-page application shell
-|       |-- css/style.css            Styling
+|       |-- index.html
 |       +-- js/
-|           |-- api.js               API client library
+|           |-- api.js               SOA client + SCRAM-MCF crypto (Web Crypto API)
 |           +-- app.js               UI logic and routing
 |
-|-- ms.controller/               Service orchestrator
-|   +-- ms.controller.orchestrator.pas  Process management, health checks
-|
-|-- BlogMicroservices.groupproj  Delphi project group (all 8 projects)
-|-- start-all.cmd                Start all services via script
-|-- stop-all.cmd                 Stop all services via script
+|-- BlogMicroservices.groupproj  Delphi project group
+|-- start-all.cmd                Start all services
+|-- stop-all.cmd                 Stop all services (POST /api/shutdown)
 |-- seed-data.cmd                Create demo data
-|-- status.cmd                   Check service health
+|-- status.cmd                   Check service health (GET /api/health)
 +-- ARCHITECTURE.md              Detailed architecture diagrams
 ```
 
@@ -167,23 +187,23 @@ mormot2-microservices/
 
 ### API Gateway with Response Aggregation
 
-The gateway doesn't just proxy requests. When you fetch a single blog post, it **aggregates** data from multiple services into one response:
+The gateway doesn't just proxy requests. The `IBlog.GetPostFull` method **aggregates** data from multiple services into one response:
 
 ```
-GET /api/posts/1  -->  Gateway queries:
-                         1. Posts service   -> post data
-                         2. Users service   -> author profile
-                         3. Tags service    -> assigned tags
-                         4. Comments service -> approved comments
-                       Returns unified JSON with all data
+POST /api/Blog/GetPostFull [42]  -->  Gateway queries:
+                                        1. IPost.Get(42)      -> post data
+                                        2. IUser.Get(authorId) -> author profile
+                                        3. ITag.GetByPost(42)  -> assigned tags
+                                        4. IComment.GetByPost(42) -> comments
+                                      Returns unified JSON with all data
 ```
 
-### JWT Authentication
+### SCRAM-MCF Authentication
 
-- Passwords hashed with SHA-256 + random salt
+- Passwords hashed with PBKDF2-SHA256 in MCF format
+- SCRAM protocol with mutual authentication (client and server verify each other)
+- PBKDF2 key derivation runs in the browser (Web Crypto API) -- password never sent to server
 - JWT tokens (HMAC-SHA256) with 24-hour expiration
-- Gateway validates tokens by calling the auth service
-- Public endpoints (reading posts, submitting comments) require no authentication
 
 ### Comment Moderation Workflow
 
@@ -194,20 +214,16 @@ GET /api/posts/1  -->  Gateway queries:
 
 ### Tag System
 
-- Tags are managed as a separate service
-- Many-to-many relationships via a PostTag junction table
-- Tags can be assigned via checkboxes in the post editor
-- New tags can be created inline
+- Tags are managed as a separate service with m:n relationships
+- `TOrmPostTag` junction table links posts to tags
+- Tags can be assigned via `ITag.SetPostTags`
 
-### Service Orchestrator
+### Management Endpoints
 
-The controller (`ms.controller`) manages the complete service lifecycle:
+Every service automatically provides (via `TMicroService` base class):
 
-- Starts services in dependency order
-- Health checks every 10 seconds via `/api/health`
-- Automatic restart on crash (max 3 attempts)
-- Graceful shutdown via `/api/shutdown` POST, then force-kill if needed
-- REST API for remote management
+- `GET /api/health` -- JSON health check (service name, port, version, uptime)
+- `POST /api/shutdown` -- graceful shutdown
 
 ---
 
@@ -221,112 +237,59 @@ Example (`ms.gateway.config.json`):
 {
   "Port": "8080",
   "LogLevel": "debug",
-  "AuthUrl": "http://localhost:8081",
-  "UsersUrl": "http://localhost:8082",
-  "PostsUrl": "http://localhost:8083",
-  "TagsUrl": "http://localhost:8084",
-  "CommentsUrl": "http://localhost:8085",
-  "MediaUrl": "http://localhost:8086"
+  "JwtSecret": "my-secret-key"
 }
 ```
-
-Configurable options:
 
 | Field | Description | Default |
 |-------|-------------|---------|
 | `Port` | HTTP listening port | Service-specific |
-| `Database` | SQLite database filename | `data.db` |
-| `LogLevel` | `trace`, `debug`, `info`, `warn`, `error` | `debug` |
+| `LogLevel` | `trace`, `debug`, `info`, `error` | `debug` |
 | `JwtSecret` | HMAC key for JWT signing | Built-in default |
-| `{Service}Url` | Backend service URLs (gateway only) | `http://localhost:{port}` |
-
----
-
-## API Quick Reference
-
-### Public Endpoints
-
-```
-GET  /api/posts?page=1&limit=10&status=1   List published posts
-GET  /api/posts/{id}                        Single post (aggregated)
-GET  /api/posts/by-slug/{slug}              Post by URL slug
-GET  /api/posts/by-author/{id}              Posts by author
-GET  /api/tags                              All tags
-GET  /api/tags/{id}/posts                   Posts for a tag
-GET  /api/posts/{id}/comments               Approved comments
-POST /api/posts/{id}/comments               Submit a comment (no login)
-POST /api/auth/login                        Get JWT token
-POST /api/auth/register                     Create account
-```
-
-### Authenticated Endpoints (Bearer token required)
-
-```
-POST   /api/posts                           Create post
-PUT    /api/posts/{id}                      Update post
-DELETE /api/posts/{id}                      Delete post
-PUT    /api/posts/{id}/tags                 Set post tags
-POST   /api/tags                            Create tag
-GET    /api/comments/pending                Pending comments
-PUT    /api/comments/{id}/approve           Approve comment
-PUT    /api/comments/{id}/reject            Reject comment
-POST   /api/media/upload                    Upload file
-PUT    /api/auth/change-password            Change password
-```
 
 ---
 
 ## What You Can Learn
-
-This project covers a wide range of topics relevant to modern software architecture, all implemented in Delphi:
 
 ### Microservice Patterns
 
 - **Service decomposition** -- splitting a monolith into focused services
 - **API Gateway** -- central entry point with routing, authentication, and response aggregation
 - **Database per service** -- each service owns its data, no shared databases
-- **Inter-service communication** -- synchronous REST/JSON calls between services
-- **Service orchestration** -- automated startup, health monitoring, and restart
+- **Inter-service communication** -- SOA interface calls between services
 
 ### mORMot2 Framework
 
-- **THttpAsyncServer** -- high-performance async HTTP server with IOCP
+- **Interface-based services (SOA)** -- `TServiceFactoryServer`, `TServiceFactoryClient`
 - **TRestServerDB + SQLite** -- ORM with automatic table creation and CRUD
 - **TDocVariantData** -- flexible JSON parsing and manipulation
-- **JWT authentication** -- token creation and validation with TJwtHS256
-- **FormatUtf8, IdemPChar, PosExChar** -- efficient string handling utilities
-- **TSynBackgroundTimer** -- background thread for periodic tasks
+- **TRestHttpClient** -- HTTP client for service-to-service communication
+- **THttpAsyncServer** -- high-performance async HTTP server with IOCP
+- **JWT authentication** -- token creation and validation with `TJwtHS256`
+- **SCRAM-MCF** -- password hashing with `mormot.crypt.core`
 
 ### Web Development
 
-- **REST API design** -- resource-oriented endpoints with proper HTTP methods and status codes
-- **JWT auth flow** -- token issuance, validation, and bearer header handling
+- **SOA API design** -- interface-based services with automatic JSON serialization
+- **SCRAM authentication** -- secure password protocol with mutual verification
 - **CORS handling** -- cross-origin headers for API access
 - **SPA architecture** -- single-page application with vanilla JavaScript
-- **Response aggregation** -- combining data from multiple services into one response
+- **Web Crypto API** -- PBKDF2 key derivation in the browser
 
 ### Delphi Techniques
 
 - **Console applications** as lightweight services
-- **Process management** with `CreateProcessW`, `TerminateProcess`, `WaitForSingleObject`
+- **Interface-based programming** with `TInterfacedObject`
 - **Configuration via JSON** with `RecordLoadJson`
-- **URL routing** with `IdemPChar` and path parsing
+- **Method-based services** for health checks and shutdown endpoints
 - **Slug generation** with umlaut replacement and normalization
 - **Graceful shutdown** via HTTP endpoint and console key detection
-
-### DevOps Concepts
-
-- **Health check endpoints** (`/api/health`) for monitoring
-- **Graceful shutdown** (`/api/shutdown`) for zero-downtime deployments
-- **Configuration externalization** via JSON config files
-- **Logging** with configurable levels and file rotation
-- **Seed scripts** for reproducible demo environments
 
 ---
 
 ## License
 
-This project is provided as an educational resource. 
+This project is provided as an educational resource.
 GNU GENERAL PUBLIC LICENSE, Version 3, 29 June 2007
 
 ---
