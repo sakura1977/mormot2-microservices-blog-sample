@@ -113,33 +113,13 @@ begin
 end;
 
 function TTagService.Get(aId: TID): RawJson;
-var
-  Tag: TOrmBlogTag;
 begin
-  Tag := TOrmBlogTag.Create;
-  try
-    if FOrm.Retrieve(aId, Tag) then
-      Result := Tag.GetJsonValues(True, True, ooSelect)
-    else
-      Result := '{}';
-  finally
-    Tag.Free;
-  end;
+  Result := OrmGetById(FOrm, TOrmBlogTag, aId);
 end;
 
 function TTagService.GetAll: RawJson;
-var
-  Table: TOrmTable;
 begin
-  Table := FOrm.MultiFieldValues(TOrmBlogTag, '*', '');
-  try
-    if Table = nil then
-      Result := '[]'
-    else
-      Result := Table.GetJsonValues(True);
-  finally
-    Table.Free;
-  end;
+  Result := OrmGetAll(FOrm, TOrmBlogTag);
 end;
 
 function TTagService.GetByPost(aPostId: TID): RawJson;
@@ -275,14 +255,9 @@ begin
 end;
 
 procedure TTagsServer.SetupServices;
-var
-  Factory: TServiceFactoryServerAbstract;
 begin
-  FTagImpl := TTagService.Create(RestServer.Orm);
-  Factory := RestServer.ServiceRegister(FTagImpl, [TypeInfo(ITag)]) as
-    TServiceFactoryServer;
-  Factory.ByPassAuthentication := True;
-  Factory.ResultAsJsonObjectWithoutResult := True;
+  FTagImpl := TTagService.Create(FRestServer.Orm);
+  RegisterService(FTagImpl, TypeInfo(ITag));
 end;
 
 end.

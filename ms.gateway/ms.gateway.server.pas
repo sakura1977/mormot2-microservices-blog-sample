@@ -186,7 +186,6 @@ type
       const aInterfaces: array of PRttiInfo): TRestHttpClient;
     function ServeStaticFile(const aFilePath: TFileName;
       aCtxt: THttpServerRequestAbstract): cardinal;
-    function GuessMimeType(const aFileName: TFileName): RawUtf8;
     function HandleRequest(aCtxt: THttpServerRequestAbstract): cardinal;
     function HandleStaticFile(aCtxt: THttpServerRequestAbstract): cardinal;
   protected
@@ -502,18 +501,6 @@ begin
 end;
 
 procedure TGatewayServer.SetupServices;
-var
-  Factory: TServiceFactoryServerAbstract;
-
-  procedure RegisterProxy(aImpl: TInterfacedObject;
-    aInterface: PRttiInfo);
-  begin
-    Factory := FRestServer.ServiceRegister(
-      aImpl, [aInterface]) ;
-    Factory.ByPassAuthentication := True;
-    Factory.ResultAsJsonObjectWithoutResult := True;
-  end;
-
 begin
   FWwwPath := Executable.ProgramFilePath + 'www' + PathDelim;
   if not DirectoryExists(FWwwPath) then
@@ -538,14 +525,14 @@ begin
     [TypeInfo(IMedia)]);
   FMediaClient.Services.Resolve(IMedia, FMedia);
   // Register proxy services on our REST server
-  RegisterProxy(TAuthProxy.Create(FAuth), TypeInfo(IAuth));
-  RegisterProxy(TUserProxy.Create(FUsers), TypeInfo(IUser));
-  RegisterProxy(TPostProxy.Create(FPosts), TypeInfo(IPost));
-  RegisterProxy(TTagProxy.Create(FTags), TypeInfo(ITag));
-  RegisterProxy(TCommentProxy.Create(FComments), TypeInfo(IComment));
-  RegisterProxy(TMediaProxy.Create(FMedia), TypeInfo(IMedia));
+  RegisterService(TAuthProxy.Create(FAuth), TypeInfo(IAuth));
+  RegisterService(TUserProxy.Create(FUsers), TypeInfo(IUser));
+  RegisterService(TPostProxy.Create(FPosts), TypeInfo(IPost));
+  RegisterService(TTagProxy.Create(FTags), TypeInfo(ITag));
+  RegisterService(TCommentProxy.Create(FComments), TypeInfo(IComment));
+  RegisterService(TMediaProxy.Create(FMedia), TypeInfo(IMedia));
   // Register aggregation service
-  RegisterProxy(
+  RegisterService(
     TBlogService.Create(FPosts, FUsers, FTags, FComments),
     TypeInfo(IBlog));
 end;
@@ -624,27 +611,6 @@ begin
   // SPA fallback: unmatched routes serve index.html
   if Result = HTTP_NOTFOUND then
     Result := ServeStaticFile(FWwwPath + 'index.html', aCtxt);
-end;
-
-function TGatewayServer.GuessMimeType(
-  const aFileName: TFileName): RawUtf8;
-var
-  Ext: string;
-begin
-  Ext := SysUtils.LowerCase(ExtractFileExt(aFileName));
-  if Ext = '.html' then Result := 'text/html; charset=utf-8'
-  else if Ext = '.css' then Result := 'text/css; charset=utf-8'
-  else if Ext = '.js' then Result := 'application/javascript; charset=utf-8'
-  else if Ext = '.json' then Result := JSON_CONTENT_TYPE
-  else if Ext = '.png' then Result := 'image/png'
-  else if Ext = '.jpg' then Result := 'image/jpeg'
-  else if Ext = '.jpeg' then Result := 'image/jpeg'
-  else if Ext = '.gif' then Result := 'image/gif'
-  else if Ext = '.svg' then Result := 'image/svg+xml'
-  else if Ext = '.ico' then Result := 'image/x-icon'
-  else if Ext = '.woff2' then Result := 'font/woff2'
-  else if Ext = '.woff' then Result := 'font/woff'
-  else Result := 'application/octet-stream';
 end;
 
 function TGatewayServer.ServeStaticFile(

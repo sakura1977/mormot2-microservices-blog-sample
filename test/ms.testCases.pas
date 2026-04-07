@@ -462,7 +462,7 @@ begin
     '{"Title":"To Delete","Body":"Gone soon","AuthorId":1,"Status":0}');
   Check(Id > 0);
   Check(Context.Post.Remove(Id));
-  CheckEqual(Context.Post.Get(Id), '');
+  CheckEqual(Context.Post.Get(Id), '{}');
 end;
 
 { TTestTagService }

@@ -101,6 +101,9 @@ function LoadServiceConfig(
 /// </returns>
 function TextToSlug(const aText: RawUtf8): RawUtf8;
 
+/// Guesses the MIME type based on a file name extension.
+function GuessMimeType(const aFileName: TFileName): RawUtf8;
+
 implementation
 
 const
@@ -173,6 +176,26 @@ begin
   // Remove trailing hyphens
   while (Result <> '') and (Result[Length(Result)] = '-') do
     Delete(Result, Length(Result), 1);
+end;
+
+function GuessMimeType(const aFileName: TFileName): RawUtf8;
+var
+  Ext: string;
+begin
+  Ext := System.SysUtils.LowerCase(ExtractFileExt(aFileName));
+  if Ext = '.html' then Result := 'text/html; charset=utf-8'
+  else if Ext = '.css' then Result := 'text/css; charset=utf-8'
+  else if Ext = '.js' then Result := 'application/javascript; charset=utf-8'
+  else if Ext = '.json' then Result := JSON_CONTENT_TYPE
+  else if (Ext = '.jpg') or (Ext = '.jpeg') then Result := 'image/jpeg'
+  else if Ext = '.png' then Result := 'image/png'
+  else if Ext = '.gif' then Result := 'image/gif'
+  else if Ext = '.webp' then Result := 'image/webp'
+  else if Ext = '.svg' then Result := 'image/svg+xml'
+  else if Ext = '.ico' then Result := 'image/x-icon'
+  else if Ext = '.woff2' then Result := 'font/woff2'
+  else if Ext = '.woff' then Result := 'font/woff'
+  else Result := 'application/octet-stream';
 end;
 
 end.

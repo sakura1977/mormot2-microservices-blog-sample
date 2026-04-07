@@ -60,6 +60,10 @@ type
     procedure DoInitialize; virtual;
     /// Called before shutdown for cleanup.
     procedure DoFinalize; virtual;
+    /// Registers a SOA service with standard settings
+    /// (ByPassAuthentication, ResultAsJsonObjectWithoutResult).
+    function RegisterService(aImpl: TInterfacedObject;
+      aInterface: PRttiInfo): TServiceFactoryServerAbstract;
   public
     constructor Create(const aServiceName, aDefaultPort: RawUtf8);
     destructor Destroy; override;
@@ -75,6 +79,14 @@ const
   SERVICE_VERSION = '0.2.0';
   /// Model root for all services -- keeps URLs as /api/ServiceName/Method
   MODEL_ROOT = 'api';
+
+/// Retrieves a single ORM record as JSON, or '{}' if not found.
+function OrmGetById(const aOrm: IRestOrm;
+  aClass: TOrmClass; aId: TID): RawJson;
+
+/// Retrieves all ORM records as a JSON array, with optional WHERE clause.
+function OrmGetAll(const aOrm: IRestOrm;
+  aClass: TOrmClass; const aWhere: RawUtf8 = ''): RawJson;
 
 implementation
 
@@ -136,6 +148,14 @@ begin
   else
     FLogFamily.Level := LOG_VERBOSE - [sllTrace];
   FLogFamily.EchoToConsole := FLogFamily.Level;
+end;
+
+function TMicroService.RegisterService(aImpl: TInterfacedObject;
+  aInterface: PRttiInfo): TServiceFactoryServerAbstract;
+begin
+  Result := FRestServer.ServiceRegister(aImpl, [aInterface]);
+  Result.ByPassAuthentication := True;
+  Result.ResultAsJsonObjectWithoutResult := True;
 end;
 
 procedure TMicroService.HandleHealth(Ctxt: TRestServerUriContext);
@@ -211,6 +231,40 @@ begin
         [FServiceName, E.Message], self);
       WriteLn('ERROR: ', E.Message);
     end;
+  end;
+end;
+
+{ ORM helpers }
+
+function OrmGetById(const aOrm: IRestOrm;
+  aClass: TOrmClass; aId: TID): RawJson;
+var
+  Rec: TOrm;
+begin
+  Rec := aClass.Create;
+  try
+    if aOrm.Retrieve(aId, Rec) then
+      Result := Rec.GetJsonValues(True, True, ooSelect)
+    else
+      Result := '{}';
+  finally
+    Rec.Free;
+  end;
+end;
+
+function OrmGetAll(const aOrm: IRestOrm;
+  aClass: TOrmClass; const aWhere: RawUtf8): RawJson;
+var
+  Table: TOrmTable;
+begin
+  Table := aOrm.MultiFieldValues(aClass, '*', aWhere);
+  try
+    if Table = nil then
+      Result := '[]'
+    else
+      Result := Table.GetJsonValues(True);
+  finally
+    Table.Free;
   end;
 end;
 

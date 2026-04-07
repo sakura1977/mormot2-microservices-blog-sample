@@ -72,33 +72,13 @@ begin
 end;
 
 function TUserService.Get(aId: TID): RawJson;
-var
-  Rec: TOrmAuthor;
 begin
-  Rec := TOrmAuthor.Create;
-  try
-    if FOrm.Retrieve(aId, Rec) then
-      Result := Rec.GetJsonValues(True, True, ooSelect)
-    else
-      Result := '{}';
-  finally
-    Rec.Free;
-  end;
+  Result := OrmGetById(FOrm, TOrmAuthor, aId);
 end;
 
 function TUserService.GetAll: RawJson;
-var
-  Table: TOrmTable;
 begin
-  Table := FOrm.MultiFieldValues(TOrmAuthor, '*', '');
-  try
-    if Table = nil then
-      Result := '[]'
-    else
-      Result := Table.GetJsonValues(True);
-  finally
-    Table.Free;
-  end;
+  Result := OrmGetAll(FOrm, TOrmAuthor);
 end;
 
 function TUserService.Add(const aData: RawJson): TID;
@@ -161,18 +141,13 @@ end;
 
 function TUsersServer.CreateModel: TOrmModel;
 begin
-  Result := TOrmModel.Create([TOrmAuthor], 'api');
+  Result := TOrmModel.Create([TOrmAuthor], MODEL_ROOT);
 end;
 
 procedure TUsersServer.SetupServices;
-var
-  Factory: TServiceFactoryServerAbstract;
 begin
   FUserImpl := TUserService.Create(FRestServer.Orm);
-  Factory := FRestServer.ServiceRegister(
-    FUserImpl, [TypeInfo(IUser)]) ;
-  Factory.ByPassAuthentication := True;
-  Factory.ResultAsJsonObjectWithoutResult := True;
+  RegisterService(FUserImpl, TypeInfo(IUser));
 end;
 
 end.

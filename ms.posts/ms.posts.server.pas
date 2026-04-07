@@ -98,17 +98,8 @@ begin
 end;
 
 function TPostService.Get(aId: TID): RawJson;
-var
-  PostRecord: TOrmBlogPost;
 begin
-  Result := '';
-  PostRecord := TOrmBlogPost.Create;
-  try
-    if FOrm.Retrieve(aId, PostRecord) then
-      Result := PostRecord.GetJsonValues(True, True, ooSelect);
-  finally
-    PostRecord.Free;
-  end;
+  Result := OrmGetById(FOrm, TOrmBlogPost, aId);
 end;
 
 function TPostService.GetBySlug(const aSlug: RawUtf8): RawJson;
@@ -255,18 +246,13 @@ end;
 
 function TPostsServer.CreateModel: TOrmModel;
 begin
-  Result := TOrmModel.Create([TOrmBlogPost], 'api');
+  Result := TOrmModel.Create([TOrmBlogPost], MODEL_ROOT);
 end;
 
 procedure TPostsServer.SetupServices;
-var
-  Factory: TServiceFactoryServerAbstract;
 begin
   FPostImpl := TPostService.Create(FRestServer.Orm);
-  Factory := FRestServer.ServiceRegister(
-    FPostImpl, [TypeInfo(IPost)]) ;
-  Factory.ByPassAuthentication := True;
-  Factory.ResultAsJsonObjectWithoutResult := True;
+  RegisterService(FPostImpl, TypeInfo(IPost));
 end;
 
 end.

@@ -173,18 +173,13 @@ end;
 
 function TCommentsServer.CreateModel: TOrmModel;
 begin
-  Result := TOrmModel.Create([TOrmBlogComment], 'api');
+  Result := TOrmModel.Create([TOrmBlogComment], MODEL_ROOT);
 end;
 
 procedure TCommentsServer.SetupServices;
-var
-  Factory: TServiceFactoryServerAbstract;
 begin
   FCommentImpl := TCommentService.Create(FRestServer.Orm);
-  Factory := FRestServer.ServiceRegister(
-    FCommentImpl, [TypeInfo(IComment)]) ;
-  Factory.ByPassAuthentication := True;
-  Factory.ResultAsJsonObjectWithoutResult := True;
+  RegisterService(FCommentImpl, TypeInfo(IComment));
 end;
 
 end.

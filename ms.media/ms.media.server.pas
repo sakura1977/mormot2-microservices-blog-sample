@@ -43,17 +43,6 @@ type
   private
     FOrm: IRestOrm;
     FMediaPath: TFileName;
-    /// <summary>
-    ///   Guesses the MIME type based on a file name extension.
-    /// </summary>
-    /// <param name="aFileName">
-    ///   The file name to inspect.
-    /// </param>
-    /// <returns>
-    ///   The guessed MIME type string, or 'application/octet-stream'
-    ///   as fallback.
-    /// </returns>
-    function GuessMimeType(const aFileName: RawUtf8): RawUtf8;
   public
     constructor Create(const aOrm: IRestOrm; const aMediaPath: TFileName);
     function Upload(const aFileName, aFileData, aAltText: RawUtf8;
@@ -89,27 +78,6 @@ begin
   FMediaPath := aMediaPath;
 end;
 
-function TMediaService.GuessMimeType(
-  const aFileName: RawUtf8): RawUtf8;
-var
-  Ext: string;
-begin
-  Ext := System.SysUtils.LowerCase(
-    ExtractFileExt(Utf8ToString(aFileName)));
-  if (Ext = '.jpg') or (Ext = '.jpeg') then
-    Result := 'image/jpeg'
-  else if Ext = '.png' then
-    Result := 'image/png'
-  else if Ext = '.gif' then
-    Result := 'image/gif'
-  else if Ext = '.webp' then
-    Result := 'image/webp'
-  else if Ext = '.svg' then
-    Result := 'image/svg+xml'
-  else
-    Result := 'application/octet-stream';
-end;
-
 function TMediaService.Upload(
   const aFileName, aFileData, aAltText: RawUtf8;
   aUploadedBy: TID): TID;
@@ -122,7 +90,7 @@ begin
   Rec := TOrmMediaFile.Create;
   try
     Rec.FileName := aFileName;
-    Rec.MimeType := GuessMimeType(aFileName);
+    Rec.MimeType := GuessMimeType(Utf8ToString(aFileName));
     Rec.FileSize := Length(Content);
     Rec.AltText := aAltText;
     Rec.UploadedBy := aUploadedBy;
@@ -144,18 +112,8 @@ begin
 end;
 
 function TMediaService.GetInfo(aId: TID): RawJson;
-var
-  Rec: TOrmMediaFile;
 begin
-  Rec := TOrmMediaFile.Create;
-  try
-    if FOrm.Retrieve(aId, Rec) then
-      Result := Rec.GetJsonValues(True, True, ooSelect)
-    else
-      Result := '{}';
-  finally
-    Rec.Free;
-  end;
+  Result := OrmGetById(FOrm, TOrmMediaFile, aId);
 end;
 
 function TMediaService.GetFile(aId: TID;
@@ -204,7 +162,7 @@ end;
 
 function TMediaServer.CreateModel: TOrmModel;
 begin
-  Result := TOrmModel.Create([TOrmMediaFile], 'api');
+  Result := TOrmModel.Create([TOrmMediaFile], MODEL_ROOT);
 end;
 
 procedure TMediaServer.DoInitialize;
@@ -213,17 +171,12 @@ begin
 end;
 
 procedure TMediaServer.SetupServices;
-var
-  Factory: TServiceFactoryServerAbstract;
 begin
   FMediaPath := Executable.ProgramFilePath + 'media' + PathDelim;
   if not DirectoryExists(FMediaPath) then
     CreateDir(FMediaPath);
   FMediaImpl := TMediaService.Create(FRestServer.Orm, FMediaPath);
-  Factory := FRestServer.ServiceRegister(
-    FMediaImpl, [TypeInfo(IMedia)]) ;
-  Factory.ByPassAuthentication := True;
-  Factory.ResultAsJsonObjectWithoutResult := True;
+  RegisterService(FMediaImpl, TypeInfo(IMedia));
 end;
 
 end.

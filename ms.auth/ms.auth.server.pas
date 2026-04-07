@@ -387,19 +387,14 @@ end;
 
 function TAuthServer.CreateModel: TOrmModel;
 begin
-  Result := TOrmModel.Create([TOrmAuthUser], 'api');
+  Result := TOrmModel.Create([TOrmAuthUser], MODEL_ROOT);
 end;
 
 procedure TAuthServer.SetupServices;
-var
-  Factory: TServiceFactoryServerAbstract;
 begin
   FJwt := TBlogJwt.Create(Config.JwtSecret, JWT_EXPIRATION_MINUTES);
   FAuthImpl := TAuthService.Create(FRestServer.Orm, FJwt);
-  Factory := FRestServer.ServiceRegister(
-    FAuthImpl, [TypeInfo(IAuth)]) ;
-  Factory.ByPassAuthentication := True;
-  Factory.ResultAsJsonObjectWithoutResult := True;
+  RegisterService(FAuthImpl, TypeInfo(IAuth));
 end;
 
 procedure TAuthServer.DoFinalize;
