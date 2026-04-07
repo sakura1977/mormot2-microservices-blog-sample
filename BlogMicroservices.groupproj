@@ -30,6 +30,9 @@
         <Projects Include="ms.users\ms.users.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="test\ms.tests.dproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -119,14 +122,23 @@
     <Target Name="ms_users:Make">
         <MSBuild Projects="ms.users\ms.users.dproj" Targets="Make"/>
     </Target>
+    <Target Name="ms_tests">
+        <MSBuild Projects="test\ms.tests.dproj"/>
+    </Target>
+    <Target Name="ms_tests:Clean">
+        <MSBuild Projects="test\ms.tests.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_tests:Make">
+        <MSBuild Projects="test\ms.tests.dproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="ms_template;ms_auth;ms_comments;ms_controller;ms_gateway;ms_media;ms_posts;ms_tags;ms_users"/>
+        <CallTarget Targets="ms_template;ms_auth;ms_comments;ms_controller;ms_gateway;ms_media;ms_posts;ms_tags;ms_users;ms_tests"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="ms_template:Clean;ms_auth:Clean;ms_comments:Clean;ms_controller:Clean;ms_gateway:Clean;ms_media:Clean;ms_posts:Clean;ms_tags:Clean;ms_users:Clean"/>
+        <CallTarget Targets="ms_template:Clean;ms_auth:Clean;ms_comments:Clean;ms_controller:Clean;ms_gateway:Clean;ms_media:Clean;ms_posts:Clean;ms_tags:Clean;ms_users:Clean;ms_tests:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="ms_template:Make;ms_auth:Make;ms_comments:Make;ms_controller:Make;ms_gateway:Make;ms_media:Make;ms_posts:Make;ms_tags:Make;ms_users:Make"/>
+        <CallTarget Targets="ms_template:Make;ms_auth:Make;ms_comments:Make;ms_controller:Make;ms_gateway:Make;ms_media:Make;ms_posts:Make;ms_tags:Make;ms_users:Make;ms_tests:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>
