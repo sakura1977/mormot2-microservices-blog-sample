@@ -45,6 +45,8 @@ type
     FShutdownRequested: boolean;
     FStartTime: TDateTime;
     procedure InitLogging;
+    procedure HandleHealth(Ctxt: TRestServerUriContext);
+    procedure HandleShutdown(Ctxt: TRestServerUriContext);
   protected
     FModel: TOrmModel;
     FRestServer: TRestServerDB;
@@ -136,6 +138,23 @@ begin
   FLogFamily.EchoToConsole := FLogFamily.Level;
 end;
 
+procedure TMicroService.HandleHealth(Ctxt: TRestServerUriContext);
+begin
+  Ctxt.Returns(JsonEncode([
+    'service', FServiceName,
+    'status', 'ok',
+    'port', FPort,
+    'version', SERVICE_VERSION,
+    'uptime', FormatUtf8('%', [DateTimeMSToString(NowUtc - FStartTime)])
+  ]));
+end;
+
+procedure TMicroService.HandleShutdown(Ctxt: TRestServerUriContext);
+begin
+  Ctxt.Success;
+  FShutdownRequested := True;
+end;
+
 procedure TMicroService.RequestShutdown;
 begin
   FShutdownRequested := True;
@@ -159,6 +178,9 @@ begin
     FRestServer.Server.CreateMissingTables;
     // Register interface-based services
     SetupServices;
+    // Register management endpoints
+    FRestServer.ServiceMethodRegister('health', HandleHealth, True, [mGET]);
+    FRestServer.ServiceMethodRegister('shutdown', HandleShutdown, True, [mPOST]);
     // Create HTTP server
     FHttpServer := TRestHttpServer.Create(
       FPort, FRestServer, '+', useHttpAsync, nil, 4, secNone);
