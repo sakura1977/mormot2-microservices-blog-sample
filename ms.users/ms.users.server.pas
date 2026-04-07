@@ -1,6 +1,7 @@
-﻿/// <summary>
-///   HTTP server for the Users service.
-///   CRUD endpoints for author profiles.
+/// <summary>
+///   Interface-based service implementation for the Users microservice.
+///   Implements the IUser contract via TUserService and hosts it
+///   inside TUsersServer (a TMicroService subclass).
 /// </summary>
 unit ms.users.server;
 
@@ -20,259 +21,158 @@ uses
   mormot.core.text,
   mormot.core.unicode,
   mormot.core.variants,
-  mormot.db.raw.sqlite3,
-  mormot.net.http,
-  mormot.net.server,
   mormot.orm.base,
   mormot.orm.core,
+  mormot.rest.core,
+  mormot.rest.server,
   mormot.rest.sqlite3,
+  mormot.soa.core,
+  mormot.soa.server,
   ms.shared,
+  ms.shared.api,
   ms.shared.service,
   ms.users.model;
 
 type
 
   /// <summary>
-  ///   Microservice server handling user/author profile endpoints.
+  ///   Implements the IUser interface for author profile CRUD.
+  /// </summary>
+  TUserService = class(TInterfacedObject, IUser)
+  private
+    FOrm: IRestOrm;
+  public
+    constructor Create(const aOrm: IRestOrm);
+    function Get(aId: TID): RawJson;
+    function GetAll: RawJson;
+    function Add(const aData: RawJson): TID;
+    function Update(aId: TID; const aData: RawJson): boolean;
+    function Remove(aId: TID): boolean;
+  end;
+
+  /// <summary>
+  ///   Microservice server hosting the IUser service implementation.
   /// </summary>
   TUsersServer = class(TMicroService)
   private
-    FModel: TOrmModel;
-    FRest: TRestServerDB;
-
-    /// <summary>
-    ///   Extracts a numeric ID from a URL path after the given prefix.
-    /// </summary>
-    /// <param name="aPath">
-    ///   The full request URL path.
-    /// </param>
-    /// <param name="aPrefix">
-    ///   The URL prefix before the ID segment.
-    /// </param>
-    /// <returns>
-    ///   The extracted ID value, or 0 if parsing fails.
-    /// </returns>
-    function ExtractId(
-      const aPath, aPrefix: RawUtf8
-    ): TID;
+    FUserImpl: TUserService;
   protected
-
-    /// <summary>
-    ///   Initializes the database and ORM model.
-    /// </summary>
-    procedure DoInitialize; override;
-
-    /// <summary>
-    ///   Releases the REST server and ORM model.
-    /// </summary>
-    procedure DoFinalize; override;
-
-    /// <summary>
-    ///   Dispatches incoming HTTP requests to user endpoints.
-    /// </summary>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <returns>
-    ///   The HTTP status code for the response.
-    /// </returns>
-    function OnRequest(
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal; override;
+    function CreateModel: TOrmModel; override;
+    procedure SetupServices; override;
   end;
 
 implementation
 
-{ TUsersServer }
+{ TUserService }
 
-procedure TUsersServer.DoFinalize;
+constructor TUserService.Create(const aOrm: IRestOrm);
 begin
-  FreeAndNil(FRest);
-  FreeAndNil(FModel);
+  inherited Create;
+  FOrm := aOrm;
 end;
 
-procedure TUsersServer.DoInitialize;
+function TUserService.Get(aId: TID): RawJson;
 var
-  DatabasePath: TFileName;
-begin
-  DatabasePath := Executable.ProgramFilePath + 'users.db';
-  FModel := CreateUsersModel;
-  FRest := TRestServerDB.Create(FModel, DatabasePath);
-  FRest.DB.Synchronous := smNormal;
-  FRest.DB.LockingMode := lmExclusive;
-  FRest.CreateMissingTables;
-end;
-
-function TUsersServer.ExtractId(
-  const aPath, aPrefix: RawUtf8
-): TID;
-begin
-  Result := GetInt64(pointer(Copy(aPath, Length(aPrefix) + 1, 20)));
-end;
-
-function TUsersServer.OnRequest(
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
-var
-  Path: RawUtf8;
-  RecordId, NewId: TID;
   Rec: TOrmAuthor;
-  Doc: TDocVariantData;
+begin
+  Rec := TOrmAuthor.Create;
+  try
+    if FOrm.Retrieve(aId, Rec) then
+      Result := Rec.GetJsonValues(True, True, ooSelect)
+    else
+      Result := '{}';
+  finally
+    Rec.Free;
+  end;
+end;
+
+function TUserService.GetAll: RawJson;
+var
   Table: TOrmTable;
 begin
-  Path := aCtxt.Url;
+  Table := FOrm.MultiFieldValues(TOrmAuthor, '*', '');
+  try
+    if Table = nil then
+      Result := '[]'
+    else
+      Result := Table.GetJsonValues(True);
+  finally
+    Table.Free;
+  end;
+end;
 
-  // GET /api/users
-  if (aCtxt.Method = 'GET') and (Path = '/api/users') then
-  begin
-    Table := FRest.Orm.MultiFieldValues(TOrmAuthor, '*', '');
-    try
-      if Table = nil then
-      begin
-        aCtxt.OutContent := '[]';
-      end
-      else
-      begin
-        aCtxt.OutContent := Table.GetJsonValues(True);
-      end;
-    finally
-      Table.Free;
-    end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-    Result := HTTP_SUCCESS;
-  end
+function TUserService.Add(const aData: RawJson): TID;
+var
+  Doc: TDocVariantData;
+  Rec: TOrmAuthor;
+begin
+  Doc.InitJson(aData, JSON_FAST_FLOAT);
+  Rec := TOrmAuthor.Create;
+  try
+    Rec.DisplayName := Doc.U['DisplayName'];
+    Rec.Bio := Doc.U['Bio'];
+    Rec.WebsiteUrl := Doc.U['WebsiteUrl'];
+    Rec.Slug := TextToSlug(Rec.DisplayName);
+    Rec.CreatedAt := NowUtc;
+    Rec.UpdatedAt := NowUtc;
+    Result := FOrm.Add(Rec, True);
+  finally
+    Rec.Free;
+  end;
+end;
 
-  // GET /api/users/{id}
-  else if (aCtxt.Method = 'GET') and
-    IdemPChar(pointer(Path), '/API/USERS/') then
-  begin
-    RecordId := ExtractId(Path, '/api/users/');
-    if RecordId <= 0 then
+function TUserService.Update(aId: TID; const aData: RawJson): boolean;
+var
+  Doc: TDocVariantData;
+  Rec: TOrmAuthor;
+begin
+  Rec := TOrmAuthor.Create;
+  try
+    if not FOrm.Retrieve(aId, Rec) then
     begin
-      aCtxt.OutContent := '{"error":"invalid id"}';
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
-      Result := HTTP_BADREQUEST;
+      Result := False;
       Exit;
     end;
-    Rec := TOrmAuthor.Create;
-    try
-      if FRest.Orm.Retrieve(RecordId, Rec) then
-      begin
-        aCtxt.OutContent := Rec.GetJsonValues(True, True, ooSelect);
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_SUCCESS;
-      end
-      else
-      begin
-        aCtxt.OutContent := '{"error":"not found"}';
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_NOTFOUND;
-      end;
-    finally
-      Rec.Free;
-    end;
-  end
-
-  // POST /api/users
-  else if (aCtxt.Method = 'POST') and (Path = '/api/users') then
-  begin
-    Doc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    Rec := TOrmAuthor.Create;
-    try
+    Doc.InitJson(aData, JSON_FAST_FLOAT);
+    if Doc.GetValueIndex('DisplayName') >= 0 then
+    begin
       Rec.DisplayName := Doc.U['DisplayName'];
-      Rec.Bio := Doc.U['Bio'];
-      Rec.WebsiteUrl := Doc.U['WebsiteUrl'];
       Rec.Slug := TextToSlug(Rec.DisplayName);
-      Rec.CreatedAt := NowUtc;
-      Rec.UpdatedAt := NowUtc;
-      NewId := FRest.Orm.Add(Rec, True);
-      if NewId > 0 then
-      begin
-        aCtxt.OutContent := FormatUtf8('{"id":%}', [NewId]);
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_CREATED;
-      end
-      else
-      begin
-        aCtxt.OutContent := '{"error":"creation failed"}';
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_SERVERERROR;
-      end;
-    finally
-      Rec.Free;
     end;
-  end
+    if Doc.GetValueIndex('Bio') >= 0 then
+      Rec.Bio := Doc.U['Bio'];
+    if Doc.GetValueIndex('WebsiteUrl') >= 0 then
+      Rec.WebsiteUrl := Doc.U['WebsiteUrl'];
+    if Doc.GetValueIndex('AvatarMediaId') >= 0 then
+      Rec.AvatarMediaId := Doc.I['AvatarMediaId'];
+    Rec.UpdatedAt := NowUtc;
+    Result := FOrm.Update(Rec);
+  finally
+    Rec.Free;
+  end;
+end;
 
-  // PUT /api/users/{id}
-  else if (aCtxt.Method = 'PUT') and
-    IdemPChar(pointer(Path), '/API/USERS/') then
-  begin
-    RecordId := ExtractId(Path, '/api/users/');
-    Doc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    Rec := TOrmAuthor.Create;
-    try
-      if not FRest.Orm.Retrieve(RecordId, Rec) then
-      begin
-        aCtxt.OutContent := '{"error":"not found"}';
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_NOTFOUND;
-        Exit;
-      end;
-      if Doc.GetValueIndex('DisplayName') >= 0 then
-      begin
-        Rec.DisplayName := Doc.U['DisplayName'];
-        Rec.Slug := TextToSlug(Rec.DisplayName);
-      end;
-      if Doc.GetValueIndex('Bio') >= 0 then
-      begin
-        Rec.Bio := Doc.U['Bio'];
-      end;
-      if Doc.GetValueIndex('WebsiteUrl') >= 0 then
-      begin
-        Rec.WebsiteUrl := Doc.U['WebsiteUrl'];
-      end;
-      if Doc.GetValueIndex('AvatarMediaId') >= 0 then
-      begin
-        Rec.AvatarMediaId := Doc.I['AvatarMediaId'];
-      end;
-      Rec.UpdatedAt := NowUtc;
-      if FRest.Orm.Update(Rec) then
-      begin
-        aCtxt.OutContent := '{"success":true}';
-        Result := HTTP_SUCCESS;
-      end
-      else
-      begin
-        aCtxt.OutContent := '{"error":"update failed"}';
-        Result := HTTP_SERVERERROR;
-      end;
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
-    finally
-      Rec.Free;
-    end;
-  end
+function TUserService.Remove(aId: TID): boolean;
+begin
+  Result := FOrm.Delete(TOrmAuthor, aId);
+end;
 
-  // DELETE /api/users/{id}
-  else if (aCtxt.Method = 'DELETE') and
-    IdemPChar(pointer(Path), '/API/USERS/') then
-  begin
-    RecordId := ExtractId(Path, '/api/users/');
-    if FRest.Orm.Delete(TOrmAuthor, RecordId) then
-    begin
-      aCtxt.OutContent := '{"success":true}';
-      Result := HTTP_SUCCESS;
-    end
-    else
-    begin
-      aCtxt.OutContent := '{"error":"not found"}';
-      Result := HTTP_NOTFOUND;
-    end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  end
+{ TUsersServer }
 
-  // Fallback: health / shutdown
-  else
-    Result := inherited OnRequest(aCtxt);
+function TUsersServer.CreateModel: TOrmModel;
+begin
+  Result := TOrmModel.Create([TOrmAuthor], 'api');
+end;
+
+procedure TUsersServer.SetupServices;
+var
+  Factory: TServiceFactoryServerAbstract;
+begin
+  FUserImpl := TUserService.Create(FRestServer.Orm);
+  Factory := FRestServer.ServiceRegister(
+    FUserImpl, [TypeInfo(IUser)]) ;
+  Factory.ByPassAuthentication := True;
+  Factory.ResultAsJsonObjectWithoutResult := True;
 end;
 
 end.

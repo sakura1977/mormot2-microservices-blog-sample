@@ -1,7 +1,7 @@
 /// <summary>
-///   HTTP server for the Auth service.
-///   SCRAM-MCF authentication (challenge/authenticate),
-///   registration, token validation, password change.
+///   Interface-based service implementation for the Auth microservice.
+///   Implements IAuth using SCRAM-MCF for password verification,
+///   registered as a mORMot2 SOA service on TRestServerDB.
 /// </summary>
 unit ms.auth.server;
 
@@ -24,13 +24,16 @@ uses
   mormot.crypt.core,
   mormot.crypt.secure,
   mormot.db.raw.sqlite3,
-  mormot.net.http,
-  mormot.net.server,
   mormot.orm.base,
   mormot.orm.core,
+  mormot.rest.core,
+  mormot.rest.server,
   mormot.rest.sqlite3,
+  mormot.soa.core,
+  mormot.soa.server,
   ms.auth.model,
   ms.shared,
+  ms.shared.api,
   ms.shared.jwt,
   ms.shared.service;
 
@@ -56,13 +59,12 @@ type
   TScramChallenges = array of TScramChallenge;
 
   /// <summary>
-  ///   Microservice server handling authentication endpoints
-  ///   using SCRAM-MCF for password verification.
+  ///   Implements the IAuth interface using SCRAM-MCF password
+  ///   verification. Registered as a sicShared SOA service.
   /// </summary>
-  TAuthServer = class(TMicroService)
+  TAuthService = class(TInterfacedObject, IAuth)
   private
-    FModel: TOrmModel;
-    FRest: TRestServerDB;
+    FOrm: IRestOrm;
     FJwt: TBlogJwt;
     FChallenges: TScramChallenges;
     FChallengeSafe: TLightLock;
@@ -97,48 +99,65 @@ type
       const aServerNonce: RawUtf8;
       out aChallenge: TScramChallenge
     ): boolean;
+  public
+    constructor Create(
+      const aOrm: IRestOrm;
+      aJwt: TBlogJwt
+    );
+
+    // IAuth
+    procedure Challenge(const aEmail: RawUtf8;
+      out aMcfInfo, aServerNonce: RawUtf8);
+    function Authenticate(const aEmail, aServerNonce, aClientProof: RawUtf8;
+      out aToken: RawUtf8; out aUserId: TID;
+      out aServerProof: RawUtf8): boolean;
+    function Register(const aEmail, aPassword: RawUtf8;
+      aUserId: TID): TID;
+    function Validate(const aToken: RawUtf8;
+      out aUserId: TID): boolean;
+    function ChangePassword(aUserId: TID;
+      const aOldPassword, aNewPassword: RawUtf8): boolean;
+  end;
+
+  /// <summary>
+  ///   Auth microservice server. Creates a TRestServerDB with
+  ///   the TOrmAuthUser model and registers TAuthService as a
+  ///   SOA interface-based service for IAuth.
+  /// </summary>
+  TAuthServer = class(TMicroService)
+  private
+    FJwt: TBlogJwt;
+    FAuthImpl: TAuthService;
   protected
-    procedure DoInitialize; override;
+    function CreateModel: TOrmModel; override;
+    procedure SetupServices; override;
     procedure DoFinalize; override;
-    function OnRequest(
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal; override;
   end;
 
 implementation
 
-{ TAuthServer }
+{ TAuthService }
 
-procedure TAuthServer.DoFinalize;
+constructor TAuthService.Create(
+  const aOrm: IRestOrm;
+  aJwt: TBlogJwt
+);
 begin
-  FreeAndNil(FJwt);
-  FreeAndNil(FRest);
-  FreeAndNil(FModel);
+  inherited Create;
+  FOrm := aOrm;
+  FJwt := aJwt;
 end;
 
-procedure TAuthServer.DoInitialize;
-var
-  DatabasePath: TFileName;
-begin
-  DatabasePath := Executable.ProgramFilePath + 'auth.db';
-  FModel := CreateAuthModel;
-  FRest := TRestServerDB.Create(FModel, DatabasePath);
-  FRest.DB.Synchronous := smNormal;
-  FRest.DB.LockingMode := lmExclusive;
-  FRest.CreateMissingTables;
-  FJwt := TBlogJwt.Create(Config.JwtSecret, JWT_EXPIRATION_MINUTES);
-end;
-
-function TAuthServer.FindUserByEmail(
+function TAuthService.FindUserByEmail(
   const aEmail: RawUtf8
 ): TOrmAuthUser;
 begin
   Result := TOrmAuthUser.Create;
-  if not FRest.Orm.Retrieve('Email=?', [], [aEmail], Result) then
+  if not FOrm.Retrieve('Email=?', [], [aEmail], Result) then
     FreeAndNil(Result);
 end;
 
-procedure TAuthServer.ComputeScramCredentials(
+procedure TAuthService.ComputeScramCredentials(
   const aEmail, aPassword: RawUtf8;
   out aMcfInfo, aPersistedKey: RawUtf8
 );
@@ -151,7 +170,7 @@ begin
   FillZero(RawByteString(McfHash));
 end;
 
-procedure TAuthServer.StoreChallenge(
+procedure TAuthService.StoreChallenge(
   const aChallenge: TScramChallenge
 );
 var
@@ -184,7 +203,7 @@ begin
   end;
 end;
 
-function TAuthServer.ConsumeChallenge(
+function TAuthService.ConsumeChallenge(
   const aServerNonce: RawUtf8;
   out aChallenge: TScramChallenge
 ): boolean;
@@ -218,237 +237,176 @@ begin
   end;
 end;
 
-function TAuthServer.OnRequest(
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
+procedure TAuthService.Challenge(const aEmail: RawUtf8;
+  out aMcfInfo, aServerNonce: RawUtf8);
 var
-  Path: RawUtf8;
-  Doc: TDocVariantData;
   User: TOrmAuthUser;
-  Token: RawUtf8;
-  UserId: TID;
-  NewId: TID;
-  McfInfo, PersistedKey: RawUtf8;
-  Challenge: TScramChallenge;
-  ServerProof: RawUtf8;
+  Chal: TScramChallenge;
   RandomData: THash128;
 begin
-  Path := aCtxt.Url;
-
-  // POST /api/auth/challenge
-  // Phase 1 of SCRAM-MCF: return MCF info and server nonce
-  if (aCtxt.Method = 'POST') and (Path = '/api/auth/challenge') then
+  Finalize(Chal);
+  FillCharFast(Chal, SizeOf(Chal), 0);
+  Chal.Email := aEmail;
+  // Generate server nonce
+  RandomBytes(@RandomData, SizeOf(RandomData));
+  Chal.ServerNonce := BinToBase64uri(@RandomData, SizeOf(RandomData));
+  Chal.CreatedAt := NowUtc;
+  // Look up user
+  User := FindUserByEmail(aEmail);
+  if (User <> nil) and User.IsActive then
   begin
-    Doc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    Finalize(Challenge);
-    FillCharFast(Challenge, SizeOf(Challenge), 0);
-    Challenge.Email := Doc.U['Email'];
-    // Generate server nonce
-    RandomBytes(@RandomData, SizeOf(RandomData));
-    Challenge.ServerNonce := BinToBase64uri(@RandomData, SizeOf(RandomData));
-    Challenge.CreatedAt := NowUtc;
-    // Look up user
-    User := FindUserByEmail(Challenge.Email);
-    if (User <> nil) and User.IsActive then
-    begin
-      try
-        Challenge.McfInfo := User.McfInfo;
-        Challenge.PersistedKey := User.PersistedKey;
-        Challenge.UserId := User.UserId;
-        Challenge.IsReal := True;
-      finally
-        User.Free;
-      end;
-    end
-    else
-    begin
-      User.Free;
-      // Anti-enumeration: return fake MCF info
-      Challenge.McfInfo := ModularCryptFakeInfo(
-        Challenge.Email, mcfPbkdf2Sha256);
-      Challenge.IsReal := False;
-    end;
-    StoreChallenge(Challenge);
-    aCtxt.OutContent := JsonEncode([
-      'McfInfo', Challenge.McfInfo,
-      'ServerNonce', Challenge.ServerNonce]);
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-    Result := HTTP_SUCCESS;
-  end
-
-  // POST /api/auth/authenticate
-  // Phase 2 of SCRAM-MCF: verify client proof, return JWT + server proof
-  else if (aCtxt.Method = 'POST') and
-    (Path = '/api/auth/authenticate') then
-  begin
-    Doc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    if not ConsumeChallenge(Doc.U['ServerNonce'], Challenge) then
-    begin
-      aCtxt.OutContent := '{"error":"invalid or expired challenge"}';
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
-      Result := HTTP_FORBIDDEN;
-      Exit;
-    end;
-    if Challenge.Email <> Doc.U['Email'] then
-    begin
-      aCtxt.OutContent := '{"error":"invalid credentials"}';
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
-      Result := HTTP_FORBIDDEN;
-      Exit;
-    end;
-    if not Challenge.IsReal then
-    begin
-      aCtxt.OutContent := '{"error":"invalid credentials"}';
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
-      Result := HTTP_FORBIDDEN;
-      Exit;
-    end;
-    // Verify client proof using SCRAM
-    ServerProof := ScramServerProof(
-      Challenge.PersistedKey,
-      Doc.U['ClientProof'],
-      [Challenge.Email, Challenge.ServerNonce]);
-    if ServerProof = '' then
-    begin
-      aCtxt.OutContent := '{"error":"invalid credentials"}';
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
-      Result := HTTP_FORBIDDEN;
-      Exit;
-    end;
-    // Authentication successful
-    Token := FJwt.CreateToken(Challenge.UserId);
-    // Update last login
-    User := FindUserByEmail(Challenge.Email);
-    if User <> nil then
-    begin
-      try
-        User.LastLogin := NowUtc;
-        FRest.Orm.Update(User, 'LastLogin');
-      finally
-        User.Free;
-      end;
-    end;
-    aCtxt.OutContent := JsonEncode([
-      'token', Token,
-      'userId', Challenge.UserId,
-      'ServerProof', ServerProof]);
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-    Result := HTTP_SUCCESS;
-  end
-
-  // POST /api/auth/register
-  else if (aCtxt.Method = 'POST') and (Path = '/api/auth/register') then
-  begin
-    Doc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    // Check whether the email is already taken
-    User := FindUserByEmail(Doc.U['Email']);
-    if User <> nil then
-    begin
-      User.Free;
-      aCtxt.OutContent := '{"error":"email already registered"}';
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
-      Result := HTTP_BADREQUEST;
-      Exit;
-    end;
-    User := TOrmAuthUser.Create;
     try
-      User.Email := Doc.U['Email'];
-      ComputeScramCredentials(
-        User.Email, Doc.U['Password'], McfInfo, PersistedKey);
-      User.McfInfo := McfInfo;
-      User.PersistedKey := PersistedKey;
-      User.UserId := Doc.I['UserId'];
-      User.IsActive := True;
-      User.CreatedAt := NowUtc;
-      NewId := FRest.Orm.Add(User, True);
-      if NewId > 0 then
-      begin
-        aCtxt.OutContent := FormatUtf8(
-          '{"userId":%}', [User.UserId]);
-        Result := HTTP_CREATED;
-      end
-      else
-      begin
-        aCtxt.OutContent := '{"error":"registration failed"}';
-        Result := HTTP_SERVERERROR;
-      end;
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
+      Chal.McfInfo := User.McfInfo;
+      Chal.PersistedKey := User.PersistedKey;
+      Chal.UserId := User.UserId;
+      Chal.IsReal := True;
     finally
       User.Free;
     end;
   end
-
-  // POST /api/auth/validate
-  else if (aCtxt.Method = 'POST') and (Path = '/api/auth/validate') then
-  begin
-    Doc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    Token := Doc.U['Token'];
-    if FJwt.ValidateToken(Token, UserId) then
-    begin
-      aCtxt.OutContent := FormatUtf8(
-        '{"valid":true,"userId":%}', [UserId]);
-      Result := HTTP_SUCCESS;
-    end
-    else
-    begin
-      aCtxt.OutContent := '{"valid":false,"userId":0}';
-      Result := HTTP_SUCCESS;
-    end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  end
-
-  // PUT /api/auth/change-password
-  else if (aCtxt.Method = 'PUT') and
-    (Path = '/api/auth/change-password') then
-  begin
-    Doc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    UserId := Doc.I['UserId'];
-    User := TOrmAuthUser.Create;
-    try
-      if not FRest.Orm.Retrieve('UserId=?', [], [UserId], User) then
-      begin
-        aCtxt.OutContent := '{"error":"user not found"}';
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_NOTFOUND;
-        Exit;
-      end;
-      // Verify old password: re-derive MCF hash from stored format
-      // info and compare the resulting persisted key
-      McfInfo := ModularCryptHash(User.McfInfo, Doc.U['OldPassword']);
-      PersistedKey := ScramPersistedKey(McfInfo, User.Email);
-      FillZero(RawByteString(McfInfo));
-      if PersistedKey <> User.PersistedKey then
-      begin
-        aCtxt.OutContent := '{"error":"wrong password"}';
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_FORBIDDEN;
-        Exit;
-      end;
-      // Set new password
-      ComputeScramCredentials(
-        User.Email, Doc.U['NewPassword'], McfInfo, PersistedKey);
-      User.McfInfo := McfInfo;
-      User.PersistedKey := PersistedKey;
-      FRest.Orm.Update(User, 'McfInfo,PersistedKey');
-      aCtxt.OutContent := '{"success":true}';
-      aCtxt.OutContentType := JSON_CONTENT_TYPE;
-      Result := HTTP_SUCCESS;
-    finally
-      User.Free;
-    end;
-  end
-
-  // POST /api/auth/logout
-  else if (aCtxt.Method = 'POST') and (Path = '/api/auth/logout') then
-  begin
-    // Stateless JWT: nothing to do on the server side
-    aCtxt.OutContent := '{"success":true}';
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-    Result := HTTP_SUCCESS;
-  end
-
   else
-    Result := inherited OnRequest(aCtxt);
+  begin
+    User.Free;
+    // Anti-enumeration: return fake MCF info
+    Chal.McfInfo := ModularCryptFakeInfo(aEmail, mcfPbkdf2Sha256);
+    Chal.IsReal := False;
+  end;
+  StoreChallenge(Chal);
+  aMcfInfo := Chal.McfInfo;
+  aServerNonce := Chal.ServerNonce;
+end;
+
+function TAuthService.Authenticate(const aEmail, aServerNonce,
+  aClientProof: RawUtf8; out aToken: RawUtf8; out aUserId: TID;
+  out aServerProof: RawUtf8): boolean;
+var
+  Chal: TScramChallenge;
+  User: TOrmAuthUser;
+begin
+  Result := False;
+  aToken := '';
+  aUserId := 0;
+  aServerProof := '';
+  // Consume the pending challenge
+  if not ConsumeChallenge(aServerNonce, Chal) then
+    Exit;
+  if Chal.Email <> aEmail then
+    Exit;
+  if not Chal.IsReal then
+    Exit;
+  // Verify client proof using SCRAM
+  aServerProof := ScramServerProof(
+    Chal.PersistedKey,
+    aClientProof,
+    [aEmail, aServerNonce]);
+  if aServerProof = '' then
+    Exit;
+  // Authentication successful
+  aUserId := Chal.UserId;
+  aToken := FJwt.CreateToken(aUserId);
+  // Update last login
+  User := FindUserByEmail(aEmail);
+  if User <> nil then
+  begin
+    try
+      User.LastLogin := NowUtc;
+      FOrm.Update(User, 'LastLogin');
+    finally
+      User.Free;
+    end;
+  end;
+  Result := True;
+end;
+
+function TAuthService.Register(const aEmail, aPassword: RawUtf8;
+  aUserId: TID): TID;
+var
+  User: TOrmAuthUser;
+  McfInfo, PersistedKey: RawUtf8;
+begin
+  Result := 0;
+  // Check whether the email is already taken
+  User := FindUserByEmail(aEmail);
+  if User <> nil then
+  begin
+    User.Free;
+    Exit;
+  end;
+  User := TOrmAuthUser.Create;
+  try
+    User.Email := aEmail;
+    ComputeScramCredentials(aEmail, aPassword, McfInfo, PersistedKey);
+    User.McfInfo := McfInfo;
+    User.PersistedKey := PersistedKey;
+    User.UserId := aUserId;
+    User.IsActive := True;
+    User.CreatedAt := NowUtc;
+    if FOrm.Add(User, True) > 0 then
+      Result := aUserId;
+  finally
+    User.Free;
+  end;
+end;
+
+function TAuthService.Validate(const aToken: RawUtf8;
+  out aUserId: TID): boolean;
+begin
+  Result := FJwt.ValidateToken(aToken, aUserId);
+end;
+
+function TAuthService.ChangePassword(aUserId: TID;
+  const aOldPassword, aNewPassword: RawUtf8): boolean;
+var
+  User: TOrmAuthUser;
+  McfInfo, PersistedKey: RawUtf8;
+begin
+  Result := False;
+  User := TOrmAuthUser.Create;
+  try
+    if not FOrm.Retrieve('UserId=?', [], [aUserId], User) then
+      Exit;
+    // Verify old password: re-derive MCF hash from stored format
+    // info and compare the resulting persisted key
+    McfInfo := ModularCryptHash(User.McfInfo, aOldPassword);
+    PersistedKey := ScramPersistedKey(McfInfo, User.Email);
+    FillZero(RawByteString(McfInfo));
+    if PersistedKey <> User.PersistedKey then
+      Exit;
+    // Set new password
+    ComputeScramCredentials(User.Email, aNewPassword, McfInfo, PersistedKey);
+    User.McfInfo := McfInfo;
+    User.PersistedKey := PersistedKey;
+    FOrm.Update(User, 'McfInfo,PersistedKey');
+    Result := True;
+  finally
+    User.Free;
+  end;
+end;
+
+{ TAuthServer }
+
+function TAuthServer.CreateModel: TOrmModel;
+begin
+  Result := TOrmModel.Create([TOrmAuthUser], 'api');
+end;
+
+procedure TAuthServer.SetupServices;
+var
+  Factory: TServiceFactoryServerAbstract;
+begin
+  FJwt := TBlogJwt.Create(Config.JwtSecret, JWT_EXPIRATION_MINUTES);
+  FAuthImpl := TAuthService.Create(FRestServer.Orm, FJwt);
+  Factory := FRestServer.ServiceRegister(
+    FAuthImpl, [TypeInfo(IAuth)]) ;
+  Factory.ByPassAuthentication := True;
+  Factory.ResultAsJsonObjectWithoutResult := True;
+end;
+
+procedure TAuthServer.DoFinalize;
+begin
+  FreeAndNil(FJwt);
+  // FAuthImpl is ref-counted via IAuth, freed by the service factory
+  inherited DoFinalize;
 end;
 
 end.

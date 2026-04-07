@@ -169,32 +169,13 @@ async function loadTags() {
 }
 
 async function loadPostsByTag(tagId, tagName) {
-  app.innerHTML = `<div class="loading">Loading posts tagged "${esc(tagName)}"...</div>`;
-  const r = await API.get(`/api/tags/${tagId}/posts`);
-  if (!r.ok) { app.innerHTML = '<p class="error">Error.</p>'; return; }
-
-  const postIds = Array.isArray(r.data) ? r.data : [];
-  let html = `<h2>Tag: ${esc(tagName)}</h2>`;
-  if (postIds.length === 0) {
-    html += '<p>No posts with this tag.</p>';
-  } else {
-    html += '<ul class="post-list">';
-    for (const item of postIds) {
-      const pid = item.PostId || item;
-      const pr = await API.getPost(pid);
-      if (pr.ok) {
-        const p = pr.data;
-        html += `
-          <li class="post-card">
-            <h2><a href="#" onclick="loadPost(${p.RowID || p.ID}); return false;">${esc(p.Title)}</a></h2>
-            <p class="post-excerpt">${esc(p.Excerpt || '')}</p>
-          </li>`;
-      }
-    }
-    html += '</ul>';
-  }
-  html += '<p><a href="#" onclick="loadTags(); return false;">&laquo; All Tags</a></p>';
-  app.innerHTML = html;
+  // Tag-based post filtering is not yet supported via SOA.
+  // Show a placeholder with link back to tags.
+  app.innerHTML = `
+    <h2>Tag: ${esc(tagName)}</h2>
+    <p>Post filtering by tag will be available soon.</p>
+    <p><a href="#" onclick="loadTags(); return false;">&laquo; All Tags</a></p>
+  `;
 }
 
 // === Author Profile ===
@@ -217,14 +198,21 @@ async function loadAuthor(id) {
     <p style="margin-top:1rem"><a href="#" onclick="loadPosts(); return false;">&laquo; Back</a></p>
   `;
 
-  const pr = await API.get(`/api/posts/by-author/${id}`);
+  const pr = await soaCall('Post', 'GetList', [1, 50, 0, id]);
   const postsDiv = $('#author-posts');
-  if (pr.ok && pr.data.items && pr.data.items.length > 0) {
-    let ph = '<ul class="post-list">';
-    for (const p of pr.data.items)
-      ph += `<li class="post-card"><h2><a href="#" onclick="loadPost(${p.RowID || p.ID}); return false;">${esc(p.Title)}</a></h2></li>`;
-    ph += '</ul>';
-    postsDiv.innerHTML = ph;
+  if (pr.ok) {
+    let postsData = pr.data.Result;
+    if (typeof postsData === 'string') postsData = JSON.parse(postsData);
+    const items = postsData?.items || [];
+    if (items.length > 0) {
+      let ph = '<ul class="post-list">';
+      for (const p of items)
+        ph += `<li class="post-card"><h2><a href="#" onclick="loadPost(${p.RowID || p.ID}); return false;">${esc(p.Title)}</a></h2></li>`;
+      ph += '</ul>';
+      postsDiv.innerHTML = ph;
+    } else {
+      postsDiv.innerHTML = '<p>No posts.</p>';
+    }
   } else {
     postsDiv.innerHTML = '<p>No posts.</p>';
   }
@@ -333,9 +321,9 @@ async function addNewTag() {
   const input = $('#editor-new-tag');
   const name = input.value.trim();
   if (!name) return;
-  const r = await API.post('/api/tags', { Name: name, Description: '' });
+  const r = await soaCall('Tag', 'Add', [JSON.stringify({ Name: name, Description: '' })]);
   if (r.ok) {
-    const newId = r.data.id;
+    const newId = r.data.Result;
     const selectedIds = getSelectedTagIds();
     selectedIds.push(newId);
     await loadEditorTags(selectedIds);
@@ -401,7 +389,7 @@ async function savePost(e) {
   }
 
   if (r.ok) {
-    const postId = id || r.data?.id;
+    const postId = id || r.data?.Result;
     if (postId) {
       const tagIds = getSelectedTagIds();
       await API.setPostTags(postId, tagIds);

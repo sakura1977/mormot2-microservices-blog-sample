@@ -1,14 +1,10 @@
-﻿/// <summary>
-///   API gateway for the blog microservices.
-///   Routes API calls to backend services,
-///   validates JWT tokens and serves the web frontend.
+/// <summary>
+///   API Gateway: routes requests to backend microservices
+///   using interface-based service proxies and serves the web frontend.
 /// </summary>
 unit ms.gateway.server;
 
-{$SCOPEDENUMS ON}
 {$I mormot.defines.inc}
-{$WARN SYMBOL_PLATFORM OFF}
-{$WARN UNIT_PLATFORM OFF}
 
 interface
 
@@ -19,257 +15,559 @@ uses
   mormot.core.data,
   mormot.core.datetime,
   mormot.core.json,
+  mormot.core.log,
   mormot.core.os,
   mormot.core.text,
   mormot.core.unicode,
   mormot.core.variants,
-  mormot.net.client,
+  mormot.net.async,
   mormot.net.http,
   mormot.net.server,
+  mormot.orm.base,
+  mormot.orm.core,
+  mormot.core.rtti,
+  mormot.rest.core,
+  mormot.rest.server,
+  mormot.rest.sqlite3,
+  mormot.rest.http.client,
+  mormot.rest.http.server,
+  mormot.soa.client,
+  mormot.soa.core,
+  mormot.soa.server,
   ms.shared,
-  ms.shared.client,
+  ms.shared.api,
+  ms.shared.jwt,
   ms.shared.service;
 
 type
 
   /// <summary>
-  ///   Gateway microservice that proxies requests to backend services,
-  ///   handles JWT authentication, serves static files, and provides
-  ///   aggregated post endpoints with author/tags/comments.
+  ///   Proxy implementation of IAuth that delegates to the auth backend.
+  /// </summary>
+  TAuthProxy = class(TInterfacedObject, IAuth)
+  private
+    FRemote: IAuth;
+  public
+    constructor Create(const aRemote: IAuth);
+    procedure Challenge(const aEmail: RawUtf8;
+      out aMcfInfo, aServerNonce: RawUtf8);
+    function Authenticate(const aEmail, aServerNonce, aClientProof: RawUtf8;
+      out aToken: RawUtf8; out aUserId: TID;
+      out aServerProof: RawUtf8): boolean;
+    function Register(const aEmail, aPassword: RawUtf8;
+      aUserId: TID): TID;
+    function Validate(const aToken: RawUtf8;
+      out aUserId: TID): boolean;
+    function ChangePassword(aUserId: TID;
+      const aOldPassword, aNewPassword: RawUtf8): boolean;
+  end;
+
+  /// <summary>
+  ///   Proxy implementation of IUser.
+  /// </summary>
+  TUserProxy = class(TInterfacedObject, IUser)
+  private
+    FRemote: IUser;
+  public
+    constructor Create(const aRemote: IUser);
+    function Get(aId: TID): RawJson;
+    function GetAll: RawJson;
+    function Add(const aData: RawJson): TID;
+    function Update(aId: TID; const aData: RawJson): boolean;
+    function Remove(aId: TID): boolean;
+  end;
+
+  /// <summary>
+  ///   Proxy implementation of IPost.
+  /// </summary>
+  TPostProxy = class(TInterfacedObject, IPost)
+  private
+    FRemote: IPost;
+  public
+    constructor Create(const aRemote: IPost);
+    function Get(aId: TID): RawJson;
+    function GetBySlug(const aSlug: RawUtf8): RawJson;
+    function GetList(aPage, aLimit, aStatus: integer;
+      aAuthorId: TID): RawJson;
+    function Add(const aData: RawJson): TID;
+    function Update(aId: TID; const aData: RawJson): boolean;
+    function Remove(aId: TID): boolean;
+  end;
+
+  /// <summary>
+  ///   Proxy implementation of ITag.
+  /// </summary>
+  TTagProxy = class(TInterfacedObject, ITag)
+  private
+    FRemote: ITag;
+  public
+    constructor Create(const aRemote: ITag);
+    function Get(aId: TID): RawJson;
+    function GetAll: RawJson;
+    function GetByPost(aPostId: TID): RawJson;
+    function SetPostTags(aPostId: TID;
+      const aTagIds: RawJson): boolean;
+    function Add(const aData: RawJson): TID;
+    function Update(aId: TID; const aData: RawJson): boolean;
+    function Remove(aId: TID): boolean;
+  end;
+
+  /// <summary>
+  ///   Proxy implementation of IComment.
+  /// </summary>
+  TCommentProxy = class(TInterfacedObject, IComment)
+  private
+    FRemote: IComment;
+  public
+    constructor Create(const aRemote: IComment);
+    function GetByPost(aPostId: TID): RawJson;
+    function GetPending: RawJson;
+    function Add(aPostId: TID; const aData: RawJson): TID;
+    function Approve(aId, aModeratedBy: TID): boolean;
+    function Reject(aId, aModeratedBy: TID): boolean;
+    function Remove(aId: TID): boolean;
+  end;
+
+  /// <summary>
+  ///   Proxy implementation of IMedia.
+  /// </summary>
+  TMediaProxy = class(TInterfacedObject, IMedia)
+  private
+    FRemote: IMedia;
+  public
+    constructor Create(const aRemote: IMedia);
+    function Upload(const aFileName, aFileData, aAltText: RawUtf8;
+      aUploadedBy: TID): TID;
+    function GetInfo(aId: TID): RawJson;
+    function GetFile(aId: TID;
+      out aContentType: RawUtf8): RawByteString;
+    function Remove(aId: TID): boolean;
+  end;
+
+  /// <summary>
+  ///   Aggregation service: enriches a post with author, tags, comments.
+  /// </summary>
+  TBlogService = class(TInterfacedObject, IBlog)
+  private
+    FPosts: IPost;
+    FUsers: IUser;
+    FTags: ITag;
+    FComments: IComment;
+  public
+    constructor Create(const aPosts: IPost; const aUsers: IUser;
+      const aTags: ITag; const aComments: IComment);
+    function GetPostFull(aId: TID): RawJson;
+  end;
+
+  /// <summary>
+  ///   Gateway microservice: hosts proxy services on a TRestServer
+  ///   and serves the static web frontend via THttpAsyncServer.
+  ///   API calls (/api/...) are delegated to a TRestServerDB hosting
+  ///   proxy services. Non-API calls serve static files from www/.
   /// </summary>
   TGatewayServer = class(TMicroService)
   private
-    FAuthClient: TMicroClient;
-    FUsersClient: TMicroClient;
-    FPostsClient: TMicroClient;
-    FTagsClient: TMicroClient;
-    FCommentsClient: TMicroClient;
-    FMediaClient: TMicroClient;
+    FAuthClient: TRestHttpClient;
+    FUsersClient: TRestHttpClient;
+    FPostsClient: TRestHttpClient;
+    FTagsClient: TRestHttpClient;
+    FCommentsClient: TRestHttpClient;
+    FMediaClient: TRestHttpClient;
     FWwwPath: TFileName;
-
-    /// <summary>
-    ///   Validates a JWT token by calling the auth service.
-    /// </summary>
-    /// <param name="aToken">
-    ///   The JWT token string to validate.
-    /// </param>
-    /// <param name="aUserId">
-    ///   Receives the authenticated user ID on success.
-    /// </param>
-    /// <returns>
-    ///   True if the token is valid.
-    /// </returns>
-    function ValidateToken(
-      const aToken: RawUtf8;
-      out aUserId: TID
-    ): boolean;
-
-    /// <summary>
-    ///   Extracts the bearer token from the Authorization header.
-    /// </summary>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <returns>
-    ///   The extracted token string, or empty if not found.
-    /// </returns>
-    function ExtractBearerToken(
-      aCtxt: THttpServerRequestAbstract
-    ): RawUtf8;
-
-    /// <summary>
-    ///   Serves a static file from the filesystem.
-    /// </summary>
-    /// <param name="aFilePath">
-    ///   The full path to the file to serve.
-    /// </param>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <returns>
-    ///   HTTP_SUCCESS if found, HTTP_NOTFOUND otherwise.
-    /// </returns>
-    function ServeStaticFile(
-      const aFilePath: TFileName;
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal;
-
-    /// <summary>
-    ///   Determines the MIME type for a given file name by extension.
-    /// </summary>
-    /// <param name="aFileName">
-    ///   The file name to check.
-    /// </param>
-    /// <returns>
-    ///   The MIME type string.
-    /// </returns>
-    function GuessMimeType(
-      const aFileName: TFileName
-    ): RawUtf8;
-
-    /// <summary>
-    ///   Proxies a GET request to a backend service.
-    /// </summary>
-    /// <param name="aClient">
-    ///   The backend service client.
-    /// </param>
-    /// <param name="aPath">
-    ///   The request path to forward.
-    /// </param>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <returns>
-    ///   The HTTP status code from the backend.
-    /// </returns>
-    function ProxyGet(
-      aClient: TMicroClient;
-      const aPath: RawUtf8;
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal;
-
-    /// <summary>
-    ///   Proxies a POST request to a backend service.
-    /// </summary>
-    /// <param name="aClient">
-    ///   The backend service client.
-    /// </param>
-    /// <param name="aPath">
-    ///   The request path to forward.
-    /// </param>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <returns>
-    ///   The HTTP status code from the backend.
-    /// </returns>
-    function ProxyPost(
-      aClient: TMicroClient;
-      const aPath: RawUtf8;
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal;
-
-    /// <summary>
-    ///   Proxies a PUT request to a backend service.
-    /// </summary>
-    /// <param name="aClient">
-    ///   The backend service client.
-    /// </param>
-    /// <param name="aPath">
-    ///   The request path to forward.
-    /// </param>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <returns>
-    ///   The HTTP status code from the backend.
-    /// </returns>
-    function ProxyPut(
-      aClient: TMicroClient;
-      const aPath: RawUtf8;
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal;
-
-    /// <summary>
-    ///   Proxies a DELETE request to a backend service.
-    /// </summary>
-    /// <param name="aClient">
-    ///   The backend service client.
-    /// </param>
-    /// <param name="aPath">
-    ///   The request path to forward.
-    /// </param>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <returns>
-    ///   The HTTP status code from the backend.
-    /// </returns>
-    function ProxyDelete(
-      aClient: TMicroClient;
-      const aPath: RawUtf8;
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal;
-
-    /// <summary>
-    ///   Handles a GET request for a single post, aggregating
-    ///   author, tags, and comments from their respective services.
-    /// </summary>
-    /// <param name="aPostPath">
-    ///   The post endpoint path to forward to the posts service.
-    /// </param>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <returns>
-    ///   The HTTP status code for the aggregated response.
-    /// </returns>
-    function HandleGetPost(
-      const aPostPath: RawUtf8;
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal;
-
-    /// <summary>
-    ///   Validates the bearer token and returns the user ID.
-    ///   Sets an error response if authentication fails.
-    /// </summary>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    /// <param name="aUserId">
-    ///   Receives the authenticated user ID on success.
-    /// </param>
-    /// <returns>
-    ///   True if the user is authenticated.
-    /// </returns>
-    function RequireAuth(
-      aCtxt: THttpServerRequestAbstract;
-      out aUserId: TID
-    ): boolean;
-
-    /// <summary>
-    ///   Sets CORS headers on the response.
-    /// </summary>
-    /// <param name="aCtxt">
-    ///   The HTTP request context.
-    /// </param>
-    procedure SetCorsHeaders(
-      aCtxt: THttpServerRequestAbstract
-    );
+    FOriginalHandler: TOnHttpServerRequest;
+    // Resolved remote interfaces
+    FAuth: IAuth;
+    FUsers: IUser;
+    FPosts: IPost;
+    FTags: ITag;
+    FComments: IComment;
+    FMedia: IMedia;
+    function ConnectToBackend(const aHost, aPort: RawUtf8;
+      const aInterfaces: array of PRttiInfo): TRestHttpClient;
+    function ServeStaticFile(const aFilePath: TFileName;
+      aCtxt: THttpServerRequestAbstract): cardinal;
+    function GuessMimeType(const aFileName: TFileName): RawUtf8;
+    function HandleRequest(aCtxt: THttpServerRequestAbstract): cardinal;
+    function HandleStaticFile(aCtxt: THttpServerRequestAbstract): cardinal;
   protected
-
-    /// <summary>
-    ///   Initializes backend service clients and the static file path.
-    /// </summary>
+    function CreateModel: TOrmModel; override;
+    procedure SetupServices; override;
     procedure DoInitialize; override;
-
-    /// <summary>
-    ///   Releases all backend service clients.
-    /// </summary>
     procedure DoFinalize; override;
-
-    /// <summary>
-    ///   Main request router for the gateway.
-    /// </summary>
-    /// <param name="aCtxt">
-    ///   The HTTP server request context.
-    /// </param>
-    /// <returns>
-    ///   The HTTP status code for the response.
-    /// </returns>
-    function OnRequest(
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal; override;
   end;
 
 implementation
 
+{ TAuthProxy }
+
+constructor TAuthProxy.Create(const aRemote: IAuth);
+begin
+  inherited Create;
+  FRemote := aRemote;
+end;
+
+procedure TAuthProxy.Challenge(const aEmail: RawUtf8;
+  out aMcfInfo, aServerNonce: RawUtf8);
+begin
+  FRemote.Challenge(aEmail, aMcfInfo, aServerNonce);
+end;
+
+function TAuthProxy.Authenticate(const aEmail, aServerNonce,
+  aClientProof: RawUtf8; out aToken: RawUtf8; out aUserId: TID;
+  out aServerProof: RawUtf8): boolean;
+begin
+  Result := FRemote.Authenticate(aEmail, aServerNonce, aClientProof,
+    aToken, aUserId, aServerProof);
+end;
+
+function TAuthProxy.Register(const aEmail, aPassword: RawUtf8;
+  aUserId: TID): TID;
+begin
+  Result := FRemote.Register(aEmail, aPassword, aUserId);
+end;
+
+function TAuthProxy.Validate(const aToken: RawUtf8;
+  out aUserId: TID): boolean;
+begin
+  Result := FRemote.Validate(aToken, aUserId);
+end;
+
+function TAuthProxy.ChangePassword(aUserId: TID;
+  const aOldPassword, aNewPassword: RawUtf8): boolean;
+begin
+  Result := FRemote.ChangePassword(aUserId, aOldPassword, aNewPassword);
+end;
+
+{ TUserProxy }
+
+constructor TUserProxy.Create(const aRemote: IUser);
+begin
+  inherited Create;
+  FRemote := aRemote;
+end;
+
+function TUserProxy.Get(aId: TID): RawJson;
+begin
+  Result := FRemote.Get(aId);
+end;
+
+function TUserProxy.GetAll: RawJson;
+begin
+  Result := FRemote.GetAll;
+end;
+
+function TUserProxy.Add(const aData: RawJson): TID;
+begin
+  Result := FRemote.Add(aData);
+end;
+
+function TUserProxy.Update(aId: TID; const aData: RawJson): boolean;
+begin
+  Result := FRemote.Update(aId, aData);
+end;
+
+function TUserProxy.Remove(aId: TID): boolean;
+begin
+  Result := FRemote.Remove(aId);
+end;
+
+{ TPostProxy }
+
+constructor TPostProxy.Create(const aRemote: IPost);
+begin
+  inherited Create;
+  FRemote := aRemote;
+end;
+
+function TPostProxy.Get(aId: TID): RawJson;
+begin
+  Result := FRemote.Get(aId);
+end;
+
+function TPostProxy.GetBySlug(const aSlug: RawUtf8): RawJson;
+begin
+  Result := FRemote.GetBySlug(aSlug);
+end;
+
+function TPostProxy.GetList(aPage, aLimit, aStatus: integer;
+  aAuthorId: TID): RawJson;
+begin
+  Result := FRemote.GetList(aPage, aLimit, aStatus, aAuthorId);
+end;
+
+function TPostProxy.Add(const aData: RawJson): TID;
+begin
+  Result := FRemote.Add(aData);
+end;
+
+function TPostProxy.Update(aId: TID; const aData: RawJson): boolean;
+begin
+  Result := FRemote.Update(aId, aData);
+end;
+
+function TPostProxy.Remove(aId: TID): boolean;
+begin
+  Result := FRemote.Remove(aId);
+end;
+
+{ TTagProxy }
+
+constructor TTagProxy.Create(const aRemote: ITag);
+begin
+  inherited Create;
+  FRemote := aRemote;
+end;
+
+function TTagProxy.Get(aId: TID): RawJson;
+begin
+  Result := FRemote.Get(aId);
+end;
+
+function TTagProxy.GetAll: RawJson;
+begin
+  Result := FRemote.GetAll;
+end;
+
+function TTagProxy.GetByPost(aPostId: TID): RawJson;
+begin
+  Result := FRemote.GetByPost(aPostId);
+end;
+
+function TTagProxy.SetPostTags(aPostId: TID;
+  const aTagIds: RawJson): boolean;
+begin
+  Result := FRemote.SetPostTags(aPostId, aTagIds);
+end;
+
+function TTagProxy.Add(const aData: RawJson): TID;
+begin
+  Result := FRemote.Add(aData);
+end;
+
+function TTagProxy.Update(aId: TID; const aData: RawJson): boolean;
+begin
+  Result := FRemote.Update(aId, aData);
+end;
+
+function TTagProxy.Remove(aId: TID): boolean;
+begin
+  Result := FRemote.Remove(aId);
+end;
+
+{ TCommentProxy }
+
+constructor TCommentProxy.Create(const aRemote: IComment);
+begin
+  inherited Create;
+  FRemote := aRemote;
+end;
+
+function TCommentProxy.GetByPost(aPostId: TID): RawJson;
+begin
+  Result := FRemote.GetByPost(aPostId);
+end;
+
+function TCommentProxy.GetPending: RawJson;
+begin
+  Result := FRemote.GetPending;
+end;
+
+function TCommentProxy.Add(aPostId: TID;
+  const aData: RawJson): TID;
+begin
+  Result := FRemote.Add(aPostId, aData);
+end;
+
+function TCommentProxy.Approve(aId, aModeratedBy: TID): boolean;
+begin
+  Result := FRemote.Approve(aId, aModeratedBy);
+end;
+
+function TCommentProxy.Reject(aId, aModeratedBy: TID): boolean;
+begin
+  Result := FRemote.Reject(aId, aModeratedBy);
+end;
+
+function TCommentProxy.Remove(aId: TID): boolean;
+begin
+  Result := FRemote.Remove(aId);
+end;
+
+{ TMediaProxy }
+
+constructor TMediaProxy.Create(const aRemote: IMedia);
+begin
+  inherited Create;
+  FRemote := aRemote;
+end;
+
+function TMediaProxy.Upload(const aFileName, aFileData,
+  aAltText: RawUtf8; aUploadedBy: TID): TID;
+begin
+  Result := FRemote.Upload(aFileName, aFileData, aAltText, aUploadedBy);
+end;
+
+function TMediaProxy.GetInfo(aId: TID): RawJson;
+begin
+  Result := FRemote.GetInfo(aId);
+end;
+
+function TMediaProxy.GetFile(aId: TID;
+  out aContentType: RawUtf8): RawByteString;
+begin
+  Result := FRemote.GetFile(aId, aContentType);
+end;
+
+function TMediaProxy.Remove(aId: TID): boolean;
+begin
+  Result := FRemote.Remove(aId);
+end;
+
+{ TBlogService }
+
+constructor TBlogService.Create(const aPosts: IPost;
+  const aUsers: IUser; const aTags: ITag;
+  const aComments: IComment);
+begin
+  inherited Create;
+  FPosts := aPosts;
+  FUsers := aUsers;
+  FTags := aTags;
+  FComments := aComments;
+end;
+
+function TBlogService.GetPostFull(aId: TID): RawJson;
+var
+  PostJson, AuthorJson, TagsJson, CommentsJson: RawJson;
+  PostDoc: TDocVariantData;
+  AuthorId, PostId: TID;
+begin
+  PostJson := FPosts.Get(aId);
+  if (PostJson = '') or (PostJson = '{}') then
+  begin
+    Result := '{}';
+    Exit;
+  end;
+  PostDoc.InitJson(PostJson, JSON_FAST_FLOAT);
+  AuthorId := PostDoc.I['AuthorId'];
+  PostId := PostDoc.I['RowID'];
+  if PostId = 0 then
+    PostId := PostDoc.I['ID'];
+  // Enrich with author
+  AuthorJson := FUsers.Get(AuthorId);
+  if (AuthorJson <> '') and (AuthorJson <> '{}') then
+    PostDoc.AddValue('Author', _JsonFast(AuthorJson))
+  else
+    PostDoc.AddValue('Author', null);
+  // Enrich with tags
+  if PostId > 0 then
+  begin
+    TagsJson := FTags.GetByPost(PostId);
+    if (TagsJson <> '') and (TagsJson <> '[]') then
+      PostDoc.AddValue('Tags', _JsonFast(TagsJson))
+    else
+      PostDoc.AddValue('Tags', _ArrFast([]));
+    // Enrich with comments
+    CommentsJson := FComments.GetByPost(PostId);
+    if (CommentsJson <> '') and (CommentsJson <> '[]') then
+      PostDoc.AddValue('Comments', _JsonFast(CommentsJson))
+    else
+      PostDoc.AddValue('Comments', _ArrFast([]));
+  end;
+  Result := RawJson(PostDoc.ToJson);
+end;
+
 { TGatewayServer }
 
-// ===== Initialization =====
+function TGatewayServer.ConnectToBackend(const aHost, aPort: RawUtf8;
+  const aInterfaces: array of PRttiInfo): TRestHttpClient;
+var
+  ClientModel: TOrmModel;
+  i: PtrInt;
+begin
+  ClientModel := TOrmModel.Create([], MODEL_ROOT);
+  Result := TRestHttpClient.Create(aHost, aPort, ClientModel);
+  Result.Model.Owner := Result; // model freed with client
+  Result.ServiceRegister(aInterfaces, sicShared);
+  // Backend services use ResultAsJsonObjectWithoutResult format --
+  // the client factories must match to parse responses correctly
+  for i := 0 to High(aInterfaces) do
+    TServiceFactoryClient(Result.Services.Info(aInterfaces[i]))
+      .ResultAsJsonObjectWithoutResult := True;
+end;
+
+function TGatewayServer.CreateModel: TOrmModel;
+begin
+  Result := TOrmModel.Create([], MODEL_ROOT);
+end;
+
+procedure TGatewayServer.SetupServices;
+var
+  Factory: TServiceFactoryServerAbstract;
+
+  procedure RegisterProxy(aImpl: TInterfacedObject;
+    aInterface: PRttiInfo);
+  begin
+    Factory := FRestServer.ServiceRegister(
+      aImpl, [aInterface]) ;
+    Factory.ByPassAuthentication := True;
+    Factory.ResultAsJsonObjectWithoutResult := True;
+  end;
+
+begin
+  FWwwPath := Executable.ProgramFilePath + 'www' + PathDelim;
+  if not DirectoryExists(FWwwPath) then
+    CreateDir(FWwwPath);
+  // Connect to backend services and resolve interfaces
+  FAuthClient := ConnectToBackend('localhost', PORT_AUTH,
+    [TypeInfo(IAuth)]);
+  FAuthClient.Services.Resolve(IAuth, FAuth);
+  FUsersClient := ConnectToBackend('localhost', PORT_USERS,
+    [TypeInfo(IUser)]);
+  FUsersClient.Services.Resolve(IUser, FUsers);
+  FPostsClient := ConnectToBackend('localhost', PORT_POSTS,
+    [TypeInfo(IPost)]);
+  FPostsClient.Services.Resolve(IPost, FPosts);
+  FTagsClient := ConnectToBackend('localhost', PORT_TAGS,
+    [TypeInfo(ITag)]);
+  FTagsClient.Services.Resolve(ITag, FTags);
+  FCommentsClient := ConnectToBackend('localhost', PORT_COMMENTS,
+    [TypeInfo(IComment)]);
+  FCommentsClient.Services.Resolve(IComment, FComments);
+  FMediaClient := ConnectToBackend('localhost', PORT_MEDIA,
+    [TypeInfo(IMedia)]);
+  FMediaClient.Services.Resolve(IMedia, FMedia);
+  // Register proxy services on our REST server
+  RegisterProxy(TAuthProxy.Create(FAuth), TypeInfo(IAuth));
+  RegisterProxy(TUserProxy.Create(FUsers), TypeInfo(IUser));
+  RegisterProxy(TPostProxy.Create(FPosts), TypeInfo(IPost));
+  RegisterProxy(TTagProxy.Create(FTags), TypeInfo(ITag));
+  RegisterProxy(TCommentProxy.Create(FComments), TypeInfo(IComment));
+  RegisterProxy(TMediaProxy.Create(FMedia), TypeInfo(IMedia));
+  // Register aggregation service
+  RegisterProxy(
+    TBlogService.Create(FPosts, FUsers, FTags, FComments),
+    TypeInfo(IBlog));
+end;
+
+procedure TGatewayServer.DoInitialize;
+begin
+  // Intercept the HTTP handler to add static file serving
+  // for non-API requests (SPA frontend from www/ directory).
+  // The original handler processes /api/* routes via TRestServer.
+  FOriginalHandler := FHttpServer.HttpServer.OnRequest;
+  FHttpServer.HttpServer.OnRequest := HandleRequest;
+end;
 
 procedure TGatewayServer.DoFinalize;
 begin
+  // Release interfaces before clients
+  FAuth := nil;
+  FUsers := nil;
+  FPosts := nil;
+  FTags := nil;
+  FComments := nil;
+  FMedia := nil;
   FreeAndNil(FMediaClient);
   FreeAndNil(FCommentsClient);
   FreeAndNil(FTagsClient);
@@ -278,279 +576,80 @@ begin
   FreeAndNil(FAuthClient);
 end;
 
-procedure TGatewayServer.DoInitialize;
+function TGatewayServer.HandleRequest(
+  aCtxt: THttpServerRequestAbstract): cardinal;
 begin
-  FWwwPath := Executable.ProgramFilePath + 'www' + PathDelim;
-  if not DirectoryExists(FWwwPath) then
-    CreateDir(FWwwPath);
-  FAuthClient := TMicroClient.Create(Config.AuthUrl, SERVICE_AUTH);
-  FUsersClient := TMicroClient.Create(Config.UsersUrl, SERVICE_USERS);
-  FPostsClient := TMicroClient.Create(Config.PostsUrl, SERVICE_POSTS);
-  FTagsClient := TMicroClient.Create(Config.TagsUrl, SERVICE_TAGS);
-  FCommentsClient := TMicroClient.Create(Config.CommentsUrl, SERVICE_COMMENTS);
-  FMediaClient := TMicroClient.Create(Config.MediaUrl, SERVICE_MEDIA);
-end;
-
-// ===== Helper methods =====
-
-function TGatewayServer.ExtractBearerToken(
-  aCtxt: THttpServerRequestAbstract
-): RawUtf8;
-var
-  AuthHeader: RawUtf8;
-begin
-  Result := '';
-  AuthHeader := FindIniNameValue(pointer(aCtxt.InHeaders),
-    'AUTHORIZATION: ');
-  if IdemPChar(pointer(AuthHeader), 'BEARER ') then
-    Result := TrimU(Copy(AuthHeader, 8, MaxInt));
-end;
-
-function TGatewayServer.RequireAuth(
-  aCtxt: THttpServerRequestAbstract;
-  out aUserId: TID
-): boolean;
-var
-  Token: RawUtf8;
-begin
-  Token := ExtractBearerToken(aCtxt);
-  Result := ValidateToken(Token, aUserId);
-  if not Result then
-  begin
-    aCtxt.OutContent := '{"error":"unauthorized"}';
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  end;
-end;
-
-procedure TGatewayServer.SetCorsHeaders(
-  aCtxt: THttpServerRequestAbstract
-);
-begin
+  // Add CORS headers for all responses
   aCtxt.OutCustomHeaders :=
     'Access-Control-Allow-Origin: *'#13#10 +
     'Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS'#13#10 +
     'Access-Control-Allow-Headers: Content-Type, Authorization';
-end;
-
-function TGatewayServer.ValidateToken(
-  const aToken: RawUtf8;
-  out aUserId: TID
-): boolean;
-var
-  StatusCode: integer;
-  ResponseBody: RawUtf8;
-  JsonDoc: TDocVariantData;
-begin
-  Result := False;
-  aUserId := 0;
-  if aToken = '' then
-    Exit;
-  ResponseBody := FAuthClient.Post('/api/auth/validate',
-    FormatUtf8('{"Token":"%"}', [aToken]), StatusCode);
-  if StatusCode = 200 then
+  // Handle CORS preflight
+  if aCtxt.Method = 'OPTIONS' then
   begin
-    JsonDoc.InitJson(ResponseBody, JSON_FAST_FLOAT);
-    Result := JsonDoc.B['valid'];
-    if Result then
-      aUserId := JsonDoc.I['userId'];
-  end;
-end;
-
-// ===== Proxy methods =====
-
-function TGatewayServer.ProxyDelete(
-  aClient: TMicroClient;
-  const aPath: RawUtf8;
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
-var
-  StatusCode: integer;
-begin
-  aCtxt.OutContent := aClient.Delete(aPath, StatusCode);
-  aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  Result := StatusCode;
-end;
-
-function TGatewayServer.ProxyGet(
-  aClient: TMicroClient;
-  const aPath: RawUtf8;
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
-var
-  StatusCode: integer;
-begin
-  aCtxt.OutContent := aClient.Get(aPath, StatusCode);
-  aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  Result := StatusCode;
-end;
-
-function TGatewayServer.ProxyPost(
-  aClient: TMicroClient;
-  const aPath: RawUtf8;
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
-var
-  StatusCode: integer;
-begin
-  aCtxt.OutContent := aClient.Post(aPath,
-    aCtxt.InContent, StatusCode);
-  aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  Result := StatusCode;
-end;
-
-function TGatewayServer.ProxyPut(
-  aClient: TMicroClient;
-  const aPath: RawUtf8;
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
-var
-  StatusCode: integer;
-begin
-  aCtxt.OutContent := aClient.Put(aPath,
-    aCtxt.InContent, StatusCode);
-  aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  Result := StatusCode;
-end;
-
-// ===== Aggregated post endpoint =====
-
-function TGatewayServer.HandleGetPost(
-  const aPostPath: RawUtf8;
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
-var
-  StatusCode: integer;
-  PostJson, AuthorJson, TagsJson, CommentsJson: RawUtf8;
-  PostDoc: TDocVariantData;
-  AuthorId, PostId: TID;
-begin
-  // Load post
-  PostJson := FPostsClient.Get(aPostPath, StatusCode);
-  if StatusCode <> 200 then
-  begin
-    aCtxt.OutContent := PostJson;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-    Result := StatusCode;
+    aCtxt.OutContent := '';
+    Result := HTTP_NOCONTENT;
     Exit;
   end;
+  // API calls go to the REST server (interface-based services)
+  if IdemPChar(pointer(aCtxt.Url), '/API/') or
+     IdemPChar(pointer(aCtxt.Url), '/API') then
+    Result := FOriginalHandler(aCtxt)
+  else
+    // Non-API calls serve static files (SPA frontend)
+    Result := HandleStaticFile(aCtxt);
+end;
 
-  PostDoc.InitJson(PostJson, JSON_FAST_FLOAT);
-  AuthorId := PostDoc.I['AuthorId'];
-  PostId := PostDoc.I['RowID'];
-  if PostId = 0 then
-    PostId := PostDoc.I['ID'];
-
-  // Load author
-  AuthorJson := FUsersClient.Get(
-    FormatUtf8('/api/users/%', [AuthorId]), StatusCode);
-  if StatusCode = 200 then
-  begin
-    PostDoc.AddValue('Author', _JsonFast(AuthorJson));
-  end
+function TGatewayServer.HandleStaticFile(
+  aCtxt: THttpServerRequestAbstract): cardinal;
+var
+  Path: RawUtf8;
+  FilePath: TFileName;
+begin
+  Path := aCtxt.Url;
+  if (Path = '/') or (Path = '') then
+    FilePath := FWwwPath + 'index.html'
   else
   begin
-    PostDoc.AddValue('Author', null);
-  end;
-
-  // Load tags
-  if PostId > 0 then
-  begin
-    TagsJson := FTagsClient.Get(
-      FormatUtf8('/api/posts/%/tags', [PostId]), StatusCode);
-    if StatusCode = 200 then
+    // Prevent path traversal
+    if PosEx('..', Path) > 0 then
     begin
-      PostDoc.AddValue('Tags', _JsonFast(TagsJson));
-    end
-    else
-    begin
-      PostDoc.AddValue('Tags', _ArrFast([]));
+      Result := HTTP_FORBIDDEN;
+      Exit;
     end;
-
-    // Load comments (approved only)
-    CommentsJson := FCommentsClient.Get(
-      FormatUtf8('/api/posts/%/comments', [PostId]), StatusCode);
-    if StatusCode = 200 then
-    begin
-      PostDoc.AddValue('Comments', _JsonFast(CommentsJson));
-    end
-    else
-    begin
-      PostDoc.AddValue('Comments', _ArrFast([]));
-    end;
+    FilePath := FWwwPath + StringReplace(
+      Utf8ToString(Copy(Path, 2, MaxInt)), '/', PathDelim, [rfReplaceAll]);
   end;
-
-  aCtxt.OutContent := PostDoc.ToJson;
-  aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  Result := HTTP_SUCCESS;
+  Result := ServeStaticFile(FilePath, aCtxt);
+  // SPA fallback: unmatched routes serve index.html
+  if Result = HTTP_NOTFOUND then
+    Result := ServeStaticFile(FWwwPath + 'index.html', aCtxt);
 end;
-
-// ===== Static files =====
 
 function TGatewayServer.GuessMimeType(
-  const aFileName: TFileName
-): RawUtf8;
+  const aFileName: TFileName): RawUtf8;
 var
-  FileExt: string;
+  Ext: string;
 begin
-  FileExt := System.SysUtils.LowerCase(ExtractFileExt(aFileName));
-  if FileExt = '.html' then
-  begin
-    Result := 'text/html; charset=utf-8';
-  end
-  else if FileExt = '.css' then
-  begin
-    Result := 'text/css; charset=utf-8';
-  end
-  else if FileExt = '.js' then
-  begin
-    Result := 'application/javascript; charset=utf-8';
-  end
-  else if FileExt = '.json' then
-  begin
-    Result := JSON_CONTENT_TYPE;
-  end
-  else if FileExt = '.png' then
-  begin
-    Result := 'image/png';
-  end
-  else if FileExt = '.jpg' then
-  begin
-    Result := 'image/jpeg';
-  end
-  else if FileExt = '.jpeg' then
-  begin
-    Result := 'image/jpeg';
-  end
-  else if FileExt = '.gif' then
-  begin
-    Result := 'image/gif';
-  end
-  else if FileExt = '.svg' then
-  begin
-    Result := 'image/svg+xml';
-  end
-  else if FileExt = '.ico' then
-  begin
-    Result := 'image/x-icon';
-  end
-  else if FileExt = '.woff2' then
-  begin
-    Result := 'font/woff2';
-  end
-  else if FileExt = '.woff' then
-  begin
-    Result := 'font/woff';
-  end
-  else
-  begin
-    Result := 'application/octet-stream';
-  end;
+  Ext := SysUtils.LowerCase(ExtractFileExt(aFileName));
+  if Ext = '.html' then Result := 'text/html; charset=utf-8'
+  else if Ext = '.css' then Result := 'text/css; charset=utf-8'
+  else if Ext = '.js' then Result := 'application/javascript; charset=utf-8'
+  else if Ext = '.json' then Result := JSON_CONTENT_TYPE
+  else if Ext = '.png' then Result := 'image/png'
+  else if Ext = '.jpg' then Result := 'image/jpeg'
+  else if Ext = '.jpeg' then Result := 'image/jpeg'
+  else if Ext = '.gif' then Result := 'image/gif'
+  else if Ext = '.svg' then Result := 'image/svg+xml'
+  else if Ext = '.ico' then Result := 'image/x-icon'
+  else if Ext = '.woff2' then Result := 'font/woff2'
+  else if Ext = '.woff' then Result := 'font/woff'
+  else Result := 'application/octet-stream';
 end;
 
 function TGatewayServer.ServeStaticFile(
   const aFilePath: TFileName;
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
+  aCtxt: THttpServerRequestAbstract): cardinal;
 begin
   if FileExists(aFilePath) then
   begin
@@ -559,369 +658,7 @@ begin
     Result := HTTP_SUCCESS;
   end
   else
-  begin
     Result := HTTP_NOTFOUND;
-  end;
-end;
-
-// ===== Main routing =====
-
-function TGatewayServer.OnRequest(
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
-var
-  Path: RawUtf8;
-  UserId: TID;
-  FilePath: TFileName;
-  QueryPos: PtrInt;
-begin
-  // Extract path without query string for routing decisions.
-  // For forwarding to backend services, aCtxt.Url
-  // (with query string) is used.
-  Path := aCtxt.Url;
-  QueryPos := PosExChar('?', Path);
-  if QueryPos > 0 then
-    Path := Copy(Path, 1, QueryPos - 1);
-  SetCorsHeaders(aCtxt);
-
-  // CORS Preflight
-  if aCtxt.Method = 'OPTIONS' then
-  begin
-    aCtxt.OutContent := '';
-    Result := HTTP_NOCONTENT;
-    Exit;
-  end;
-
-  // ===== AUTH API =====
-
-  if IdemPChar(pointer(Path), '/API/AUTH/') then
-  begin
-    if aCtxt.Method = 'POST' then
-    begin
-      Result := ProxyPost(FAuthClient, aCtxt.Url, aCtxt);
-    end
-    else if aCtxt.Method = 'PUT' then
-    begin
-      if not RequireAuth(aCtxt, UserId) then
-      begin
-        Result := HTTP_UNAUTHORIZED;
-      end
-      else
-      begin
-        Result := ProxyPut(FAuthClient, aCtxt.Url, aCtxt);
-      end;
-    end
-    else
-    begin
-      Result := HTTP_NOTALLOWED;
-    end;
-  end
-
-  // ===== USERS API =====
-
-  else if IdemPChar(pointer(Path), '/API/USERS') then
-  begin
-    case aCtxt.Method[1] of
-      'G': // GET
-      begin
-        Result := ProxyGet(FUsersClient, aCtxt.Url, aCtxt);
-      end;
-      'P': // POST or PUT
-      begin
-        if not RequireAuth(aCtxt, UserId) then
-        begin
-          Result := HTTP_UNAUTHORIZED;
-        end
-        else if aCtxt.Method = 'POST' then
-        begin
-          Result := ProxyPost(FUsersClient, aCtxt.Url, aCtxt);
-        end
-        else
-        begin
-          Result := ProxyPut(FUsersClient, aCtxt.Url, aCtxt);
-        end;
-      end;
-      'D': // DELETE
-      begin
-        if not RequireAuth(aCtxt, UserId) then
-        begin
-          Result := HTTP_UNAUTHORIZED;
-        end
-        else
-        begin
-          Result := ProxyDelete(FUsersClient, aCtxt.Url, aCtxt);
-        end;
-      end;
-    else
-      Result := HTTP_NOTALLOWED;
-    end;
-  end
-
-  // ===== POSTS API =====
-
-  else if IdemPChar(pointer(Path), '/API/POSTS') then
-  begin
-    // Comment sub-routes: /api/posts/{id}/comments
-    if PosEx('/comments', Path) > 0 then
-    begin
-      if aCtxt.Method = 'POST' then
-      begin
-        Result := ProxyPost(FCommentsClient, aCtxt.Url, aCtxt);
-      end
-      else if aCtxt.Method = 'GET' then
-      begin
-        Result := ProxyGet(FCommentsClient, aCtxt.Url, aCtxt);
-      end
-      else
-      begin
-        Result := HTTP_NOTALLOWED;
-      end;
-    end
-    // Tag sub-routes: /api/posts/{id}/tags
-    else if PosEx('/tags', Path) > 0 then
-    begin
-      if aCtxt.Method = 'GET' then
-      begin
-        Result := ProxyGet(FTagsClient, aCtxt.Url, aCtxt);
-      end
-      else
-      begin
-        if not RequireAuth(aCtxt, UserId) then
-        begin
-          Result := HTTP_UNAUTHORIZED;
-        end
-        else if aCtxt.Method = 'PUT' then
-        begin
-          Result := ProxyPut(FTagsClient, aCtxt.Url, aCtxt);
-        end
-        else
-        begin
-          Result := ProxyPost(FTagsClient, aCtxt.Url, aCtxt);
-        end;
-      end;
-    end
-    // Regular post routes
-    else
-    begin
-      case aCtxt.Method[1] of
-        'G': // GET -- aggregated with author/tags/comments
-        begin
-          // Single post: aggregated response
-          if (Path <> '/api/posts') and
-             not IdemPChar(pointer(Path), '/API/POSTS/BY-') then
-          begin
-            Result := HandleGetPost(aCtxt.Url, aCtxt);
-          end
-          else
-          begin
-            Result := ProxyGet(FPostsClient, aCtxt.Url, aCtxt);
-          end;
-        end;
-        'P': // POST or PUT (both start with 'P')
-        begin
-          if not RequireAuth(aCtxt, UserId) then
-          begin
-            Result := HTTP_UNAUTHORIZED;
-          end
-          else if aCtxt.Method = 'POST' then
-          begin
-            Result := ProxyPost(FPostsClient, aCtxt.Url, aCtxt);
-          end
-          else
-          begin
-            Result := ProxyPut(FPostsClient, aCtxt.Url, aCtxt);
-          end;
-        end;
-        'D': // DELETE
-        begin
-          if not RequireAuth(aCtxt, UserId) then
-          begin
-            Result := HTTP_UNAUTHORIZED;
-          end
-          else
-          begin
-            Result := ProxyDelete(FPostsClient, aCtxt.Url, aCtxt);
-          end;
-        end;
-      else
-        Result := HTTP_NOTALLOWED;
-      end;
-    end;
-  end
-
-  // ===== TAGS API =====
-
-  else if IdemPChar(pointer(Path), '/API/TAGS') then
-  begin
-    case aCtxt.Method[1] of
-      'G':
-      begin
-        Result := ProxyGet(FTagsClient, aCtxt.Url, aCtxt);
-      end;
-      'P': // POST/PUT
-      begin
-        if not RequireAuth(aCtxt, UserId) then
-        begin
-          Result := HTTP_UNAUTHORIZED;
-        end
-        else if aCtxt.Method = 'POST' then
-        begin
-          Result := ProxyPost(FTagsClient, aCtxt.Url, aCtxt);
-        end
-        else
-        begin
-          Result := ProxyPut(FTagsClient, aCtxt.Url, aCtxt);
-        end;
-      end;
-      'D':
-      begin
-        if not RequireAuth(aCtxt, UserId) then
-        begin
-          Result := HTTP_UNAUTHORIZED;
-        end
-        else
-        begin
-          Result := ProxyDelete(FTagsClient, aCtxt.Url, aCtxt);
-        end;
-      end;
-    else
-      Result := HTTP_NOTALLOWED;
-    end;
-  end
-
-  // ===== COMMENTS API =====
-  // POST /api/posts/{id}/comments is public (no auth)
-  // Moderation requires auth
-
-  else if IdemPChar(pointer(Path), '/API/COMMENTS') then
-  begin
-    case aCtxt.Method[1] of
-      'G':
-      begin
-        // pending requires auth
-        if Path = '/api/comments/pending' then
-        begin
-          if not RequireAuth(aCtxt, UserId) then
-          begin
-            Result := HTTP_UNAUTHORIZED;
-          end
-          else
-          begin
-            Result := ProxyGet(FCommentsClient, aCtxt.Url, aCtxt);
-          end;
-        end
-        else
-        begin
-          Result := ProxyGet(FCommentsClient, aCtxt.Url, aCtxt);
-        end;
-      end;
-      'P': // PUT (approve/reject) requires auth
-      begin
-        if not RequireAuth(aCtxt, UserId) then
-        begin
-          Result := HTTP_UNAUTHORIZED;
-        end
-        else if aCtxt.Method = 'PUT' then
-        begin
-          Result := ProxyPut(FCommentsClient, aCtxt.Url, aCtxt);
-        end
-        else
-        begin
-          Result := ProxyPost(FCommentsClient, aCtxt.Url, aCtxt);
-        end;
-      end;
-      'D':
-      begin
-        if not RequireAuth(aCtxt, UserId) then
-        begin
-          Result := HTTP_UNAUTHORIZED;
-        end
-        else
-        begin
-          Result := ProxyDelete(FCommentsClient, aCtxt.Url, aCtxt);
-        end;
-      end;
-    else
-      Result := HTTP_NOTALLOWED;
-    end;
-  end
-
-  // ===== MEDIA API =====
-
-  else if IdemPChar(pointer(Path), '/API/MEDIA') then
-  begin
-    if aCtxt.Method = 'GET' then
-    begin
-      // Serve image: pass through directly (including binary data)
-      Result := ProxyGet(FMediaClient, aCtxt.Url, aCtxt);
-      // Content-Type is taken from the media service
-    end
-    else if aCtxt.Method = 'POST' then
-    begin
-      if not RequireAuth(aCtxt, UserId) then
-      begin
-        Result := HTTP_UNAUTHORIZED;
-      end
-      else
-      begin
-        Result := ProxyPost(FMediaClient, aCtxt.Url, aCtxt);
-      end;
-    end
-    else if aCtxt.Method = 'DELETE' then
-    begin
-      if not RequireAuth(aCtxt, UserId) then
-      begin
-        Result := HTTP_UNAUTHORIZED;
-      end
-      else
-      begin
-        Result := ProxyDelete(FMediaClient, aCtxt.Url, aCtxt);
-      end;
-    end
-    else
-    begin
-      Result := HTTP_NOTALLOWED;
-    end;
-  end
-
-  // ===== STATIC FILES =====
-
-  else if (aCtxt.Method = 'GET') then
-  begin
-    // /api/health and /api/shutdown go to base class
-    if IdemPChar(pointer(Path), '/API/') then
-    begin
-      Result := inherited OnRequest(aCtxt);
-      Exit;
-    end;
-
-    // Static files from www/
-    if (Path = '/') or (Path = '') then
-    begin
-      FilePath := FWwwPath + 'index.html';
-    end
-    else
-    begin
-      // Prevent path traversal
-      if PosEx('..', Path) > 0 then
-      begin
-        Result := HTTP_FORBIDDEN;
-        Exit;
-      end;
-      FilePath := FWwwPath +
-        StringReplace(Utf8ToString(Copy(Path, 2, MaxInt)),
-          '/', PathDelim, [rfReplaceAll]);
-    end;
-
-    Result := ServeStaticFile(FilePath, aCtxt);
-
-    // SPA fallback: routes not found -> index.html
-    if Result = HTTP_NOTFOUND then
-      Result := ServeStaticFile(FWwwPath + 'index.html', aCtxt);
-  end
-
-  else
-    Result := inherited OnRequest(aCtxt);
 end;
 
 end.

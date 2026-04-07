@@ -20,7 +20,7 @@ type
   /// <summary>
   ///   Stores a tag with its unique name and slug.
   /// </summary>
-  TOrmTag = class(TOrm)
+  TOrmBlogTag = class(TOrm)
   private
     FName: RawUtf8;
     FSlug: RawUtf8;
@@ -79,7 +79,7 @@ type
 ///   Creates the ORM model for the Tags service.
 /// </summary>
 /// <returns>
-///   A TOrmModel instance containing TOrmTag and TOrmPostTag.
+///   A TOrmModel instance containing TOrmBlogTag and TOrmPostTag.
 /// </returns>
 function CreateTagsModel: TOrmModel;
 
@@ -87,7 +87,7 @@ implementation
 
 function CreateTagsModel: TOrmModel;
 begin
-  Result := TOrmModel.Create([TOrmTag, TOrmPostTag]);
+  Result := TOrmModel.Create([TOrmBlogTag, TOrmPostTag]);
 end;
 
 end.

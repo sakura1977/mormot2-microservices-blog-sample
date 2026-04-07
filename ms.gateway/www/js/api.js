@@ -1,6 +1,10 @@
 /**
  * API client for the blog microservices.
- * All requests go through the gateway (same origin).
+ * Uses mORMot2 SOA (interface-based services) via the gateway.
+ *
+ * URL format:  POST /api/ServiceName/MethodName
+ * Input:       JSON array of positional parameters
+ * Output:      JSON object with named out-params + "Result" key
  *
  * Authentication uses SCRAM-MCF (RFC 5802 + MCF extension):
  *   1. Client requests a challenge (MCF format info + server nonce)
@@ -16,9 +20,6 @@
 const SCRAM = {
 
   // -- passlib-compatible base64 (used inside MCF strings) --
-  // Alphabet: ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./
-  // No padding.
-
   _PASSLIB64: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./',
 
   passlibDecode(str) {
@@ -30,10 +31,7 @@ const SCRAM = {
       if (lut[ch] === undefined) continue;
       val = (val << 6) | lut[ch];
       bits += 6;
-      if (bits >= 8) {
-        bits -= 8;
-        out.push((val >>> bits) & 0xff);
-      }
+      if (bits >= 8) { bits -= 8; out.push((val >>> bits) & 0xff); }
     }
     return new Uint8Array(out);
   },
@@ -42,24 +40,18 @@ const SCRAM = {
     const alph = this._PASSLIB64;
     let out = '', bits = 0, val = 0;
     for (const b of bytes) {
-      val = (val << 8) | b;
-      bits += 8;
-      while (bits >= 6) {
-        bits -= 6;
-        out += alph[(val >>> bits) & 0x3f];
-      }
+      val = (val << 8) | b; bits += 8;
+      while (bits >= 6) { bits -= 6; out += alph[(val >>> bits) & 0x3f]; }
     }
     if (bits > 0) out += alph[(val << (6 - bits)) & 0x3f];
     return out;
   },
 
-  // -- base64uri (RFC 4648 §5, no padding) --
-
+  // -- base64uri (RFC 4648 section 5, no padding) --
   base64uriEncode(bytes) {
     const bin = String.fromCharCode(...bytes);
     return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   },
-
   base64uriDecode(str) {
     const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
     const pad = (4 - b64.length % 4) % 4;
@@ -68,7 +60,6 @@ const SCRAM = {
   },
 
   // -- low-level crypto via Web Crypto API --
-
   async pbkdf2Sha256(password, salt, rounds, keyLen) {
     const enc = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey(
@@ -78,19 +69,14 @@ const SCRAM = {
       keyMaterial, keyLen * 8);
     return new Uint8Array(bits);
   },
-
   async hmacSha256(key, data) {
     const k = await crypto.subtle.importKey(
       'raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    const sig = await crypto.subtle.sign('HMAC', k, data);
-    return new Uint8Array(sig);
+    return new Uint8Array(await crypto.subtle.sign('HMAC', k, data));
   },
-
   async sha256(data) {
-    const h = await crypto.subtle.digest('SHA-256', data);
-    return new Uint8Array(h);
+    return new Uint8Array(await crypto.subtle.digest('SHA-256', data));
   },
-
   xorBytes(a, b) {
     const out = new Uint8Array(a.length);
     for (let i = 0; i < a.length; i++) out[i] = a[i] ^ b[i];
@@ -98,26 +84,17 @@ const SCRAM = {
   },
 
   // -- MCF parsing --
-
   parseMcfInfo(mcfInfo) {
-    // Expected: $pbkdf2-sha256$rounds$passlibBase64Salt$
     const parts = mcfInfo.split('$').filter(s => s !== '');
     if (parts.length < 3 || !parts[0].startsWith('pbkdf2'))
       throw new Error('Unsupported MCF format: ' + mcfInfo);
     return {
-      algorithm: parts[0],
-      rounds: parseInt(parts[1], 10),
-      saltB64: parts[2],
-      salt: this.passlibDecode(parts[2])
+      algorithm: parts[0], rounds: parseInt(parts[1], 10),
+      saltB64: parts[2], salt: this.passlibDecode(parts[2])
     };
   },
 
-  // -- SCRAM-MCF proof computation --
-  // Replicates mORMot2's ScramClientProof / ScramClientServerAuth
-  //
-  // HmacSha256U joins messages with '|' separator:
-  //   HMAC-SHA256(key, msg[0] + "|" + msg[1] + ...)
-
+  // -- HMAC-SHA256 with pipe-separated messages (mORMot2 convention) --
   async hmacSha256U(key, messages) {
     const enc = new TextEncoder();
     const parts = messages.map(m => enc.encode(m));
@@ -133,44 +110,59 @@ const SCRAM = {
     return this.hmacSha256(key, data);
   },
 
+  // -- SCRAM-MCF proof computation --
   async computeProof(email, password, mcfInfo, serverNonce) {
     const enc = new TextEncoder();
-    // 1. Parse MCF info and derive key via PBKDF2
     const mcf = this.parseMcfInfo(mcfInfo);
-    const derivedKey = await this.pbkdf2Sha256(
-      password, mcf.salt, mcf.rounds, 32);
-    // 2. Reconstruct full MCF hash string
+    const derivedKey = await this.pbkdf2Sha256(password, mcf.salt, mcf.rounds, 32);
     const checksum = this.passlibEncode(derivedKey);
     const mcfHash = mcfInfo + checksum;
     const mcfHashBytes = enc.encode(mcfHash);
-    // 3. ClientKey = HMAC-SHA256(mcfHash, email + "|" + "Client Key")
     const clientKey = await this.hmacSha256U(mcfHashBytes, [email, 'Client Key']);
-    // 4. StoredKey = SHA256(ClientKey)
     const storedKey = await this.sha256(clientKey);
-    // 5. ClientSignature = HMAC-SHA256(StoredKey, [email, serverNonce])
     const clientSig = await this.hmacSha256U(storedKey, [email, serverNonce]);
-    // 6. ClientProof = ClientKey XOR ClientSignature
     const clientProof = this.xorBytes(clientKey, clientSig);
-    // 7. ServerKey = HMAC-SHA256(mcfHash, email + "|" + "Server Key")
     const serverKey = await this.hmacSha256U(mcfHashBytes, [email, 'Server Key']);
     return {
       clientProof: this.base64uriEncode(clientProof),
-      // Saved for mutual authentication
-      _clientSig: clientSig,
-      _serverKey: serverKey
+      _clientSig: clientSig, _serverKey: serverKey
     };
   },
 
   verifyServerProof(serverProofB64, clientSig, serverKey) {
     const proof = this.base64uriDecode(serverProofB64);
     const recovered = this.xorBytes(proof, clientSig);
-    // Compare recovered with expected serverKey
     if (recovered.length !== serverKey.length) return false;
     let diff = 0;
     for (let i = 0; i < recovered.length; i++) diff |= recovered[i] ^ serverKey[i];
     return diff === 0;
   }
 };
+
+// ============================================================
+//  mORMot2 SOA helper
+// ============================================================
+
+/**
+ * Calls a mORMot2 interface-based service method.
+ * @param {string} service  - Interface name (e.g. 'Auth', 'Post')
+ * @param {string} method   - Method name (e.g. 'Challenge', 'GetList')
+ * @param {Array}  params   - Positional input parameters as JSON array
+ * @returns {object} { ok, status, data } where data is the parsed result object
+ */
+async function soaCall(service, method, params = []) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (API.token) headers['Authorization'] = 'Bearer ' + API.token;
+  const resp = await fetch(`/api/${service}/${method}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params)
+  });
+  const text = await resp.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { data = text; }
+  return { status: resp.status, ok: resp.ok, data };
+}
 
 // ============================================================
 //  API client
@@ -180,54 +172,33 @@ const API = {
   token: localStorage.getItem('blog_token') || null,
   userId: parseInt(localStorage.getItem('blog_userId')) || null,
 
-  /** Base fetch with optional auth header */
-  async request(path, options = {}) {
-    const headers = options.headers || {};
-    headers['Content-Type'] = headers['Content-Type'] || 'application/json';
-    if (this.token) {
-      headers['Authorization'] = 'Bearer ' + this.token;
-    }
-    const resp = await fetch(path, { ...options, headers });
-    const text = await resp.text();
-    let data = null;
-    try { data = JSON.parse(text); } catch { data = text; }
-    return { status: resp.status, ok: resp.ok, data };
-  },
-
-  get(path)            { return this.request(path); },
-  post(path, body)     { return this.request(path, { method: 'POST', body: JSON.stringify(body) }); },
-  put(path, body)      { return this.request(path, { method: 'PUT', body: JSON.stringify(body) }); },
-  del(path)            { return this.request(path, { method: 'DELETE' }); },
-
   // --- Auth (SCRAM-MCF) ---
 
   async login(email, password) {
     // Phase 1: request challenge
-    const c = await this.post('/api/auth/challenge', { Email: email });
-    if (!c.ok || !c.data.McfInfo || !c.data.ServerNonce) {
+    const c = await soaCall('Auth', 'Challenge', [email]);
+    if (!c.ok || !c.data.aMcfInfo || !c.data.aServerNonce) {
       return { ok: false, data: { error: 'Challenge failed' } };
     }
     // Phase 2: compute SCRAM proof (PBKDF2 runs in browser)
     const proof = await SCRAM.computeProof(
-      email, password, c.data.McfInfo, c.data.ServerNonce);
+      email, password, c.data.aMcfInfo, c.data.aServerNonce);
     // Phase 3: send proof, receive JWT
-    const r = await this.post('/api/auth/authenticate', {
-      Email: email,
-      ServerNonce: c.data.ServerNonce,
-      ClientProof: proof.clientProof
-    });
-    if (r.ok) {
+    const r = await soaCall('Auth', 'Authenticate',
+      [email, c.data.aServerNonce, proof.clientProof]);
+    if (r.ok && r.data.Result) {
       // Phase 4: verify server proof (mutual authentication)
       if (!SCRAM.verifyServerProof(
-        r.data.ServerProof, proof._clientSig, proof._serverKey)) {
+        r.data.aServerProof, proof._clientSig, proof._serverKey)) {
         return { ok: false, data: { error: 'Server authentication failed' } };
       }
-      this.token = r.data.token;
-      this.userId = r.data.userId;
+      this.token = r.data.aToken;
+      this.userId = r.data.aUserId;
       localStorage.setItem('blog_token', this.token);
       localStorage.setItem('blog_userId', this.userId);
+      return { ok: true, data: r.data };
     }
-    return r;
+    return { ok: false, data: { error: 'Invalid credentials' } };
   },
 
   logout() {
@@ -240,34 +211,95 @@ const API = {
   isLoggedIn() { return !!this.token; },
 
   // --- Posts ---
-  getPosts(page = 1, limit = 10)  { return this.get(`/api/posts?page=${page}&limit=${limit}&status=1`); },
-  getPost(id)                      { return this.get(`/api/posts/${id}`); },
-  getPostBySlug(slug)              { return this.get(`/api/posts/by-slug/${slug}`); },
-  getMyPosts(page = 1)             { return this.get(`/api/posts?page=${page}&limit=50&authorId=${this.userId}`); },
-  createPost(data)                 { return this.post('/api/posts', data); },
-  updatePost(id, data)             { return this.put(`/api/posts/${id}`, data); },
-  deletePost(id)                   { return this.del(`/api/posts/${id}`); },
+  async getPosts(page = 1, limit = 10) {
+    const r = await soaCall('Post', 'GetList', [page, limit, 1, 0]);
+    // Result contains the paginated JSON
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async getPost(id) {
+    // Use aggregated endpoint for full post with author/tags/comments
+    const r = await soaCall('Blog', 'GetPostFull', [id]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async getPostBySlug(slug) {
+    const r = await soaCall('Post', 'GetBySlug', [slug]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async getMyPosts(page = 1) {
+    const r = await soaCall('Post', 'GetList', [page, 50, 0, this.userId]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async createPost(data) {
+    return soaCall('Post', 'Add', [JSON.stringify(data)]);
+  },
+  async updatePost(id, data) {
+    return soaCall('Post', 'Update', [id, JSON.stringify(data)]);
+  },
+  async deletePost(id) {
+    return soaCall('Post', 'Remove', [id]);
+  },
 
   // --- Tags ---
-  getTags()                        { return this.get('/api/tags'); },
-  getPostTags(postId)              { return this.get(`/api/posts/${postId}/tags`); },
-  setPostTags(postId, tagIds)      { return this.put(`/api/posts/${postId}/tags`, { TagIds: tagIds }); },
+  async getTags() {
+    const r = await soaCall('Tag', 'GetAll', []);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async getPostTags(postId) {
+    const r = await soaCall('Tag', 'GetByPost', [postId]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async setPostTags(postId, tagIds) {
+    return soaCall('Tag', 'SetPostTags', [postId, JSON.stringify(tagIds)]);
+  },
 
   // --- Comments ---
-  getComments(postId)              { return this.get(`/api/posts/${postId}/comments`); },
-  addComment(postId, data)         { return this.post(`/api/posts/${postId}/comments`, data); },
-  getPendingComments()             { return this.get('/api/comments/pending'); },
-  approveComment(id)               { return this.put(`/api/comments/${id}/approve`, { ModeratedBy: this.userId }); },
-  rejectComment(id)                { return this.put(`/api/comments/${id}/reject`, { ModeratedBy: this.userId }); },
+  async getComments(postId) {
+    const r = await soaCall('Comment', 'GetByPost', [postId]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async addComment(postId, data) {
+    return soaCall('Comment', 'Add', [postId, JSON.stringify(data)]);
+  },
+  async getPendingComments() {
+    const r = await soaCall('Comment', 'GetPending', []);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async approveComment(id) {
+    return soaCall('Comment', 'Approve', [id, this.userId]);
+  },
+  async rejectComment(id) {
+    return soaCall('Comment', 'Reject', [id, this.userId]);
+  },
 
   // --- Users ---
-  getUser(id)                      { return this.get(`/api/users/${id}`); },
-  updateUser(id, data)             { return this.put(`/api/users/${id}`, data); },
+  async getUser(id) {
+    const r = await soaCall('User', 'Get', [id]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async updateUser(id, data) {
+    return soaCall('User', 'Update', [id, JSON.stringify(data)]);
+  },
 
   // --- Media ---
-  uploadMedia(fileName, base64Data, altText) {
-    return this.post('/api/media/upload', {
-      FileName: fileName, FileData: base64Data, AltText: altText
-    });
+  async uploadMedia(fileName, base64Data, altText) {
+    return soaCall('Media', 'Upload', [fileName, base64Data, altText, this.userId]);
   }
 };

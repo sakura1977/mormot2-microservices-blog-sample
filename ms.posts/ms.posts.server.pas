@@ -1,6 +1,6 @@
-﻿/// <summary>
-///   HTTP server for the Posts service.
-///   CRUD operations for blog posts with pagination and filtering.
+/// <summary>
+///   Interface-based service implementation for the Posts microservice.
+///   Implements IPost with CRUD operations, pagination, and filtering.
 /// </summary>
 unit ms.posts.server;
 
@@ -12,7 +12,7 @@ unit ms.posts.server;
 interface
 
 uses
-  SysUtils,
+  System.SysUtils,
   mormot.core.base,
   mormot.core.datetime,
   mormot.core.json,
@@ -20,443 +20,253 @@ uses
   mormot.core.text,
   mormot.core.unicode,
   mormot.core.variants,
-  mormot.db.raw.sqlite3,
-  mormot.net.http,
-  mormot.net.server,
   mormot.orm.base,
   mormot.orm.core,
+  mormot.rest.core,
+  mormot.rest.server,
   mormot.rest.sqlite3,
+  mormot.soa.core,
+  mormot.soa.server,
   ms.posts.model,
   ms.shared,
+  ms.shared.api,
   ms.shared.service;
 
 type
 
   /// <summary>
-  ///   Microservice server handling CRUD for blog posts,
-  ///   including pagination, filtering by status and author.
+  ///   Implements the IPost service interface using ORM persistence.
+  /// </summary>
+  TPostService = class(TInterfacedObject, IPost)
+  private
+    FOrm: IRestOrm;
+  public
+    constructor Create(const aOrm: IRestOrm);
+    /// <summary>
+    ///   Retrieves a single post by its ID.
+    /// </summary>
+    function Get(aId: TID): RawJson;
+    /// <summary>
+    ///   Retrieves a single post by its URL slug.
+    /// </summary>
+    function GetBySlug(const aSlug: RawUtf8): RawJson;
+    /// <summary>
+    ///   Retrieves a paginated, filtered list of posts.
+    /// </summary>
+    function GetList(aPage, aLimit, aStatus: integer;
+      aAuthorId: TID): RawJson;
+    /// <summary>
+    ///   Creates a new post from JSON data. Returns the new ID.
+    /// </summary>
+    function Add(const aData: RawJson): TID;
+    /// <summary>
+    ///   Updates an existing post with partial JSON data.
+    /// </summary>
+    function Update(aId: TID; const aData: RawJson): boolean;
+    /// <summary>
+    ///   Deletes a post by its ID.
+    /// </summary>
+    function Remove(aId: TID): boolean;
+  end;
+
+  /// <summary>
+  ///   Microservice server for blog posts.
+  ///   Registers TPostService as an IPost SOA service.
   /// </summary>
   TPostsServer = class(TMicroService)
   private
-    FModel: TOrmModel;
-    FRest: TRestServerDB;
-
-    /// <summary>
-    ///   Extracts a numeric ID from a URL path after a given prefix.
-    /// </summary>
-    /// <param name="aPath">
-    ///   The full request path.
-    /// </param>
-    /// <param name="aPrefix">
-    ///   The prefix to strip before parsing the ID.
-    /// </param>
-    /// <returns>
-    ///   The parsed TID value.
-    /// </returns>
-    function ExtractId(
-      const aPath: RawUtf8;
-      const aPrefix: RawUtf8
-    ): TID;
-
-    /// <summary>
-    ///   Extracts a slug string from a URL path after a given prefix.
-    /// </summary>
-    /// <param name="aPath">
-    ///   The full request path.
-    /// </param>
-    /// <param name="aPrefix">
-    ///   The prefix to strip before extracting the slug.
-    /// </param>
-    /// <returns>
-    ///   The extracted slug as RawUtf8.
-    /// </returns>
-    function ExtractSlug(
-      const aPath: RawUtf8;
-      const aPrefix: RawUtf8
-    ): RawUtf8;
-
-    /// <summary>
-    ///   Parses the URL into a path and query parameters document.
-    /// </summary>
-    /// <param name="aUrl">
-    ///   The full URL including query string.
-    /// </param>
-    /// <param name="aPath">
-    ///   Receives the path portion without query string.
-    /// </param>
-    /// <param name="aParams">
-    ///   Receives the parsed query parameters as a document variant.
-    /// </param>
-    procedure ParseQueryParams(
-      const aUrl: RawUtf8;
-      out aPath: RawUtf8;
-      out aParams: TDocVariantData
-    );
+    FPostImpl: TPostService;
   protected
-
     /// <summary>
-    ///   Initializes the ORM model and SQLite database.
+    ///   Creates the ORM model containing TOrmBlogPost.
     /// </summary>
-    procedure DoInitialize; override;
-
+    function CreateModel: TOrmModel; override;
     /// <summary>
-    ///   Releases the REST server and ORM model.
+    ///   Registers the IPost service on the REST server.
     /// </summary>
-    procedure DoFinalize; override;
-
-    /// <summary>
-    ///   Routes incoming HTTP requests to the appropriate handler.
-    /// </summary>
-    /// <param name="aCtxt">
-    ///   The HTTP server request context.
-    /// </param>
-    /// <returns>
-    ///   The HTTP status code for the response.
-    /// </returns>
-    function OnRequest(
-      aCtxt: THttpServerRequestAbstract
-    ): cardinal; override;
+    procedure SetupServices; override;
   end;
 
 implementation
 
-{ TPostsServer }
+{ TPostService }
 
-procedure TPostsServer.DoFinalize;
+constructor TPostService.Create(const aOrm: IRestOrm);
 begin
-  FreeAndNil(FRest);
-  FreeAndNil(FModel);
+  inherited Create;
+  FOrm := aOrm;
 end;
 
-procedure TPostsServer.DoInitialize;
+function TPostService.Get(aId: TID): RawJson;
 var
-  DatabasePath: TFileName;
+  PostRecord: TOrmBlogPost;
 begin
-  DatabasePath := Executable.ProgramFilePath + 'posts.db';
-  FModel := CreatePostsModel;
-  FRest := TRestServerDB.Create(FModel, DatabasePath);
-  FRest.DB.Synchronous := smNormal;
-  FRest.DB.LockingMode := lmExclusive;
-  FRest.CreateMissingTables;
+  Result := '';
+  PostRecord := TOrmBlogPost.Create;
+  try
+    if FOrm.Retrieve(aId, PostRecord) then
+      Result := PostRecord.GetJsonValues(True, True, ooSelect);
+  finally
+    PostRecord.Free;
+  end;
 end;
 
-function TPostsServer.ExtractId(
-  const aPath: RawUtf8;
-  const aPrefix: RawUtf8
-): TID;
-begin
-  Result := GetInt64(pointer(Copy(aPath, Length(aPrefix) + 1, 20)));
-end;
-
-function TPostsServer.ExtractSlug(
-  const aPath: RawUtf8;
-  const aPrefix: RawUtf8
-): RawUtf8;
-begin
-  Result := Copy(aPath, Length(aPrefix) + 1, MaxInt);
-end;
-
-function TPostsServer.OnRequest(
-  aCtxt: THttpServerRequestAbstract
-): cardinal;
+function TPostService.GetBySlug(const aSlug: RawUtf8): RawJson;
 var
-  Url, Path: RawUtf8;
-  Params: TDocVariantData;
-  PostId, NewId, AuthorId: TID;
-  Page, Limit, Status: integer;
+  PostRecord: TOrmBlogPost;
+begin
+  Result := '';
+  PostRecord := TOrmBlogPost.Create;
+  try
+    if FOrm.Retrieve('Slug=?', [], [aSlug], PostRecord) then
+      Result := PostRecord.GetJsonValues(True, True, ooSelect);
+  finally
+    PostRecord.Free;
+  end;
+end;
+
+function TPostService.GetList(aPage, aLimit, aStatus: integer;
+  aAuthorId: TID): RawJson;
+var
   WhereClause: RawUtf8;
-  PostRecord: TOrmPost;
-  JsonDoc: TDocVariantData;
-  ResultTable: TOrmTable;
   Total: Int64;
+  ResultTable: TOrmTable;
 begin
-  Url := aCtxt.Url;
-  ParseQueryParams(Url, Path, Params);
+  // Clamp page and limit
+  if aPage <= 0 then
+    aPage := 1;
+  if aLimit <= 0 then
+    aLimit := 10;
+  if aLimit > 100 then
+    aLimit := 100;
 
-  // --- GET /api/posts ---
-  if (aCtxt.Method = 'GET') and (Path = '/api/posts') then
+  // Build WHERE clause from filters
+  WhereClause := '';
+  if aStatus > 0 then
+    WhereClause := FormatUtf8('Status=%', [aStatus]);
+  if aAuthorId > 0 then
   begin
-    Page := GetInteger(pointer(Params.U['page']));
-    if Page <= 0 then
-      Page := 1;
-    Limit := GetInteger(pointer(Params.U['limit']));
-    if Limit <= 0 then
-      Limit := 10;
-    if Limit > 100 then
-      Limit := 100;
-
-    // Build WHERE clause
-    WhereClause := '';
-    if Params.GetValueIndex('status') >= 0 then
-    begin
-      Status := GetInteger(pointer(Params.U['status']));
-      WhereClause := FormatUtf8('Status=%', [Status]);
-    end;
-    if Params.GetValueIndex('authorId') >= 0 then
-    begin
-      AuthorId := GetInt64(pointer(Params.U['authorId']));
-      if WhereClause <> '' then
-        WhereClause := WhereClause + ' AND ';
-      WhereClause := WhereClause + FormatUtf8('AuthorId=%', [AuthorId]);
-    end;
-
-    // Calculate filtered total count
     if WhereClause <> '' then
-    begin
-      Total := FRest.Orm.OneFieldValueInt64(
-        TOrmPost, 'Count(*)', WhereClause);
-    end
+      WhereClause := WhereClause + ' AND ';
+    WhereClause := WhereClause + FormatUtf8('AuthorId=%', [aAuthorId]);
+  end;
+
+  // Calculate filtered total count
+  if WhereClause <> '' then
+    Total := FOrm.OneFieldValueInt64(
+      TOrmBlogPost, 'Count(*)', WhereClause)
+  else
+    Total := FOrm.TableRowCount(TOrmBlogPost);
+
+  // Retrieve paginated results
+  if WhereClause = '' then
+    WhereClause := 'RowID>0';
+  ResultTable := FOrm.MultiFieldValues(TOrmBlogPost, '*',
+    WhereClause + FormatUtf8(' ORDER BY RowID DESC LIMIT % OFFSET %',
+      [aLimit, (aPage - 1) * aLimit]));
+  try
+    if ResultTable = nil then
+      Result := FormatUtf8('{"items":[],"total":%,"page":%}',
+        [Total, aPage])
     else
+      Result := FormatUtf8('{"items":%,"total":%,"page":%}',
+        [ResultTable.GetJsonValues(True), Total, aPage]);
+  finally
+    ResultTable.Free;
+  end;
+end;
+
+function TPostService.Add(const aData: RawJson): TID;
+var
+  JsonDoc: TDocVariantData;
+  PostRecord: TOrmBlogPost;
+begin
+  JsonDoc.InitJson(aData, JSON_FAST_FLOAT);
+  PostRecord := TOrmBlogPost.Create;
+  try
+    PostRecord.Title := JsonDoc.U['Title'];
+    PostRecord.Slug := TextToSlug(PostRecord.Title);
+    PostRecord.Body := JsonDoc.U['Body'];
+    PostRecord.Excerpt := JsonDoc.U['Excerpt'];
+    PostRecord.AuthorId := JsonDoc.I['AuthorId'];
+    PostRecord.FeaturedImageId := JsonDoc.I['FeaturedImageId'];
+    PostRecord.MetaTitle := JsonDoc.U['MetaTitle'];
+    PostRecord.MetaDescription := JsonDoc.U['MetaDescription'];
+    PostRecord.MetaKeywords := JsonDoc.U['MetaKeywords'];
+    PostRecord.Status := JsonDoc.I['Status'];
+    if PostRecord.Status = POST_STATUS_PUBLISHED then
+      PostRecord.PublishedAt := NowUtc;
+    PostRecord.CreatedAt := NowUtc;
+    PostRecord.UpdatedAt := NowUtc;
+    Result := FOrm.Add(PostRecord, True);
+  finally
+    PostRecord.Free;
+  end;
+end;
+
+function TPostService.Update(aId: TID; const aData: RawJson): boolean;
+var
+  JsonDoc: TDocVariantData;
+  PostRecord: TOrmBlogPost;
+begin
+  Result := False;
+  JsonDoc.InitJson(aData, JSON_FAST_FLOAT);
+  PostRecord := TOrmBlogPost.Create;
+  try
+    if not FOrm.Retrieve(aId, PostRecord) then
+      Exit;
+    if JsonDoc.GetValueIndex('Title') >= 0 then
     begin
-      Total := FRest.Orm.TableRowCount(TOrmPost);
-    end;
-    if WhereClause = '' then
-      WhereClause := 'RowID>0';
-    ResultTable := FRest.Orm.MultiFieldValues(TOrmPost, '*',
-      WhereClause + FormatUtf8(' ORDER BY RowID DESC LIMIT % OFFSET %',
-        [Limit, (Page - 1) * Limit]));
-    try
-      if ResultTable = nil then
-      begin
-        aCtxt.OutContent := FormatUtf8(
-          '{"items":[],"total":%,"page":%}', [Total, Page]);
-      end
-      else
-      begin
-        aCtxt.OutContent := FormatUtf8(
-          '{"items":%,"total":%,"page":%}',
-          [ResultTable.GetJsonValues(True), Total, Page]);
-      end;
-    finally
-      ResultTable.Free;
-    end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-    Result := HTTP_SUCCESS;
-  end
-
-  // --- GET /api/posts/by-slug/{slug} ---
-  else if (aCtxt.Method = 'GET') and
-    IdemPChar(pointer(Path), '/API/POSTS/BY-SLUG/') then
-  begin
-    PostRecord := TOrmPost.Create;
-    try
-      if FRest.Orm.Retrieve('Slug=?', [],
-        [ExtractSlug(Path, '/api/posts/by-slug/')], PostRecord) then
-      begin
-        aCtxt.OutContent := PostRecord.GetJsonValues(True, True, ooSelect);
-        Result := HTTP_SUCCESS;
-      end
-      else
-      begin
-        aCtxt.OutContent := '{"error":"not found"}';
-        Result := HTTP_NOTFOUND;
-      end;
-    finally
-      PostRecord.Free;
-    end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  end
-
-  // --- GET /api/posts/by-author/{authorId} ---
-  else if (aCtxt.Method = 'GET') and
-    IdemPChar(pointer(Path), '/API/POSTS/BY-AUTHOR/') then
-  begin
-    AuthorId := ExtractId(Path, '/api/posts/by-author/');
-    Page := GetInteger(pointer(Params.U['page']));
-    if Page <= 0 then
-      Page := 1;
-    Limit := GetInteger(pointer(Params.U['limit']));
-    if Limit <= 0 then
-      Limit := 10;
-    ResultTable := FRest.Orm.MultiFieldValues(TOrmPost, '*',
-      FormatUtf8('AuthorId=% ORDER BY RowID DESC LIMIT % OFFSET %',
-        [AuthorId, Limit, (Page - 1) * Limit]));
-    try
-      if ResultTable = nil then
-      begin
-        aCtxt.OutContent := '{"items":[],"total":0,"page":1}';
-      end
-      else
-      begin
-        aCtxt.OutContent := FormatUtf8('{"items":%,"total":%,"page":%}',
-          [ResultTable.GetJsonValues(True), ResultTable.RowCount, Page]);
-      end;
-    finally
-      ResultTable.Free;
-    end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-    Result := HTTP_SUCCESS;
-  end
-
-  // --- GET /api/posts/{id} ---
-  else if (aCtxt.Method = 'GET') and
-    IdemPChar(pointer(Path), '/API/POSTS/') then
-  begin
-    PostId := ExtractId(Path, '/api/posts/');
-    PostRecord := TOrmPost.Create;
-    try
-      if FRest.Orm.Retrieve(PostId, PostRecord) then
-      begin
-        aCtxt.OutContent := PostRecord.GetJsonValues(True, True, ooSelect);
-        Result := HTTP_SUCCESS;
-      end
-      else
-      begin
-        aCtxt.OutContent := '{"error":"not found"}';
-        Result := HTTP_NOTFOUND;
-      end;
-    finally
-      PostRecord.Free;
-    end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  end
-
-  // --- POST /api/posts ---
-  else if (aCtxt.Method = 'POST') and (Path = '/api/posts') then
-  begin
-    JsonDoc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    PostRecord := TOrmPost.Create;
-    try
       PostRecord.Title := JsonDoc.U['Title'];
       PostRecord.Slug := TextToSlug(PostRecord.Title);
+    end;
+    if JsonDoc.GetValueIndex('Body') >= 0 then
       PostRecord.Body := JsonDoc.U['Body'];
+    if JsonDoc.GetValueIndex('Excerpt') >= 0 then
       PostRecord.Excerpt := JsonDoc.U['Excerpt'];
-      PostRecord.AuthorId := JsonDoc.I['AuthorId'];
+    if JsonDoc.GetValueIndex('FeaturedImageId') >= 0 then
       PostRecord.FeaturedImageId := JsonDoc.I['FeaturedImageId'];
+    if JsonDoc.GetValueIndex('MetaTitle') >= 0 then
       PostRecord.MetaTitle := JsonDoc.U['MetaTitle'];
+    if JsonDoc.GetValueIndex('MetaDescription') >= 0 then
       PostRecord.MetaDescription := JsonDoc.U['MetaDescription'];
+    if JsonDoc.GetValueIndex('MetaKeywords') >= 0 then
       PostRecord.MetaKeywords := JsonDoc.U['MetaKeywords'];
+    if JsonDoc.GetValueIndex('Status') >= 0 then
+    begin
       PostRecord.Status := JsonDoc.I['Status'];
-      if PostRecord.Status = POST_STATUS_PUBLISHED then
+      if (PostRecord.Status = POST_STATUS_PUBLISHED) and
+         (PostRecord.PublishedAt = 0) then
         PostRecord.PublishedAt := NowUtc;
-      PostRecord.CreatedAt := NowUtc;
-      PostRecord.UpdatedAt := NowUtc;
-      NewId := FRest.Orm.Add(PostRecord, True);
-      if NewId > 0 then
-      begin
-        aCtxt.OutContent := FormatUtf8('{"id":%}', [NewId]);
-        Result := HTTP_CREATED;
-      end
-      else
-      begin
-        aCtxt.OutContent := '{"error":"creation failed"}';
-        Result := HTTP_SERVERERROR;
-      end;
-    finally
-      PostRecord.Free;
     end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  end
-
-  // --- PUT /api/posts/{id} ---
-  else if (aCtxt.Method = 'PUT') and
-    IdemPChar(pointer(Path), '/API/POSTS/') then
-  begin
-    PostId := ExtractId(Path, '/api/posts/');
-    JsonDoc.InitJson(aCtxt.InContent, JSON_FAST_FLOAT);
-    PostRecord := TOrmPost.Create;
-    try
-      if not FRest.Orm.Retrieve(PostId, PostRecord) then
-      begin
-        aCtxt.OutContent := '{"error":"not found"}';
-        aCtxt.OutContentType := JSON_CONTENT_TYPE;
-        Result := HTTP_NOTFOUND;
-        Exit;
-      end;
-      if JsonDoc.GetValueIndex('Title') >= 0 then
-      begin
-        PostRecord.Title := JsonDoc.U['Title'];
-        PostRecord.Slug := TextToSlug(PostRecord.Title);
-      end;
-      if JsonDoc.GetValueIndex('Body') >= 0 then
-        PostRecord.Body := JsonDoc.U['Body'];
-      if JsonDoc.GetValueIndex('Excerpt') >= 0 then
-        PostRecord.Excerpt := JsonDoc.U['Excerpt'];
-      if JsonDoc.GetValueIndex('FeaturedImageId') >= 0 then
-        PostRecord.FeaturedImageId := JsonDoc.I['FeaturedImageId'];
-      if JsonDoc.GetValueIndex('MetaTitle') >= 0 then
-        PostRecord.MetaTitle := JsonDoc.U['MetaTitle'];
-      if JsonDoc.GetValueIndex('MetaDescription') >= 0 then
-        PostRecord.MetaDescription := JsonDoc.U['MetaDescription'];
-      if JsonDoc.GetValueIndex('MetaKeywords') >= 0 then
-        PostRecord.MetaKeywords := JsonDoc.U['MetaKeywords'];
-      if JsonDoc.GetValueIndex('Status') >= 0 then
-      begin
-        PostRecord.Status := JsonDoc.I['Status'];
-        if (PostRecord.Status = POST_STATUS_PUBLISHED) and
-           (PostRecord.PublishedAt = 0) then
-          PostRecord.PublishedAt := NowUtc;
-      end;
-      PostRecord.UpdatedAt := NowUtc;
-      if FRest.Orm.Update(PostRecord) then
-      begin
-        aCtxt.OutContent := '{"success":true}';
-        Result := HTTP_SUCCESS;
-      end
-      else
-      begin
-        aCtxt.OutContent := '{"error":"update failed"}';
-        Result := HTTP_SERVERERROR;
-      end;
-    finally
-      PostRecord.Free;
-    end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  end
-
-  // --- DELETE /api/posts/{id} ---
-  else if (aCtxt.Method = 'DELETE') and
-    IdemPChar(pointer(Path), '/API/POSTS/') then
-  begin
-    PostId := ExtractId(Path, '/api/posts/');
-    if FRest.Orm.Delete(TOrmPost, PostId) then
-    begin
-      aCtxt.OutContent := '{"success":true}';
-      Result := HTTP_SUCCESS;
-    end
-    else
-    begin
-      aCtxt.OutContent := '{"error":"not found"}';
-      Result := HTTP_NOTFOUND;
-    end;
-    aCtxt.OutContentType := JSON_CONTENT_TYPE;
-  end
-
-  else
-    Result := inherited OnRequest(aCtxt);
+    PostRecord.UpdatedAt := NowUtc;
+    Result := FOrm.Update(PostRecord);
+  finally
+    PostRecord.Free;
+  end;
 end;
 
-procedure TPostsServer.ParseQueryParams(
-  const aUrl: RawUtf8;
-  out aPath: RawUtf8;
-  out aParams: TDocVariantData
-);
-var
-  QuestionMarkPos: PtrInt;
-  QueryString: RawUtf8;
-  CurrentPtr: PUtf8Char;
-  Key, Value: RawUtf8;
+function TPostService.Remove(aId: TID): boolean;
 begin
-  QuestionMarkPos := PosExChar('?', aUrl);
-  if QuestionMarkPos > 0 then
-  begin
-    aPath := Copy(aUrl, 1, QuestionMarkPos - 1);
-    QueryString := Copy(aUrl, QuestionMarkPos + 1, MaxInt);
-    aParams.InitObject([], JSON_FAST);
-    CurrentPtr := pointer(QueryString);
-    while CurrentPtr <> nil do
-    begin
-      Key := GetNextItem(CurrentPtr, '=');
-      Value := GetNextItem(CurrentPtr, '&');
-      if Key <> '' then
-        aParams.AddValue(Key, Value);
-    end;
-  end
-  else
-  begin
-    aPath := aUrl;
-    aParams.InitObject([], JSON_FAST);
-  end;
+  Result := FOrm.Delete(TOrmBlogPost, aId);
+end;
+
+{ TPostsServer }
+
+function TPostsServer.CreateModel: TOrmModel;
+begin
+  Result := TOrmModel.Create([TOrmBlogPost], 'api');
+end;
+
+procedure TPostsServer.SetupServices;
+var
+  Factory: TServiceFactoryServerAbstract;
+begin
+  FPostImpl := TPostService.Create(FRestServer.Orm);
+  Factory := FRestServer.ServiceRegister(
+    FPostImpl, [TypeInfo(IPost)]) ;
+  Factory.ByPassAuthentication := True;
+  Factory.ResultAsJsonObjectWithoutResult := True;
 end;
 
 end.

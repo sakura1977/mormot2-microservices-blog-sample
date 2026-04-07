@@ -19,7 +19,7 @@ type
   /// <summary>
   ///   Stores metadata for uploaded media files (images, etc.).
   /// </summary>
-  TOrmMedia = class(TOrm)
+  TOrmMediaFile = class(TOrm)
   private
     FFileName: RawUtf8;
     FStoragePath: RawUtf8;
@@ -77,7 +77,7 @@ type
 ///   Creates the ORM model for the Media service.
 /// </summary>
 /// <returns>
-///   A TOrmModel instance containing TOrmMedia.
+///   A TOrmModel instance containing TOrmMediaFile.
 /// </returns>
 function CreateMediaModel: TOrmModel;
 
@@ -85,7 +85,7 @@ implementation
 
 function CreateMediaModel: TOrmModel;
 begin
-  Result := TOrmModel.Create([TOrmMedia]);
+  Result := TOrmModel.Create([TOrmMediaFile]);
 end;
 
 end.

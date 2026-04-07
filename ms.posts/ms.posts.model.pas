@@ -20,7 +20,7 @@ type
   /// <summary>
   ///   Stores blog post content, metadata, and publication state.
   /// </summary>
-  TOrmPost = class(TOrm)
+  TOrmBlogPost = class(TOrm)
   private
     FTitle: RawUtf8;
     FSlug: RawUtf8;
@@ -120,7 +120,7 @@ type
 ///   Creates the ORM model for the Posts service.
 /// </summary>
 /// <returns>
-///   A TOrmModel instance containing TOrmPost.
+///   A TOrmModel instance containing TOrmBlogPost.
 /// </returns>
 function CreatePostsModel: TOrmModel;
 
@@ -128,7 +128,7 @@ implementation
 
 function CreatePostsModel: TOrmModel;
 begin
-  Result := TOrmModel.Create([TOrmPost]);
+  Result := TOrmModel.Create([TOrmBlogPost]);
 end;
 
 end.

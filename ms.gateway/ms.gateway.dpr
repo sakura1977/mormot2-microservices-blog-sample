@@ -11,9 +11,16 @@ uses
   SysUtils,
   mormot.core.base,
   mormot.core.os,
+  mormot.db.raw.sqlite3.static,
+  mormot.net.async,
+  mormot.rest.http.server,
+  mormot.rest.http.client,
+  mormot.soa.core,
+  mormot.soa.server,
+  mormot.soa.client,
   ms.shared,
+  ms.shared.api,
   ms.shared.service,
-  ms.shared.client,
   ms.gateway.server;
 
 var

@@ -19,7 +19,7 @@ type
   /// <summary>
   ///   Stores a comment on a blog post, including moderation state.
   /// </summary>
-  TOrmComment = class(TOrm)
+  TOrmBlogComment = class(TOrm)
   private
     FPostId: TID;
     FAuthorName: RawUtf8;
@@ -84,7 +84,7 @@ type
 ///   Creates the ORM model for the Comments service.
 /// </summary>
 /// <returns>
-///   A TOrmModel instance containing TOrmComment.
+///   A TOrmModel instance containing TOrmBlogComment.
 /// </returns>
 function CreateCommentsModel: TOrmModel;
 
@@ -92,7 +92,7 @@ implementation
 
 function CreateCommentsModel: TOrmModel;
 begin
-  Result := TOrmModel.Create([TOrmComment]);
+  Result := TOrmModel.Create([TOrmBlogComment]);
 end;
 
 end.
