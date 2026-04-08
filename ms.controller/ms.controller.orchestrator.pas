@@ -1,7 +1,6 @@
 ﻿/// <summary>
-///   Service orchestrator for the blog microservices.
-///   Starts, monitors, and stops all backend services.
-///   Provides a REST API and a console interface.
+///   Service orchestrator for the blog microservices. Starts, monitors, and stops all backend services. Provides a
+///   REST API and a console interface.
 /// </summary>
 unit ms.controller.orchestrator;
 
@@ -13,9 +12,9 @@ unit ms.controller.orchestrator;
 interface
 
 uses
-  Classes,
-  SysUtils,
-  Windows,
+  System.Classes,
+  System.SysUtils,
+  Winapi.Windows,
   mormot.core.base,
   mormot.core.datetime,
   mormot.core.json,
@@ -37,11 +36,34 @@ type
   ///   Status of a managed service process.
   /// </summary>
   TServiceProcessStatus = (
+    /// <summary>
+    ///   The service has not been started yet.
+    /// </summary>
     NotStarted,
+
+    /// <summary>
+    ///   The service process is currently being launched.
+    /// </summary>
     Starting,
+
+    /// <summary>
+    ///   The service is running and operational.
+    /// </summary>
     Running,
+
+    /// <summary>
+    ///   The service is in the process of being stopped.
+    /// </summary>
     Stopping,
+
+    /// <summary>
+    ///   The service has been stopped.
+    /// </summary>
     Stopped,
+
+    /// <summary>
+    ///   The service encountered an error or crashed.
+    /// </summary>
     Error
   );
 
@@ -49,15 +71,55 @@ type
   ///   Record holding runtime information about a managed service.
   /// </summary>
   TServiceEntry = record
+  public
+    /// <summary>
+    ///   The unique name identifying this service.
+    /// </summary>
     Name: RawUtf8;
+
+    /// <summary>
+    ///   The HTTP port this service listens on.
+    /// </summary>
     Port: RawUtf8;
+
+    /// <summary>
+    ///   The full path to the service executable.
+    /// </summary>
     ExePath: TFileName;
+
+    /// <summary>
+    ///   The Windows process handle of the running service.
+    /// </summary>
     ProcessHandle: THandle;
+
+    /// <summary>
+    ///   The Windows process ID of the running service.
+    /// </summary>
     ProcessId: Cardinal;
+
+    /// <summary>
+    ///   The current process status of this service.
+    /// </summary>
     Status: TServiceProcessStatus;
+
+    /// <summary>
+    ///   The UTC timestamp of the last health check performed.
+    /// </summary>
     LastHealthCheck: TDateTime;
+
+    /// <summary>
+    ///   Whether the last health check was successful.
+    /// </summary>
     HealthOk: boolean;
+
+    /// <summary>
+    ///   The number of automatic restarts performed so far.
+    /// </summary>
     RestartCount: integer;
+
+    /// <summary>
+    ///   The maximum number of automatic restarts allowed before giving up.
+    /// </summary>
     MaxRestarts: integer;
   end;
 
@@ -65,11 +127,35 @@ type
   ///   DTO for the status API response of a single service.
   /// </summary>
   TServiceStatusDto = packed record
+  public
+    /// <summary>
+    ///   The service name.
+    /// </summary>
     Name: RawUtf8;
+
+    /// <summary>
+    ///   The port the service listens on.
+    /// </summary>
     Port: RawUtf8;
+
+    /// <summary>
+    ///   The current status as a human-readable text string.
+    /// </summary>
     Status: RawUtf8;
+
+    /// <summary>
+    ///   Whether the service passed the last health check.
+    /// </summary>
     HealthOk: boolean;
+
+    /// <summary>
+    ///   The number of automatic restarts performed.
+    /// </summary>
     RestartCount: integer;
+
+    /// <summary>
+    ///   The Windows process ID.
+    /// </summary>
     Pid: Cardinal;
   end;
 
@@ -77,24 +163,62 @@ type
   ///   DTO for the overall controller status API response.
   /// </summary>
   TControllerStatusDto = packed record
+  public
+    /// <summary>
+    ///   The name of the controller service.
+    /// </summary>
     Controller: RawUtf8;
+
+    /// <summary>
+    ///   The port the controller API listens on.
+    /// </summary>
     Port: RawUtf8;
+
+    /// <summary>
+    ///   The status information for each managed service.
+    /// </summary>
     Services: array of TServiceStatusDto;
+
+    /// <summary>
+    ///   The UTC timestamp when the status was generated.
+    /// </summary>
     Timestamp: TDateTime;
   end;
 
   /// <summary>
-  ///   Orchestrator that manages all blog microservices,
-  ///   including starting, stopping, health monitoring, and
+  ///   Orchestrator that manages all blog microservices, including starting, stopping, health monitoring, and
   ///   automatic restart on crash.
   /// </summary>
   TServiceOrchestrator = class
-  private
+  strict private
+    /// <summary>
+    ///   The HTTP port for the controller API.
+    /// </summary>
     FPort: RawUtf8;
+
+    /// <summary>
+    ///   The array of all registered service entries.
+    /// </summary>
     FServices: array of TServiceEntry;
+
+    /// <summary>
+    ///   The HTTP server instance for the controller API.
+    /// </summary>
     FHttpServer: THttpAsyncServer;
+
+    /// <summary>
+    ///   The background timer thread for periodic service monitoring.
+    /// </summary>
     FMonitorThread: TSynBackgroundTimer;
+
+    /// <summary>
+    ///   Flag indicating whether a shutdown has been requested.
+    /// </summary>
     FShutdownRequested: boolean;
+
+    /// <summary>
+    ///   The base path used to locate service executables.
+    /// </summary>
     FBasePath: TFileName;
 
     /// <summary>
@@ -108,7 +232,7 @@ type
     /// </returns>
     function CheckHealth(
       var aEntry: TServiceEntry
-    ): boolean;
+      ): boolean;
 
     /// <summary>
     ///   Locates the executable for a given service name.
@@ -121,7 +245,7 @@ type
     /// </returns>
     function FindExe(
       const aServiceName: RawUtf8
-    ): TFileName;
+      ): TFileName;
 
     /// <summary>
     ///   Returns a JSON representation of the current status of all services.
@@ -142,11 +266,10 @@ type
     /// </returns>
     function IsProcessRunning(
       aHandle: THandle
-    ): boolean;
+      ): boolean;
 
     /// <summary>
-    ///   Background timer callback that monitors all services,
-    ///   detects crashes, and triggers automatic restarts.
+    ///   Background timer callback that monitors all services, detects crashes, and triggers automatic restarts.
     /// </summary>
     /// <param name="aSender">
     ///   The background timer that triggered this callback.
@@ -157,7 +280,7 @@ type
     procedure MonitorServices(
       aSender: TSynBackgroundTimer;
       const aMsg: RawUtf8
-    );
+      );
 
     /// <summary>
     ///   Handles incoming HTTP requests to the controller API.
@@ -170,7 +293,7 @@ type
     /// </returns>
     function OnRequest(
       aCtxt: THttpServerRequestAbstract
-    ): cardinal;
+      ): cardinal;
 
     /// <summary>
     ///   Registers a service for management by the orchestrator.
@@ -184,7 +307,7 @@ type
     procedure RegisterService(
       const aName: RawUtf8;
       const aPort: RawUtf8
-    );
+      );
 
     /// <summary>
     ///   Starts a service process.
@@ -197,7 +320,7 @@ type
     /// </returns>
     function StartProcess(
       var aEntry: TServiceEntry
-    ): boolean;
+      ): boolean;
 
     /// <summary>
     ///   Converts a service process status enum to its text representation.
@@ -210,11 +333,10 @@ type
     /// </returns>
     function StatusToText(
       aStatus: TServiceProcessStatus
-    ): RawUtf8;
+      ): RawUtf8;
 
     /// <summary>
-    ///   Stops a service process, first gracefully via /api/shutdown,
-    ///   then forcefully if needed.
+    ///   Stops a service process, first gracefully via /api/shutdown, then forcefully if needed.
     /// </summary>
     /// <param name="aEntry">
     ///   The service entry to stop.
@@ -224,12 +346,21 @@ type
     /// </returns>
     function StopProcess(
       var aEntry: TServiceEntry
-    ): boolean;
+      ): boolean;
 
+    /// <summary>
+    ///   Waits for a service to become healthy within the given timeout.
+    /// </summary>
+    /// <param name="aEntry">
+    ///   The service entry to wait for.
+    /// </param>
+    /// <param name="aTimeoutMs">
+    ///   The maximum time in milliseconds to wait for a healthy response.
+    /// </param>
     procedure WaitForHealth(
       var aEntry: TServiceEntry;
       aTimeoutMs: integer
-    );
+      );
   public
 
     /// <summary>
@@ -240,7 +371,7 @@ type
     /// </param>
     constructor Create(
       const aPort: RawUtf8
-    );
+      );
 
     /// <summary>
     ///   Destroys the orchestrator and releases resources.
@@ -274,11 +405,9 @@ const
     'not_started', 'starting', 'running', 'stopping', 'stopped', 'error'
   );
 
-{ TServiceOrchestrator }
-
 function TServiceOrchestrator.CheckHealth(
   var aEntry: TServiceEntry
-): boolean;
+  ): boolean;
 var
   Client: THttpClientSocket;
   StatusCode: integer;
@@ -306,7 +435,7 @@ end;
 
 constructor TServiceOrchestrator.Create(
   const aPort: RawUtf8
-);
+  );
 begin
   inherited Create;
   FPort := aPort;
@@ -323,7 +452,7 @@ end;
 
 function TServiceOrchestrator.FindExe(
   const aServiceName: RawUtf8
-): TFileName;
+  ): TFileName;
 var
   Candidate: TFileName;
 begin
@@ -332,8 +461,7 @@ begin
   if FileExists(Candidate) then
     Exit(Candidate);
   // Search in the parent directory
-  Candidate := ExtractFilePath(ExcludeTrailingPathDelimiter(FBasePath))
-    + Utf8ToString(aServiceName) + '.exe';
+  Candidate := ExtractFilePath(ExcludeTrailingPathDelimiter(FBasePath)) + Utf8ToString(aServiceName) + '.exe';
   if FileExists(Candidate) then
     Exit(Candidate);
   // Fallback: relative path (will be resolved at start time)
@@ -363,7 +491,7 @@ end;
 
 function TServiceOrchestrator.IsProcessRunning(
   aHandle: THandle
-): boolean;
+  ): boolean;
 var
   ExitCode: Cardinal;
 begin
@@ -375,7 +503,7 @@ end;
 procedure TServiceOrchestrator.MonitorServices(
   aSender: TSynBackgroundTimer;
   const aMsg: RawUtf8
-);
+  );
 var
   ServiceIdx: integer;
 begin
@@ -400,14 +528,12 @@ begin
           if FServices[ServiceIdx].RestartCount < FServices[ServiceIdx].MaxRestarts then
           begin
             Inc(FServices[ServiceIdx].RestartCount);
-            WriteLn('[Monitor] Restart #', FServices[ServiceIdx].RestartCount,
-              ' of ', FServices[ServiceIdx].Name);
+            WriteLn('[Monitor] Restart #', FServices[ServiceIdx].RestartCount, ' of ', FServices[ServiceIdx].Name);
             StartProcess(FServices[ServiceIdx]);
           end
           else
           begin
-            WriteLn('[Monitor] ', FServices[ServiceIdx].Name,
-              ' -- maximum restarts reached!');
+            WriteLn('[Monitor] ', FServices[ServiceIdx].Name, ' -- maximum restarts reached!');
           end;
         end
         else
@@ -422,7 +548,7 @@ end;
 
 function TServiceOrchestrator.OnRequest(
   aCtxt: THttpServerRequestAbstract
-): cardinal;
+  ): cardinal;
 var
   Path, ServiceName: RawUtf8;
   ServiceIdx: integer;
@@ -456,8 +582,7 @@ begin
   end
 
   // POST /api/restart/{service} -- restart a single service
-  else if (aCtxt.Method = 'POST') and
-    (Copy(Path, 1, 13) = '/api/restart/') then
+  else if (aCtxt.Method = 'POST') and (Copy(Path, 1, 13) = '/api/restart/') then
   begin
     ServiceName := Copy(Path, 14, MaxInt);
     Result := HTTP_NOTFOUND;
@@ -492,7 +617,7 @@ end;
 procedure TServiceOrchestrator.RegisterService(
   const aName: RawUtf8;
   const aPort: RawUtf8
-);
+  );
 var
   EntryCount: integer;
 begin
@@ -529,9 +654,7 @@ begin
   WriteLn('');
 
   // Start HTTP server for controller API
-  FHttpServer := THttpAsyncServer.Create(
-    FPort, nil, nil, '', 2,
-    30000, [hsoNoXPoweredHeader]);
+  FHttpServer := THttpAsyncServer.Create(FPort, nil, nil, '', 2, 30000, [hsoNoXPoweredHeader]);
   FHttpServer.OnRequest := OnRequest;
   FHttpServer.WaitStarted;
   WriteLn('Controller API running on port ', FPort);
@@ -584,7 +707,8 @@ begin
   WriteLn('Starting all services...');
   for ServiceIdx := 0 to High(FServices) do
   begin
-    if FServices[ServiceIdx].Status in [TServiceProcessStatus.NotStarted, TServiceProcessStatus.Stopped, TServiceProcessStatus.Error] then
+    if FServices[ServiceIdx].Status in [TServiceProcessStatus.NotStarted, TServiceProcessStatus.Stopped,
+      TServiceProcessStatus.Error] then
       StartProcess(FServices[ServiceIdx]);
   end;
   WriteLn('All services started.');
@@ -592,7 +716,7 @@ end;
 
 function TServiceOrchestrator.StartProcess(
   var aEntry: TServiceEntry
-): boolean;
+  ): boolean;
 var
   StartupInfo: TStartupInfoW;
   ProcessInfo: TProcessInformation;
@@ -613,20 +737,13 @@ begin
   StartupInfo.wShowWindow := SW_SHOWMINNOACTIVE; // start minimized
 
   CommandLine := string(aEntry.ExePath);
-  if CreateProcessW(
-    nil,
-    PChar(CommandLine),
-    nil, nil, False,
-    CREATE_NEW_CONSOLE,
-    nil,
-    PChar(ExtractFilePath(string(aEntry.ExePath))),
-    StartupInfo, ProcessInfo) then
+  if CreateProcessW(nil, PChar(CommandLine), nil, nil, False, CREATE_NEW_CONSOLE, nil,
+    PChar(ExtractFilePath(string(aEntry.ExePath))), StartupInfo, ProcessInfo) then
   begin
     aEntry.ProcessHandle := ProcessInfo.hProcess;
     aEntry.ProcessId := ProcessInfo.dwProcessId;
     CloseHandle(ProcessInfo.hThread);
-    WriteLn('  Started: ', aEntry.Name,
-      ' (PID ', aEntry.ProcessId, ')');
+    WriteLn('  Started: ', aEntry.Name, ' (PID ', aEntry.ProcessId, ')');
     // Wait briefly, then health check
     SleepHiRes(PROCESS_START_WAIT_MS);
     if IsProcessRunning(aEntry.ProcessHandle) then
@@ -637,21 +754,19 @@ begin
     else
     begin
       aEntry.Status := TServiceProcessStatus.Error;
-      WriteLn('  ERROR: ', aEntry.Name,
-        ' terminated immediately');
+      WriteLn('  ERROR: ', aEntry.Name, ' terminated immediately');
     end;
   end
   else
   begin
     aEntry.Status := TServiceProcessStatus.Error;
-    WriteLn('  ERROR starting ', aEntry.Name,
-      ': ', SysErrorMessage(GetLastError));
+    WriteLn('  ERROR starting ', aEntry.Name, ': ', SysErrorMessage(GetLastError));
   end;
 end;
 
 function TServiceOrchestrator.StatusToText(
   aStatus: TServiceProcessStatus
-): RawUtf8;
+  ): RawUtf8;
 begin
   Result := STATUS_TEXT[aStatus];
 end;
@@ -672,7 +787,7 @@ end;
 
 function TServiceOrchestrator.StopProcess(
   var aEntry: TServiceEntry
-): boolean;
+  ): boolean;
 var
   Client: THttpClientSocket;
   StatusCode: integer;
@@ -719,7 +834,7 @@ end;
 procedure TServiceOrchestrator.WaitForHealth(
   var aEntry: TServiceEntry;
   aTimeoutMs: integer
-);
+  );
 var
   Elapsed: integer;
 begin
@@ -734,9 +849,7 @@ begin
     SleepHiRes(500);
     Inc(Elapsed, 500);
   end;
-  WriteLn('  WARNING: ', aEntry.Name,
-    ' did not respond to health check within ',
-    aTimeoutMs, 'ms');
+  WriteLn('  WARNING: ', aEntry.Name, ' did not respond to health check within ', aTimeoutMs, 'ms');
 end;
 
 initialization

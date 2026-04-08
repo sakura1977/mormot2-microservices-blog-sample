@@ -1,10 +1,8 @@
 /// <summary>
 ///   JWT token management for the blog microservices.
 ///
-///   Wraps mORMot2's <c>TJwtHS256</c> (HMAC-SHA256 based JSON Web
-///   Tokens) into a simple create/validate API. The JWT contains
-///   a custom 'uid' claim with the user's database ID, plus
-///   standard claims (issuer, expiration, issued-at).
+///   Wraps mORMot2's <c>TJwtHS256</c> (HMAC-SHA256 based JSON Web Tokens) into a simple create/validate API. The JWT
+///   contains a custom 'uid' claim with the user's database ID, plus standard claims (issuer, expiration, issued-at).
 ///
 ///   mORMot2 JWT features used:
 ///   - <c>TJwtHS256</c>: HMAC-SHA256 JWT implementation. Handles
@@ -33,15 +31,13 @@ uses
 type
 
   /// <summary>
-  ///   Manages JWT token creation and validation for the blog
-  ///   authentication system. Encapsulates mORMot2's <c>TJwtHS256</c>
-  ///   with a simple two-method API.
+  ///   Manages JWT token creation and validation for the blog authentication system. Encapsulates mORMot2's
+  ///   <c>TJwtHS256</c> with a simple two-method API.
   /// </summary>
   TBlogJwt = class
-  private
+  strict private
     /// <summary>
-    ///   The mORMot2 JWT engine. Handles HMAC-SHA256 signing,
-    ///   signature verification, and expiration validation.
+    ///   The mORMot2 JWT engine. Handles HMAC-SHA256 signing, signature verification, and expiration validation.
     /// </summary>
     FJwt: TJwtHS256;
 
@@ -71,8 +67,7 @@ type
     destructor Destroy; override;
 
     /// <summary>
-    ///   Creates a signed JWT token embedding the given user ID
-    ///   as a custom 'uid' claim.
+    ///   Creates a signed JWT token embedding the given user ID as a custom 'uid' claim.
     /// </summary>
     /// <param name="aUserId">
     ///   The user ID to embed in the token payload.
@@ -85,8 +80,7 @@ type
       ): RawUtf8;
 
     /// <summary>
-    ///   Validates a JWT token's signature and expiration, then
-    ///   extracts the user ID from the 'uid' claim.
+    ///   Validates a JWT token's signature and expiration, then extracts the user ID from the 'uid' claim.
     /// </summary>
     /// <param name="aToken">
     ///   The JWT token string to validate.
@@ -136,10 +130,7 @@ begin
   //   - Standard claims (iss, exp, iat) added automatically
   // The 'uid' claim stores the user's database ID, which we
   // extract in ValidateToken via Content.data.I['uid'].
-  Result := FJwt.Compute(
-    ['uid', aUserId],
-    'ms.auth'
-    );
+  Result := FJwt.Compute(['uid', aUserId], 'ms.auth');
 end;
 
 destructor TBlogJwt.Destroy;

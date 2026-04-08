@@ -3,17 +3,13 @@
 ///   Implements the <c>IComment</c> contract with moderation workflow.
 ///
 ///   Demonstrates the selective-field update pattern in mORMot2:
-///   - <c>IRestOrm.Update(Rec, 'Field1,Field2')</c>: the second
-///     parameter is a CSV list of field names to update. Only those
-///     columns are written to SQLite, which is more efficient than
-///     updating all fields and avoids accidentally overwriting
-///     fields that weren't intended to change.
-///   - Moderation workflow: comments start as pending (status 0),
-///     and are approved (1) or rejected (2) by an author. Only
-///     approved comments are returned by <c>GetByPost</c>.
+///   - <c>IRestOrm.Update(Rec, 'Field1,Field2')</c>: the second parameter is a CSV list of field names to update.
+///     Only those columns are written to SQLite, which is more efficient than updating all fields and avoids
+///     accidentally overwriting fields that weren't intended to change.
+///   - Moderation workflow: comments start as pending (status 0), and are approved (1) or rejected (2) by an author.
+///     Only approved comments are returned by <c>GetByPost</c>.
 ///
-///   See <c>ms.users.server.pas</c> for detailed explanations of
-///   the basic CRUD and JSON parsing patterns used here.
+///   See <c>ms.users.server.pas</c> for detailed explanations of the basic CRUD and JSON parsing patterns used here.
 /// </summary>
 unit ms.comments.server;
 
@@ -47,11 +43,10 @@ uses
 type
 
   /// <summary>
-  ///   Implements the <c>IComment</c> interface for comment CRUD
-  ///   and moderation.
+  ///   Implements the <c>IComment</c> interface for comment CRUD and moderation.
   /// </summary>
   TCommentService = class(TInterfacedObject, IComment)
-  private
+  strict private
 
     /// <summary>
     ///   ORM interface for database access.
@@ -154,11 +149,10 @@ type
   end;
 
   /// <summary>
-  ///   Microservice server hosting the <c>IComment</c> service
-  ///   implementation.
+  ///   Microservice server hosting the <c>IComment</c> service implementation.
   /// </summary>
   TCommentsServer = class(TMicroService)
-  private
+  strict private
 
     /// <summary>
     ///   The comment service implementation instance.
@@ -240,9 +234,8 @@ function TCommentService.GetByPost(
 var
   Table: TOrmTable;
 begin
-  Table := FOrm.MultiFieldValues(TOrmBlogComment, '*',
-    FormatUtf8('PostId=% AND Status=% ORDER BY RowID ASC',
-      [aPostId, COMMENT_STATUS_APPROVED]));
+  Table := FOrm.MultiFieldValues(TOrmBlogComment, '*', FormatUtf8('PostId=% AND Status=% ORDER BY RowID ASC',
+    [aPostId, COMMENT_STATUS_APPROVED]));
   try
     if Table = nil then
       Result := '[]'
@@ -257,8 +250,7 @@ function TCommentService.GetPending: RawJson;
 var
   Table: TOrmTable;
 begin
-  Table := FOrm.MultiFieldValues(TOrmBlogComment, '*',
-    FormatUtf8('Status=%', [COMMENT_STATUS_PENDING]));
+  Table := FOrm.MultiFieldValues(TOrmBlogComment, '*', FormatUtf8('Status=%', [COMMENT_STATUS_PENDING]));
   try
     if Table = nil then
       Result := '[]'

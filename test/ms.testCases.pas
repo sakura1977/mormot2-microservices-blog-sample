@@ -82,194 +82,679 @@ uses
 
 type
 
-  /// Shared test context: single in-memory database with all services
+  /// <summary>
+  ///   Shared test context: single in-memory database with all services.
+  /// </summary>
   TBlogTestContext = class
-  private
+  strict private
+    /// <summary>
+    ///   ORM model containing all service tables.
+    /// </summary>
     FModel: TOrmModel;
+
+    /// <summary>
+    ///   In-memory REST server hosting all services.
+    /// </summary>
     FRestServer: TRestServerDB;
+
+    /// <summary>
+    ///   JWT handler for authentication tokens.
+    /// </summary>
     FJwt: TBlogJwt;
+
+    /// <summary>
+    ///   Temporary directory path for media file storage.
+    /// </summary>
     FMediaPath: TFileName;
+
+    /// <summary>
+    ///   Auth service implementation instance.
+    /// </summary>
     FAuthImpl: TAuthService;
+
+    /// <summary>
+    ///   User service implementation instance.
+    /// </summary>
     FUserImpl: TUserService;
+
+    /// <summary>
+    ///   Post service implementation instance.
+    /// </summary>
     FPostImpl: TPostService;
+
+    /// <summary>
+    ///   Tag service implementation instance.
+    /// </summary>
     FTagImpl: TTagService;
+
+    /// <summary>
+    ///   Comment service implementation instance.
+    /// </summary>
     FCommentImpl: TCommentService;
+
+    /// <summary>
+    ///   Media service implementation instance.
+    /// </summary>
     FMediaImpl: TMediaService;
+
+    /// <summary>
+    ///   Blog gateway service implementation instance.
+    /// </summary>
     FBlogImpl: TBlogService;
+
+    /// <summary>
+    ///   Analytics service implementation instance.
+    /// </summary>
     FAnalyticsImpl: TAnalyticsService;
   public
+    /// <summary>
+    ///   Auth service interface for test access.
+    /// </summary>
     Auth: IAuth;
+
+    /// <summary>
+    ///   User service interface for test access.
+    /// </summary>
     User: IUser;
+
+    /// <summary>
+    ///   Post service interface for test access.
+    /// </summary>
     Post: IPost;
+
+    /// <summary>
+    ///   Tag service interface for test access.
+    /// </summary>
     Tag: ITag;
+
+    /// <summary>
+    ///   Comment service interface for test access.
+    /// </summary>
     Comment: IComment;
+
+    /// <summary>
+    ///   Media service interface for test access.
+    /// </summary>
     Media: IMedia;
+
+    /// <summary>
+    ///   Blog gateway service interface for test access.
+    /// </summary>
     Blog: IBlog;
+
+    /// <summary>
+    ///   Analytics service interface for test access.
+    /// </summary>
     Analytics: IAnalytics;
+
+    /// <summary>
+    ///   Creates all service implementations with a shared in-memory database.
+    /// </summary>
     constructor Create;
+
+    /// <summary>
+    ///   Releases all interfaces, frees the server and model, cleans up temp media directory.
+    /// </summary>
     destructor Destroy; override;
   end;
 
+  /// <summary>
+  ///   Base test case providing shared access to the blog test context.
+  /// </summary>
   TMsTestCase = class(TSynTestCase)
   protected
+    /// <summary>
+    ///   Returns the shared <c>TBlogTestContext</c> from the owning <c>TBlogTests</c> suite.
+    /// </summary>
     function Context: TBlogTestContext;
   end;
 
+  /// <summary>
+  ///   Tests for the user service (<c>IUser</c>): CRUD operations on authors.
+  /// </summary>
   TTestUserService = class(TMsTestCase)
   published
+    /// <summary>
+    ///   Verifies adding a user and retrieving it by ID.
+    /// </summary>
     procedure AddAndGet;
+
+    /// <summary>
+    ///   Verifies that adding a user without a display name returns 0.
+    /// </summary>
     procedure AddEmptyName;
+
+    /// <summary>
+    ///   Verifies that getting a non-existent user returns empty JSON.
+    /// </summary>
     procedure GetNotFound;
+
+    /// <summary>
+    ///   Verifies updating an existing user's bio.
+    /// </summary>
     procedure Update;
+
+    /// <summary>
+    ///   Verifies that updating a non-existent user returns false.
+    /// </summary>
     procedure UpdateNotFound;
+
+    /// <summary>
+    ///   Verifies that <c>GetAll</c> returns all registered users.
+    /// </summary>
     procedure GetAll;
+
+    /// <summary>
+    ///   Verifies removing a user and confirming it is gone.
+    /// </summary>
     procedure Remove;
+
+    /// <summary>
+    ///   Verifies behavior when removing a non-existent user.
+    /// </summary>
     procedure RemoveNotFound;
   end;
 
+  /// <summary>
+  ///   Tests for the auth service (<c>IAuth</c>): registration, SCRAM authentication, JWT handling.
+  /// </summary>
   TTestAuthService = class(TMsTestCase)
   published
+    /// <summary>
+    ///   Verifies successful user registration.
+    /// </summary>
     procedure RegisterUser;
+
+    /// <summary>
+    ///   Verifies that duplicate email registration returns 0.
+    /// </summary>
     procedure RegisterDuplicate;
+
+    /// <summary>
+    ///   Verifies that registration with an empty email returns 0.
+    /// </summary>
     procedure RegisterEmptyEmail;
+
+    /// <summary>
+    ///   Verifies that registration with an empty password returns 0.
+    /// </summary>
     procedure RegisterEmptyPassword;
+
+    /// <summary>
+    ///   Verifies full SCRAM challenge-response authentication flow.
+    /// </summary>
     procedure ChallengeAndAuthenticate;
+
+    /// <summary>
+    ///   Verifies that authentication with the wrong password fails.
+    /// </summary>
     procedure AuthenticateWrongPassword;
+
+    /// <summary>
+    ///   Verifies that authentication with an unknown email fails.
+    /// </summary>
     procedure AuthenticateUnknownEmail;
+
+    /// <summary>
+    ///   Verifies that a replayed nonce is rejected.
+    /// </summary>
     procedure AuthenticateReplayedNonce;
+
+    /// <summary>
+    ///   Verifies JWT token validation after successful login.
+    /// </summary>
     procedure ValidateToken;
+
+    /// <summary>
+    ///   Verifies that invalid and empty tokens are rejected.
+    /// </summary>
     procedure ValidateInvalidToken;
+
+    /// <summary>
+    ///   Verifies successful password change and re-authentication.
+    /// </summary>
     procedure ChangePassword;
+
+    /// <summary>
+    ///   Verifies that password change with the wrong old password fails.
+    /// </summary>
     procedure ChangePasswordWrongOld;
   end;
 
+  /// <summary>
+  ///   Tests for the post service (<c>IPost</c>): CRUD, slug generation, list filtering.
+  /// </summary>
   TTestPostService = class(TMsTestCase)
   published
+    /// <summary>
+    ///   Verifies adding a post and retrieving it with correct slug.
+    /// </summary>
     procedure AddAndGet;
+
+    /// <summary>
+    ///   Verifies that adding a post without a title returns 0.
+    /// </summary>
     procedure AddEmptyTitle;
+
+    /// <summary>
+    ///   Verifies that getting a non-existent post returns empty JSON.
+    /// </summary>
     procedure GetNotFound;
+
+    /// <summary>
+    ///   Verifies retrieval of a post by its slug.
+    /// </summary>
     procedure GetBySlug;
+
+    /// <summary>
+    ///   Verifies that getting a post by non-existent slug returns empty JSON.
+    /// </summary>
     procedure GetBySlugNotFound;
+
+    /// <summary>
+    ///   Verifies paginated post listing with status and author filters.
+    /// </summary>
     procedure GetList;
+
+    /// <summary>
+    ///   Verifies updating a post's title and status.
+    /// </summary>
     procedure Update;
+
+    /// <summary>
+    ///   Verifies that updating a non-existent post returns false.
+    /// </summary>
     procedure UpdateNotFound;
+
+    /// <summary>
+    ///   Verifies removing a post and confirming it is gone.
+    /// </summary>
     procedure Remove;
+
+    /// <summary>
+    ///   Verifies behavior when removing a non-existent post.
+    /// </summary>
     procedure RemoveNotFound;
   end;
 
+  /// <summary>
+  ///   Tests for the tag service (<c>ITag</c>): CRUD, post-tag associations, cascade delete.
+  /// </summary>
   TTestTagService = class(TMsTestCase)
   published
+    /// <summary>
+    ///   Verifies adding a tag and retrieving it with correct slug.
+    /// </summary>
     procedure AddAndGet;
+
+    /// <summary>
+    ///   Verifies that adding a tag without a name returns 0.
+    /// </summary>
     procedure AddEmptyName;
+
+    /// <summary>
+    ///   Verifies that adding a tag with a duplicate name returns 0.
+    /// </summary>
     procedure AddDuplicateName;
+
+    /// <summary>
+    ///   Verifies that getting a non-existent tag returns empty JSON.
+    /// </summary>
     procedure GetNotFound;
+
+    /// <summary>
+    ///   Verifies that <c>GetAll</c> returns all registered tags.
+    /// </summary>
     procedure GetAll;
+
+    /// <summary>
+    ///   Verifies assigning tags to a post.
+    /// </summary>
     procedure SetPostTags;
+
+    /// <summary>
+    ///   Verifies that invalid JSON for tag assignment is rejected.
+    /// </summary>
     procedure SetPostTagsInvalidJson;
+
+    /// <summary>
+    ///   Verifies retrieving tags assigned to a specific post.
+    /// </summary>
     procedure GetByPost;
+
+    /// <summary>
+    ///   Verifies that a post without tags returns an empty array.
+    /// </summary>
     procedure GetByPostNoTags;
+
+    /// <summary>
+    ///   Verifies reverse lookup of post IDs by tag.
+    /// </summary>
     procedure GetPostIds;
+
+    /// <summary>
+    ///   Verifies that a non-existent tag returns an empty post ID array.
+    /// </summary>
     procedure GetPostIdsNoResults;
+
+    /// <summary>
+    ///   Verifies removing a tag.
+    /// </summary>
     procedure Remove;
+
+    /// <summary>
+    ///   Verifies that removing a tag cascades to delete post-tag associations.
+    /// </summary>
     procedure RemoveCascade;
   end;
 
+  /// <summary>
+  ///   Tests for the comment service (<c>IComment</c>): add, moderate, retrieve.
+  /// </summary>
   TTestCommentService = class(TMsTestCase)
   published
+    /// <summary>
+    ///   Verifies adding a pending comment.
+    /// </summary>
     procedure AddPending;
+
+    /// <summary>
+    ///   Verifies that adding a comment with an empty body returns 0.
+    /// </summary>
     procedure AddEmptyBody;
+
+    /// <summary>
+    ///   Verifies that adding a comment with an invalid post ID returns 0.
+    /// </summary>
     procedure AddInvalidPostId;
+
+    /// <summary>
+    ///   Verifies retrieval of pending comments.
+    /// </summary>
     procedure GetPending;
+
+    /// <summary>
+    ///   Verifies approving a pending comment.
+    /// </summary>
     procedure Approve;
+
+    /// <summary>
+    ///   Verifies that approving a non-existent comment returns false.
+    /// </summary>
     procedure ApproveNotFound;
+
+    /// <summary>
+    ///   Verifies rejecting a pending comment.
+    /// </summary>
     procedure Reject;
+
+    /// <summary>
+    ///   Verifies retrieval of approved comments for a post.
+    /// </summary>
     procedure GetByPost;
+
+    /// <summary>
+    ///   Verifies that a post without approved comments returns an empty array.
+    /// </summary>
     procedure GetByPostNoComments;
   end;
 
+  /// <summary>
+  ///   Tests for the media service (<c>IMedia</c>): upload, download, remove.
+  /// </summary>
   TTestMediaService = class(TMsTestCase)
   published
+    /// <summary>
+    ///   Verifies uploading a file and retrieving its metadata.
+    /// </summary>
     procedure UploadAndGetInfo;
+
+    /// <summary>
+    ///   Verifies that uploading with an empty filename returns 0.
+    /// </summary>
     procedure UploadEmptyFileName;
+
+    /// <summary>
+    ///   Verifies that uploading empty data returns 0.
+    /// </summary>
     procedure UploadEmptyData;
+
+    /// <summary>
+    ///   Verifies that uploading data exceeding the size limit returns 0.
+    /// </summary>
     procedure UploadTooLarge;
+
+    /// <summary>
+    ///   Verifies that getting info for a non-existent media returns empty JSON.
+    /// </summary>
     procedure GetInfoNotFound;
+
+    /// <summary>
+    ///   Verifies downloading a previously uploaded file.
+    /// </summary>
     procedure GetFile;
+
+    /// <summary>
+    ///   Verifies that downloading a non-existent file returns empty data.
+    /// </summary>
     procedure GetFileNotFound;
+
+    /// <summary>
+    ///   Verifies removing a media file.
+    /// </summary>
     procedure Remove;
+
+    /// <summary>
+    ///   Verifies that removing a non-existent media returns false.
+    /// </summary>
     procedure RemoveNotFound;
   end;
 
+  /// <summary>
+  ///   Tests for the blog gateway aggregation (<c>IBlog</c>): full post with author, tags, comments.
+  /// </summary>
   TTestBlogAggregation = class(TMsTestCase)
   published
+    /// <summary>
+    ///   Verifies that <c>GetPostFull</c> returns a post with author, tags, and comments.
+    /// </summary>
     procedure GetPostFull;
+
+    /// <summary>
+    ///   Verifies that <c>GetPostFull</c> returns empty JSON for a non-existent post.
+    /// </summary>
     procedure GetPostFullNotFound;
+
+    /// <summary>
+    ///   Verifies that <c>GetPostsByTag</c> returns posts associated with a tag.
+    /// </summary>
     procedure GetPostsByTag;
+
+    /// <summary>
+    ///   Verifies that <c>GetPostsByTag</c> returns empty JSON for a non-existent tag.
+    /// </summary>
     procedure GetPostsByTagNotFound;
   end;
 
+  /// <summary>
+  ///   Resilience tests for the blog gateway when sub-services are unavailable.
+  /// </summary>
   TTestBlogResilience = class(TSynTestCase)
   published
+    /// <summary>
+    ///   Verifies graceful degradation when the comment service is unavailable.
+    /// </summary>
     procedure GetPostFullWithoutComments;
+
+    /// <summary>
+    ///   Verifies graceful degradation when the tag service is unavailable.
+    /// </summary>
     procedure GetPostFullWithoutTags;
+
+    /// <summary>
+    ///   Verifies graceful degradation when the user service is unavailable.
+    /// </summary>
     procedure GetPostFullWithoutUsers;
+
+    /// <summary>
+    ///   Verifies graceful degradation when all enrichment services are unavailable.
+    /// </summary>
     procedure GetPostFullWithoutAllEnrichment;
+
+    /// <summary>
+    ///   Verifies graceful degradation of <c>GetPostsByTag</c> when the user service is unavailable.
+    /// </summary>
     procedure GetPostsByTagWithoutUsers;
   end;
 
+  /// <summary>
+  ///   Tests for the analytics service (<c>IAnalytics</c>): overview, stats, tag cloud.
+  /// </summary>
   TTestAnalyticsService = class(TMsTestCase)
   published
+    /// <summary>
+    ///   Verifies the analytics overview with post, author, tag, and comment counts.
+    /// </summary>
     procedure GetOverview;
+
+    /// <summary>
+    ///   Verifies per-author statistics.
+    /// </summary>
     procedure GetAuthorStats;
+
+    /// <summary>
+    ///   Verifies the tag cloud with tag names and post counts.
+    /// </summary>
     procedure GetTagCloud;
+
+    /// <summary>
+    ///   Verifies comment activity data including pending count.
+    /// </summary>
     procedure GetCommentActivity;
+
+    /// <summary>
+    ///   Verifies retrieval of recent posts with full enrichment.
+    /// </summary>
     procedure GetRecentPostsFull;
+
+    /// <summary>
+    ///   Verifies that requesting zero recent posts returns an empty array.
+    /// </summary>
     procedure GetRecentPostsFullEmpty;
   end;
 
+  /// <summary>
+  ///   Resilience tests for the analytics service when sub-services are unavailable.
+  /// </summary>
   TTestAnalyticsResilience = class(TSynTestCase)
   published
+    /// <summary>
+    ///   Verifies analytics overview when all services are unavailable.
+    /// </summary>
     procedure GetOverviewWithoutPosts;
+
+    /// <summary>
+    ///   Verifies analytics overview when only the user service is unavailable.
+    /// </summary>
     procedure GetOverviewWithoutUsers;
+
+    /// <summary>
+    ///   Verifies recent posts when the comment service is unavailable.
+    /// </summary>
     procedure GetRecentPostsFullWithoutComments;
+
+    /// <summary>
+    ///   Verifies recent posts when the tag service is unavailable.
+    /// </summary>
     procedure GetRecentPostsFullWithoutTags;
   end;
 
+  /// <summary>
+  ///   Tests for the configuration service (<c>IConfig</c>): per-service config, registry.
+  /// </summary>
   TTestConfigService = class(TSynTestCase)
   published
+    /// <summary>
+    ///   Verifies retrieving configuration for a known service.
+    /// </summary>
     procedure GetServiceConfigKnown;
+
+    /// <summary>
+    ///   Verifies that retrieving configuration for an unknown service returns empty JSON.
+    /// </summary>
     procedure GetServiceConfigUnknown;
+
+    /// <summary>
+    ///   Verifies retrieval of all service configurations.
+    /// </summary>
     procedure GetAllConfigs;
+
+    /// <summary>
+    ///   Verifies the service registry with host and port information.
+    /// </summary>
     procedure GetServiceRegistry;
+
+    /// <summary>
+    ///   Verifies that the service registry excludes sensitive fields.
+    /// </summary>
     procedure GetServiceRegistryNoSecrets;
   end;
 
+  /// <summary>
+  ///   End-to-end workflow test covering user, auth, post, tag, comment, and aggregation.
+  /// </summary>
   TTestFullWorkflow = class(TMsTestCase)
   published
+    /// <summary>
+    ///   Runs the full blog workflow: create user, register, login, post, tag, comment, aggregate.
+    /// </summary>
     procedure EndToEnd;
   end;
 
-  /// Top-level test suite
+  /// <summary>
+  ///   Top-level test suite that creates the shared context and registers all test cases.
+  /// </summary>
   TBlogTests = class(TSynTests)
-  private
+  strict private
+    /// <summary>
+    ///   Shared test context holding all service implementations and interfaces.
+    /// </summary>
     FContext: TBlogTestContext;
   public
+    /// <summary>
+    ///   Returns the shared <c>TBlogTestContext</c> used by all test cases.
+    /// </summary>
+    property TestContext: TBlogTestContext read FContext;
+
+    /// <summary>
+    ///   Creates the test suite and initializes the shared blog test context.
+    /// </summary>
+    /// <param name="Ident">
+    ///   Optional identifier for the test suite.
+    /// </param>
     constructor Create(
       const Ident: string = ''
       ); override;
+
+    /// <summary>
+    ///   Destroys the test suite and frees the shared context.
+    /// </summary>
     destructor Destroy; override;
   published
+    /// <summary>
+    ///   Registers all service test cases with the suite.
+    /// </summary>
     procedure Services;
   end;
 
 implementation
 
-{ TBlogTestContext }
-
 constructor TBlogTestContext.Create;
 
-  procedure RegisterService(aImpl: TInterfacedObject;
-    aInterface: PRttiInfo);
+  procedure RegisterService(
+    aImpl: TInterfacedObject;
+    aInterface: PRttiInfo
+    );
   var
     Factory: TServiceFactoryServerAbstract;
   begin
@@ -349,14 +834,10 @@ begin
 end;
 
 
-{ TMsTestCase }
-
 function TMsTestCase.Context: TBlogTestContext;
 begin
-  Result := (Owner as TBlogTests).FContext;
+  Result := (Owner as TBlogTests).TestContext;
 end;
-
-{ TTestUserService }
 
 procedure TTestUserService.AddAndGet;
 var
@@ -364,8 +845,7 @@ var
   Json: RawJson;
   Doc: TDocVariantData;
 begin
-  Id := Context.User.Add(
-    '{"DisplayName":"Max","Bio":"Test author","WebsiteUrl":"https://example.com"}');
+  Id := Context.User.Add('{"DisplayName":"Max","Bio":"Test author","WebsiteUrl":"https://example.com"}');
   Check(Id > 0, 'User.Add should return positive ID');
   Json := Context.User.Get(Id);
   Check(Json <> '', 'User.Get should return JSON');
@@ -376,10 +856,8 @@ end;
 
 procedure TTestUserService.AddEmptyName;
 begin
-  CheckEqual(Context.User.Add('{"Bio":"No name"}'), 0,
-    'empty DisplayName should return 0');
-  CheckEqual(Context.User.Add('{}'), 0,
-    'empty JSON should return 0');
+  CheckEqual(Context.User.Add('{"Bio":"No name"}'), 0, 'empty DisplayName should return 0');
+  CheckEqual(Context.User.Add('{}'), 0, 'empty JSON should return 0');
 end;
 
 procedure TTestUserService.GetNotFound;
@@ -402,8 +880,7 @@ end;
 
 procedure TTestUserService.UpdateNotFound;
 begin
-  Check(not Context.User.Update(99999, '{"Bio":"ghost"}'),
-    'update non-existent should return false');
+  Check(not Context.User.Update(99999, '{"Bio":"ghost"}'), 'update non-existent should return false');
 end;
 
 procedure TTestUserService.GetAll;
@@ -431,13 +908,9 @@ end;
 procedure TTestUserService.RemoveNotFound;
 begin
   // mORMot2 ORM returns True even if no row was deleted
-  Check(Context.User.Remove(99999),
-    'DELETE on non-existent is not an error in mORMot2');
-  CheckEqual(Context.User.Get(99999), '{}',
-    'record should still not exist');
+  Check(Context.User.Remove(99999), 'DELETE on non-existent is not an error in mORMot2');
+  CheckEqual(Context.User.Get(99999), '{}', 'record should still not exist');
 end;
-
-{ TTestAuthService }
 
 procedure TTestAuthService.RegisterUser;
 var
@@ -457,14 +930,12 @@ end;
 
 procedure TTestAuthService.RegisterEmptyEmail;
 begin
-  CheckEqual(Context.Auth.Register('', 'pass123', 1), 0,
-    'empty email should return 0');
+  CheckEqual(Context.Auth.Register('', 'pass123', 1), 0, 'empty email should return 0');
 end;
 
 procedure TTestAuthService.RegisterEmptyPassword;
 begin
-  CheckEqual(Context.Auth.Register('nopass@example.com', '', 1), 0,
-    'empty password should return 0');
+  CheckEqual(Context.Auth.Register('nopass@example.com', '', 1), 0, 'empty password should return 0');
 end;
 
 procedure TTestAuthService.ChallengeAndAuthenticate;
@@ -484,12 +955,10 @@ begin
   McfHash := ModularCryptHash(McfInfo, 'secret123');
   Check(McfHash <> '', 'ModularCryptHash should succeed');
   PersistedKey := ScramPersistedKey(McfHash, 'test@example.com');
-  ClientProof := ScramClientProof(McfHash, 'test@example.com',
-    ClientSignature, ['test@example.com', ServerNonce]);
+  ClientProof := ScramClientProof(McfHash, 'test@example.com', ClientSignature, ['test@example.com', ServerNonce]);
   Check(ClientProof <> '', 'ScramClientProof should succeed');
   // Phase 3: Authenticate
-  Ok := Context.Auth.Authenticate('test@example.com', ServerNonce,
-    ClientProof, Token, UserId, ServerProof);
+  Ok := Context.Auth.Authenticate('test@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof);
   Check(Ok, 'Authenticate should succeed');
   Check(Token <> '', 'should return JWT token');
   Check(UserId > 0, 'should return UserId');
@@ -505,10 +974,8 @@ var
 begin
   Context.Auth.Challenge('test@example.com', McfInfo, ServerNonce);
   McfHash := ModularCryptHash(McfInfo, 'WRONG-PASSWORD');
-  ClientProof := ScramClientProof(McfHash, 'test@example.com',
-    ClientSignature, ['test@example.com', ServerNonce]);
-  Check(not Context.Auth.Authenticate('test@example.com', ServerNonce,
-    ClientProof, Token, UserId, ServerProof),
+  ClientProof := ScramClientProof(McfHash, 'test@example.com', ClientSignature, ['test@example.com', ServerNonce]);
+  Check(not Context.Auth.Authenticate('test@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof),
     'wrong password should fail');
   CheckEqual(Token, '', 'no token on failure');
 end;
@@ -523,10 +990,8 @@ begin
   Context.Auth.Challenge('unknown@example.com', McfInfo, ServerNonce);
   Check(McfInfo <> '', 'should return fake MCF info (anti-enumeration)');
   McfHash := ModularCryptHash(McfInfo, 'anypass');
-  ClientProof := ScramClientProof(McfHash, 'unknown@example.com',
-    ClientSignature, ['unknown@example.com', ServerNonce]);
-  Check(not Context.Auth.Authenticate('unknown@example.com', ServerNonce,
-    ClientProof, Token, UserId, ServerProof),
+  ClientProof := ScramClientProof(McfHash, 'unknown@example.com', ClientSignature, ['unknown@example.com', ServerNonce]);
+  Check(not Context.Auth.Authenticate('unknown@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof),
     'unknown email should fail');
 end;
 
@@ -540,14 +1005,11 @@ begin
   // Get a valid challenge
   Context.Auth.Challenge('test@example.com', McfInfo, ServerNonce);
   McfHash := ModularCryptHash(McfInfo, 'secret123');
-  ClientProof := ScramClientProof(McfHash, 'test@example.com',
-    ClientSignature, ['test@example.com', ServerNonce]);
+  ClientProof := ScramClientProof(McfHash, 'test@example.com', ClientSignature, ['test@example.com', ServerNonce]);
   // First auth consumes the nonce
-  Context.Auth.Authenticate('test@example.com', ServerNonce,
-    ClientProof, Token, UserId, ServerProof);
+  Context.Auth.Authenticate('test@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof);
   // Replay with same nonce should fail
-  Check(not Context.Auth.Authenticate('test@example.com', ServerNonce,
-    ClientProof, Token, UserId, ServerProof),
+  Check(not Context.Auth.Authenticate('test@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof),
     'replayed nonce should fail');
 end;
 
@@ -561,27 +1023,21 @@ begin
   // Login to get a token
   Context.Auth.Challenge('test@example.com', McfInfo, ServerNonce);
   McfHash := ModularCryptHash(McfInfo, 'secret123');
-  ClientProof := ScramClientProof(McfHash, 'test@example.com',
-    ClientSignature, ['test@example.com', ServerNonce]);
-  Context.Auth.Authenticate('test@example.com', ServerNonce,
-    ClientProof, Token, UserId, ServerProof);
+  ClientProof := ScramClientProof(McfHash, 'test@example.com', ClientSignature, ['test@example.com', ServerNonce]);
+  Context.Auth.Authenticate('test@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof);
   // Validate the token
-  Check(Context.Auth.Validate(Token, ValidatedUserId),
-    'Validate should succeed');
+  Check(Context.Auth.Validate(Token, ValidatedUserId), 'Validate should succeed');
   CheckEqual(ValidatedUserId, UserId, 'UserId should match');
   // Invalid token should fail
-  Check(not Context.Auth.Validate('invalid.token.here', ValidatedUserId),
-    'invalid token should fail');
+  Check(not Context.Auth.Validate('invalid.token.here', ValidatedUserId), 'invalid token should fail');
 end;
 
 procedure TTestAuthService.ValidateInvalidToken;
 var
   UserId: TID;
 begin
-  Check(not Context.Auth.Validate('', UserId),
-    'empty token should fail');
-  Check(not Context.Auth.Validate('not.a.jwt', UserId),
-    'garbage token should fail');
+  Check(not Context.Auth.Validate('', UserId), 'empty token should fail');
+  Check(not Context.Auth.Validate('not.a.jwt', UserId), 'garbage token should fail');
 end;
 
 procedure TTestAuthService.ChangePassword;
@@ -598,15 +1054,12 @@ begin
   AuthUserId := Context.Auth.Register('changepw@example.com', 'oldpass', UserId);
   Check(AuthUserId > 0, 'register changepw account');
   // Change password
-  Check(Context.Auth.ChangePassword(UserId, 'oldpass', 'newpass'),
-    'ChangePassword should succeed');
+  Check(Context.Auth.ChangePassword(UserId, 'oldpass', 'newpass'), 'ChangePassword should succeed');
   // Login with new password
   Context.Auth.Challenge('changepw@example.com', McfInfo, ServerNonce);
   McfHash := ModularCryptHash(McfInfo, 'newpass');
-  ClientProof := ScramClientProof(McfHash, 'changepw@example.com',
-    ClientSignature, ['changepw@example.com', ServerNonce]);
-  Ok := Context.Auth.Authenticate('changepw@example.com', ServerNonce,
-    ClientProof, Token, UserId, ServerProof);
+  ClientProof := ScramClientProof(McfHash, 'changepw@example.com', ClientSignature, ['changepw@example.com', ServerNonce]);
+  Ok := Context.Auth.Authenticate('changepw@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof);
   Check(Ok, 'login with new password should succeed');
 end;
 
@@ -616,19 +1069,15 @@ var
 begin
   UserId := Context.User.Add('{"DisplayName":"WrongOld Test"}');
   Context.Auth.Register('wrongold@example.com', 'correct', UserId);
-  Check(not Context.Auth.ChangePassword(UserId, 'WRONG', 'newpass'),
-    'wrong old password should fail');
+  Check(not Context.Auth.ChangePassword(UserId, 'WRONG', 'newpass'), 'wrong old password should fail');
 end;
-
-{ TTestPostService }
 
 procedure TTestPostService.AddAndGet;
 var
   Id: TID;
   Doc: TDocVariantData;
 begin
-  Id := Context.Post.Add(
-    '{"Title":"First Post","Body":"Hello world","AuthorId":1,"Status":1}');
+  Id := Context.Post.Add('{"Title":"First Post","Body":"Hello world","AuthorId":1,"Status":1}');
   Check(Id > 0, 'Post.Add should return positive ID');
   Doc.InitJson(Context.Post.Get(Id), JSON_FAST_FLOAT);
   CheckEqual(Doc.U['Title'], 'First Post');
@@ -638,10 +1087,8 @@ end;
 
 procedure TTestPostService.AddEmptyTitle;
 begin
-  CheckEqual(Context.Post.Add('{"Body":"no title","AuthorId":1}'), 0,
-    'empty title should return 0');
-  CheckEqual(Context.Post.Add('{}'), 0,
-    'empty JSON should return 0');
+  CheckEqual(Context.Post.Add('{"Body":"no title","AuthorId":1}'), 0, 'empty title should return 0');
+  CheckEqual(Context.Post.Add('{}'), 0, 'empty JSON should return 0');
 end;
 
 procedure TTestPostService.GetNotFound;
@@ -668,11 +1115,9 @@ var
   Doc: TDocVariantData;
 begin
   // Add more posts
-  Id := Context.Post.Add(
-    '{"Title":"Draft Post","Body":"Not published","AuthorId":1,"Status":0}');
+  Id := Context.Post.Add('{"Title":"Draft Post","Body":"Not published","AuthorId":1,"Status":0}');
   Check(Id > 0);
-  Id := Context.Post.Add(
-    '{"Title":"Second Published","Body":"Content","AuthorId":1,"Status":1}');
+  Id := Context.Post.Add('{"Title":"Second Published","Body":"Content","AuthorId":1,"Status":1}');
   Check(Id > 0);
   // Get published only (status=1)
   Doc.InitJson(Context.Post.GetList(1, 10, 1, 0), JSON_FAST_FLOAT);
@@ -687,8 +1132,7 @@ var
   Id: TID;
   Doc: TDocVariantData;
 begin
-  Id := Context.Post.Add(
-    '{"Title":"To Update","Body":"Original","AuthorId":1,"Status":0}');
+  Id := Context.Post.Add('{"Title":"To Update","Body":"Original","AuthorId":1,"Status":0}');
   Check(Id > 0);
   Check(Context.Post.Update(Id, '{"Title":"Updated Title","Status":1}'));
   Doc.InitJson(Context.Post.Get(Id), JSON_FAST_FLOAT);
@@ -699,16 +1143,14 @@ end;
 
 procedure TTestPostService.UpdateNotFound;
 begin
-  Check(not Context.Post.Update(99999, '{"Title":"ghost"}'),
-    'update non-existent should return false');
+  Check(not Context.Post.Update(99999, '{"Title":"ghost"}'), 'update non-existent should return false');
 end;
 
 procedure TTestPostService.Remove;
 var
   Id: TID;
 begin
-  Id := Context.Post.Add(
-    '{"Title":"To Delete","Body":"Gone soon","AuthorId":1,"Status":0}');
+  Id := Context.Post.Add('{"Title":"To Delete","Body":"Gone soon","AuthorId":1,"Status":0}');
   Check(Id > 0);
   Check(Context.Post.Remove(Id));
   CheckEqual(Context.Post.Get(Id), '{}');
@@ -717,13 +1159,9 @@ end;
 procedure TTestPostService.RemoveNotFound;
 begin
   // mORMot2 ORM returns True even if no row was deleted
-  Check(Context.Post.Remove(99999),
-    'DELETE on non-existent is not an error in mORMot2');
-  CheckEqual(Context.Post.Get(99999), '{}',
-    'record should still not exist');
+  Check(Context.Post.Remove(99999), 'DELETE on non-existent is not an error in mORMot2');
+  CheckEqual(Context.Post.Get(99999), '{}', 'record should still not exist');
 end;
-
-{ TTestTagService }
 
 procedure TTestTagService.AddAndGet;
 var
@@ -739,14 +1177,12 @@ end;
 
 procedure TTestTagService.AddEmptyName;
 begin
-  CheckEqual(Context.Tag.Add('{"Description":"no name"}'), 0,
-    'empty name should return 0');
+  CheckEqual(Context.Tag.Add('{"Description":"no name"}'), 0, 'empty name should return 0');
 end;
 
 procedure TTestTagService.AddDuplicateName;
 begin
-  CheckEqual(Context.Tag.Add('{"Name":"Delphi"}'), 0,
-    'duplicate name should fail (UNIQUE constraint)');
+  CheckEqual(Context.Tag.Add('{"Name":"Delphi"}'), 0, 'duplicate name should fail (UNIQUE constraint)');
 end;
 
 procedure TTestTagService.GetNotFound;
@@ -769,16 +1205,13 @@ end;
 
 procedure TTestTagService.SetPostTags;
 begin
-  Check(Context.Tag.SetPostTags(1, '[1,2]'),
-    'SetPostTags should succeed');
+  Check(Context.Tag.SetPostTags(1, '[1,2]'), 'SetPostTags should succeed');
 end;
 
 procedure TTestTagService.SetPostTagsInvalidJson;
 begin
-  Check(not Context.Tag.SetPostTags(1, 'not-json'),
-    'invalid JSON should return false');
-  Check(not Context.Tag.SetPostTags(1, '{"not":"array"}'),
-    'non-array JSON should return false');
+  Check(not Context.Tag.SetPostTags(1, 'not-json'), 'invalid JSON should return false');
+  Check(not Context.Tag.SetPostTags(1, '{"not":"array"}'), 'non-array JSON should return false');
 end;
 
 procedure TTestTagService.GetByPost;
@@ -793,10 +1226,8 @@ procedure TTestTagService.GetByPostNoTags;
 var
   PostId: TID;
 begin
-  PostId := Context.Post.Add(
-    '{"Title":"No Tags Post","Body":"x","AuthorId":1,"Status":0}');
-  CheckEqual(Context.Tag.GetByPost(PostId), '[]',
-    'post without tags should return empty array');
+  PostId := Context.Post.Add('{"Title":"No Tags Post","Body":"x","AuthorId":1,"Status":0}');
+  CheckEqual(Context.Tag.GetByPost(PostId), '[]', 'post without tags should return empty array');
 end;
 
 procedure TTestTagService.GetPostIds;
@@ -810,8 +1241,7 @@ end;
 
 procedure TTestTagService.GetPostIdsNoResults;
 begin
-  CheckEqual(Context.Tag.GetPostIds(9999), '[]',
-    'non-existent tag should return empty array');
+  CheckEqual(Context.Tag.GetPostIds(9999), '[]', 'non-existent tag should return empty array');
 end;
 
 procedure TTestTagService.Remove;
@@ -830,8 +1260,7 @@ var
   Arr: TDocVariantData;
 begin
   TagId := Context.Tag.Add('{"Name":"CascadeTest"}');
-  PostId := Context.Post.Add(
-    '{"Title":"Cascade Post","Body":"x","AuthorId":1,"Status":0}');
+  PostId := Context.Post.Add('{"Title":"Cascade Post","Body":"x","AuthorId":1,"Status":0}');
   Context.Tag.SetPostTags(PostId, FormatUtf8('[%]', [TagId]));
   // Verify tag is assigned
   Arr.InitJson(Context.Tag.GetByPost(PostId), JSON_FAST_FLOAT);
@@ -842,31 +1271,24 @@ begin
   CheckEqual(Arr.Count, 0, 'tag associations should be gone after remove');
 end;
 
-{ TTestCommentService }
-
 procedure TTestCommentService.AddPending;
 var
   Id: TID;
 begin
-  Id := Context.Comment.Add(1,
-    '{"AuthorName":"Visitor","AuthorEmail":"v@test.com","Body":"Nice post!"}');
+  Id := Context.Comment.Add(1, '{"AuthorName":"Visitor","AuthorEmail":"v@test.com","Body":"Nice post!"}');
   Check(Id > 0, 'Comment.Add should return positive ID');
 end;
 
 procedure TTestCommentService.AddEmptyBody;
 begin
-  CheckEqual(Context.Comment.Add(1, '{"AuthorName":"X","Body":""}'), 0,
-    'empty body should return 0');
-  CheckEqual(Context.Comment.Add(1, '{"AuthorName":"X"}'), 0,
-    'missing body should return 0');
+  CheckEqual(Context.Comment.Add(1, '{"AuthorName":"X","Body":""}'), 0, 'empty body should return 0');
+  CheckEqual(Context.Comment.Add(1, '{"AuthorName":"X"}'), 0, 'missing body should return 0');
 end;
 
 procedure TTestCommentService.AddInvalidPostId;
 begin
-  CheckEqual(Context.Comment.Add(0, '{"AuthorName":"X","Body":"text"}'), 0,
-    'postId=0 should return 0');
-  CheckEqual(Context.Comment.Add(-1, '{"AuthorName":"X","Body":"text"}'), 0,
-    'negative postId should return 0');
+  CheckEqual(Context.Comment.Add(0, '{"AuthorName":"X","Body":"text"}'), 0, 'postId=0 should return 0');
+  CheckEqual(Context.Comment.Add(-1, '{"AuthorName":"X","Body":"text"}'), 0, 'negative postId should return 0');
 end;
 
 procedure TTestCommentService.GetPending;
@@ -884,16 +1306,14 @@ end;
 
 procedure TTestCommentService.ApproveNotFound;
 begin
-  Check(not Context.Comment.Approve(99999, 1),
-    'approve non-existent should return false');
+  Check(not Context.Comment.Approve(99999, 1), 'approve non-existent should return false');
 end;
 
 procedure TTestCommentService.Reject;
 var
   Id: TID;
 begin
-  Id := Context.Comment.Add(1,
-    '{"AuthorName":"Spammer","Body":"Buy stuff!"}');
+  Id := Context.Comment.Add(1, '{"AuthorName":"Spammer","Body":"Buy stuff!"}');
   Check(Id > 0);
   Check(Context.Comment.Reject(Id, 1), 'Reject should succeed');
 end;
@@ -912,21 +1332,16 @@ procedure TTestCommentService.GetByPostNoComments;
 var
   PostId: TID;
 begin
-  PostId := Context.Post.Add(
-    '{"Title":"No Comments Post","Body":"x","AuthorId":1,"Status":0}');
-  CheckEqual(Context.Comment.GetByPost(PostId), '[]',
-    'post without approved comments should return empty array');
+  PostId := Context.Post.Add('{"Title":"No Comments Post","Body":"x","AuthorId":1,"Status":0}');
+  CheckEqual(Context.Comment.GetByPost(PostId), '[]', 'post without approved comments should return empty array');
 end;
-
-{ TTestMediaService }
 
 procedure TTestMediaService.UploadAndGetInfo;
 var
   Id: TID;
   Doc: TDocVariantData;
 begin
-  Id := Context.Media.Upload('test.png',
-    BinToBase64('fake-png-data'), 'Test image', 1);
+  Id := Context.Media.Upload('test.png', BinToBase64('fake-png-data'), 'Test image', 1);
   Check(Id > 0, 'Media.Upload should return positive ID');
   Doc.InitJson(Context.Media.GetInfo(Id), JSON_FAST_FLOAT);
   CheckEqual(Doc.U['FileName'], 'test.png');
@@ -936,14 +1351,12 @@ end;
 
 procedure TTestMediaService.UploadEmptyFileName;
 begin
-  CheckEqual(Context.Media.Upload('', BinToBase64('data'), '', 1), 0,
-    'empty filename should return 0');
+  CheckEqual(Context.Media.Upload('', BinToBase64('data'), '', 1), 0, 'empty filename should return 0');
 end;
 
 procedure TTestMediaService.UploadEmptyData;
 begin
-  CheckEqual(Context.Media.Upload('test.png', '', '', 1), 0,
-    'empty data should return 0');
+  CheckEqual(Context.Media.Upload('test.png', '', '', 1), 0, 'empty data should return 0');
 end;
 
 procedure TTestMediaService.UploadTooLarge;
@@ -952,9 +1365,7 @@ var
 begin
   SetLength(LargeData, MAX_UPLOAD_SIZE + 1);
   FillCharFast(pointer(LargeData)^, Length(LargeData), Ord('X'));
-  CheckEqual(Context.Media.Upload('big.bin',
-    BinToBase64(LargeData), '', 1), 0,
-    'oversized upload should return 0');
+  CheckEqual(Context.Media.Upload('big.bin', BinToBase64(LargeData), '', 1), 0, 'oversized upload should return 0');
 end;
 
 procedure TTestMediaService.GetInfoNotFound;
@@ -968,8 +1379,7 @@ var
   ContentType: RawUtf8;
   FileData: RawByteString;
 begin
-  Id := Context.Media.Upload('hello.txt',
-    BinToBase64('Hello World'), 'text file', 1);
+  Id := Context.Media.Upload('hello.txt', BinToBase64('Hello World'), 'text file', 1);
   Check(Id > 0);
   FileData := Context.Media.GetFile(Id, ContentType);
   CheckEqual(FileData, 'Hello World');
@@ -987,8 +1397,7 @@ procedure TTestMediaService.Remove;
 var
   Id: TID;
 begin
-  Id := Context.Media.Upload('remove.txt',
-    BinToBase64('to delete'), '', 1);
+  Id := Context.Media.Upload('remove.txt', BinToBase64('to delete'), '', 1);
   Check(Id > 0);
   Check(Context.Media.Remove(Id));
   CheckEqual(Context.Media.GetInfo(Id), '{}');
@@ -997,11 +1406,8 @@ end;
 procedure TTestMediaService.RemoveNotFound;
 begin
   // Media.Remove checks Retrieve first, so non-existent returns False
-  Check(not Context.Media.Remove(99999),
-    'remove non-existent media should return false');
+  Check(not Context.Media.Remove(99999), 'remove non-existent media should return false');
 end;
-
-{ TTestBlogAggregation }
 
 procedure TTestBlogAggregation.GetPostFull;
 var
@@ -1036,8 +1442,6 @@ begin
   CheckEqual(Context.Blog.GetPostsByTag(99999), '{}');
 end;
 
-{ TTestFullWorkflow }
-
 procedure TTestFullWorkflow.EndToEnd;
 var
   AuthorId, PostId, TagId1, TagId2, CommentId: TID;
@@ -1048,19 +1452,16 @@ var
   Doc: TDocVariantData;
 begin
   // 1. Create author
-  AuthorId := Context.User.Add(
-    '{"DisplayName":"Workflow Author","Bio":"E2E test"}');
+  AuthorId := Context.User.Add('{"DisplayName":"Workflow Author","Bio":"E2E test"}');
   Check(AuthorId > 0, '1. create author');
   // 2. Register auth account
-  Check(Context.Auth.Register('workflow@example.com', 'testpass',
-    AuthorId) > 0, '2. register auth');
+  Check(Context.Auth.Register('workflow@example.com', 'testpass', AuthorId) > 0, '2. register auth');
   // 3. Login via SCRAM
   Context.Auth.Challenge('workflow@example.com', McfInfo, ServerNonce);
   McfHash := ModularCryptHash(McfInfo, 'testpass');
-  ClientProof := ScramClientProof(McfHash, 'workflow@example.com',
-    ClientSignature, ['workflow@example.com', ServerNonce]);
-  Check(Context.Auth.Authenticate('workflow@example.com', ServerNonce,
-    ClientProof, Token, UserId, ServerProof), '3. SCRAM login');
+  ClientProof := ScramClientProof(McfHash, 'workflow@example.com', ClientSignature, ['workflow@example.com', ServerNonce]);
+  Check(Context.Auth.Authenticate('workflow@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof),
+    '3. SCRAM login');
   // 4. Validate JWT
   Check(Context.Auth.Validate(Token, UserId), '4. validate token');
   // 5. Create post
@@ -1074,11 +1475,9 @@ begin
   Check(TagId1 > 0, '6a. create tag 1');
   Check(TagId2 > 0, '6b. create tag 2');
   // 7. Assign tags
-  Check(Context.Tag.SetPostTags(PostId,
-    FormatUtf8('[%,%]', [TagId1, TagId2])), '7. assign tags');
+  Check(Context.Tag.SetPostTags(PostId, FormatUtf8('[%,%]', [TagId1, TagId2])), '7. assign tags');
   // 8. Add comment
-  CommentId := Context.Comment.Add(PostId,
-    '{"AuthorName":"E2E Visitor","Body":"Great workflow!"}');
+  CommentId := Context.Comment.Add(PostId, '{"AuthorName":"E2E Visitor","Body":"Great workflow!"}');
   Check(CommentId > 0, '8. add comment');
   // 9. Approve comment
   Check(Context.Comment.Approve(CommentId, AuthorId), '9. approve');
@@ -1090,10 +1489,11 @@ begin
   Check(Doc.A_['Comments']^.Count >= 1, '10d. has comments');
 end;
 
-{ Failing service mocks for resilience tests }
-
 type
 
+  /// <summary>
+  ///   Mock <c>IUser</c> implementation that raises exceptions for resilience testing.
+  /// </summary>
   TFailingUser = class(TInterfacedObject, IUser)
     function Get(
       aId: TID
@@ -1111,6 +1511,9 @@ type
       ): boolean;
   end;
 
+  /// <summary>
+  ///   Mock <c>IPost</c> implementation that raises exceptions for resilience testing.
+  /// </summary>
   TFailingPost = class(TInterfacedObject, IPost)
     function Get(
       aId: TID
@@ -1134,6 +1537,9 @@ type
       ): boolean;
   end;
 
+  /// <summary>
+  ///   Mock <c>ITag</c> implementation that raises exceptions for resilience testing.
+  /// </summary>
   TFailingTag = class(TInterfacedObject, ITag)
     function Get(
       aId: TID
@@ -1161,6 +1567,9 @@ type
       ): boolean;
   end;
 
+  /// <summary>
+  ///   Mock <c>IComment</c> implementation that raises exceptions for resilience testing.
+  /// </summary>
   TFailingComment = class(TInterfacedObject, IComment)
     function GetByPost(
       aPostId: TID
@@ -1356,8 +1765,6 @@ begin
   raise Exception.Create('ms.comments unavailable');
 end;
 
-{ TTestBlogResilience }
-
 procedure TTestBlogResilience.GetPostFullWithoutComments;
 var
   Model: TOrmModel;
@@ -1369,8 +1776,7 @@ var
   Doc: TDocVariantData;
   PostId: TID;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
-    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -1379,21 +1785,17 @@ begin
     UserImpl := TUserService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
     UserImpl.Add('{"DisplayName":"Author"}');
-    PostId := PostImpl.Add(
-      '{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
+    PostId := PostImpl.Add('{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
     Check(PostId > 0, 'post created');
-    BlogSvc := TBlogService.Create(PostImpl, UserImpl, TagImpl,
-      TFailingComment.Create);
+    BlogSvc := TBlogService.Create(PostImpl, UserImpl, TagImpl, TFailingComment.Create);
     try
       Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
       Check(Doc.U['Title'] = 'Test Post', 'should have Title');
       Check(Doc.GetValueIndex('Author') >= 0, 'should have Author');
       Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags');
       Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments key');
-      CheckEqual(Doc.A['Comments']^.Count, 0,
-        'Comments should be empty array when service unavailable');
-      Check(Doc.B['CommentsUnavailable'],
-        'CommentsUnavailable flag should be true');
+      CheckEqual(Doc.A['Comments']^.Count, 0, 'Comments should be empty array when service unavailable');
+      Check(Doc.B['CommentsUnavailable'], 'CommentsUnavailable flag should be true');
     finally
       BlogSvc.Free;
     end;
@@ -1414,8 +1816,7 @@ var
   Doc: TDocVariantData;
   PostId: TID;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
-    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -1424,20 +1825,16 @@ begin
     UserImpl := TUserService.Create(Server.Orm);
     CommentImpl := TCommentService.Create(Server.Orm);
     UserImpl.Add('{"DisplayName":"Author"}');
-    PostId := PostImpl.Add(
-      '{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
+    PostId := PostImpl.Add('{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
     Check(PostId > 0, 'post created');
-    BlogSvc := TBlogService.Create(PostImpl, UserImpl,
-      TFailingTag.Create, CommentImpl);
+    BlogSvc := TBlogService.Create(PostImpl, UserImpl, TFailingTag.Create, CommentImpl);
     try
       Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
       Check(Doc.U['Title'] = 'Test Post', 'should have Title');
       Check(Doc.GetValueIndex('Author') >= 0, 'should have Author');
       Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags key');
-      CheckEqual(Doc.A['Tags']^.Count, 0,
-        'Tags should be empty array when service unavailable');
-      Check(Doc.B['TagsUnavailable'],
-        'TagsUnavailable flag should be true');
+      CheckEqual(Doc.A['Tags']^.Count, 0, 'Tags should be empty array when service unavailable');
+      Check(Doc.B['TagsUnavailable'], 'TagsUnavailable flag should be true');
       Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments');
     finally
       BlogSvc.Free;
@@ -1459,8 +1856,7 @@ var
   Doc: TDocVariantData;
   PostId: TID;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
-    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -1468,19 +1864,15 @@ begin
     PostImpl := TPostService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
     CommentImpl := TCommentService.Create(Server.Orm);
-    PostId := PostImpl.Add(
-      '{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
+    PostId := PostImpl.Add('{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
     Check(PostId > 0, 'post created');
-    BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create,
-      TagImpl, CommentImpl);
+    BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create, TagImpl, CommentImpl);
     try
       Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
       Check(Doc.U['Title'] = 'Test Post', 'should have Title');
       Check(Doc.GetValueIndex('Author') >= 0, 'should have Author key');
-      Check(VarIsNull(Doc.Value['Author']),
-        'Author should be null when service unavailable');
-      Check(Doc.B['AuthorUnavailable'],
-        'AuthorUnavailable flag should be true');
+      Check(VarIsNull(Doc.Value['Author']), 'Author should be null when service unavailable');
+      Check(Doc.B['AuthorUnavailable'], 'AuthorUnavailable flag should be true');
       Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags');
       Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments');
     finally
@@ -1501,22 +1893,18 @@ var
   Doc: TDocVariantData;
   PostId: TID;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
-    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
     Server.Server.CreateMissingTables;
     PostImpl := TPostService.Create(Server.Orm);
-    PostId := PostImpl.Add(
-      '{"Title":"Lonely Post","Body":"no services","AuthorId":1,"Status":1}');
+    PostId := PostImpl.Add('{"Title":"Lonely Post","Body":"no services","AuthorId":1,"Status":1}');
     Check(PostId > 0, 'post created');
-    BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create,
-      TFailingTag.Create, TFailingComment.Create);
+    BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create, TFailingTag.Create, TFailingComment.Create);
     try
       Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
-      Check(Doc.U['Title'] = 'Lonely Post',
-        'should still return the post');
+      Check(Doc.U['Title'] = 'Lonely Post', 'should still return the post');
       Check(VarIsNull(Doc.Value['Author']), 'Author should be null');
       Check(Doc.B['AuthorUnavailable'], 'AuthorUnavailable flag');
       CheckEqual(Doc.A['Tags']^.Count, 0, 'Tags should be empty');
@@ -1543,20 +1931,17 @@ var
   PostId, TagId: TID;
   Posts: PDocVariantData;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
-    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
     Server.Server.CreateMissingTables;
     PostImpl := TPostService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
-    PostId := PostImpl.Add(
-      '{"Title":"Tagged Post","Body":"content","AuthorId":1,"Status":1}');
+    PostId := PostImpl.Add('{"Title":"Tagged Post","Body":"content","AuthorId":1,"Status":1}');
     TagId := TagImpl.Add('{"Name":"TestTag"}');
     TagImpl.SetPostTags(PostId, FormatUtf8('[%]', [TagId]));
-    BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create,
-      TagImpl, TFailingComment.Create);
+    BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create, TagImpl, TFailingComment.Create);
     try
       Doc.InitJson(BlogSvc.GetPostsByTag(TagId), JSON_FAST_FLOAT);
       Check(Doc.GetValueIndex('Tag') >= 0, 'should have Tag');
@@ -1565,8 +1950,7 @@ begin
       Check(Posts^.Count > 0, 'should have at least one post');
       PostDoc.InitJson(RawUtf8(Posts^.Values[0]), JSON_FAST_FLOAT);
       Check(PostDoc.U['Title'] = 'Tagged Post', 'post title intact');
-      Check(VarIsNull(PostDoc.Value['Author']),
-        'Author should be null when user service unavailable');
+      Check(VarIsNull(PostDoc.Value['Author']), 'Author should be null when user service unavailable');
     finally
       BlogSvc.Free;
     end;
@@ -1576,8 +1960,6 @@ begin
   end;
 end;
 
-{ TTestAnalyticsService }
-
 procedure TTestAnalyticsService.GetOverview;
 var
   Doc: TDocVariantData;
@@ -1586,8 +1968,7 @@ begin
   Check(Doc.I['posts'] > 0, 'should have posts');
   Check(Doc.I['authors'] > 0, 'should have authors');
   Check(Doc.I['tags'] > 0, 'should have tags');
-  Check(Doc.GetValueIndex('pendingComments') >= 0,
-    'should have pendingComments');
+  Check(Doc.GetValueIndex('pendingComments') >= 0, 'should have pendingComments');
 end;
 
 procedure TTestAnalyticsService.GetAuthorStats;
@@ -1595,8 +1976,7 @@ var
   AuthorStatsArray: TDocVariantData;
   FirstAuthor: PDocVariantData;
 begin
-  AuthorStatsArray.InitJson(
-    Context.Analytics.GetAuthorStats, JSON_FAST_FLOAT);
+  AuthorStatsArray.InitJson(Context.Analytics.GetAuthorStats, JSON_FAST_FLOAT);
   Check(AuthorStatsArray.Kind = dvArray, 'should be array');
   Check(AuthorStatsArray.Count > 0, 'should have at least one author');
   FirstAuthor := _Safe(AuthorStatsArray.Values[0]);
@@ -1610,8 +1990,7 @@ var
   TagCloudArray: TDocVariantData;
   FirstTag: PDocVariantData;
 begin
-  TagCloudArray.InitJson(
-    Context.Analytics.GetTagCloud, JSON_FAST_FLOAT);
+  TagCloudArray.InitJson(Context.Analytics.GetTagCloud, JSON_FAST_FLOAT);
   Check(TagCloudArray.Kind = dvArray, 'should be array');
   Check(TagCloudArray.Count > 0, 'should have at least one tag');
   FirstTag := _Safe(TagCloudArray.Values[0]);
@@ -1626,8 +2005,7 @@ var
 begin
   Doc.InitJson(Context.Analytics.GetCommentActivity, JSON_FAST_FLOAT);
   Check(Doc.GetValueIndex('pendingCount') >= 0, 'should have pendingCount');
-  Check(Doc.GetValueIndex('topCommentedPosts') >= 0,
-    'should have topCommentedPosts');
+  Check(Doc.GetValueIndex('topCommentedPosts') >= 0, 'should have topCommentedPosts');
 end;
 
 procedure TTestAnalyticsService.GetRecentPostsFull;
@@ -1635,8 +2013,7 @@ var
   PostsArray: TDocVariantData;
   FirstPost: PDocVariantData;
 begin
-  PostsArray.InitJson(
-    Context.Analytics.GetRecentPostsFull(5), JSON_FAST_FLOAT);
+  PostsArray.InitJson(Context.Analytics.GetRecentPostsFull(5), JSON_FAST_FLOAT);
   Check(PostsArray.Kind = dvArray, 'should be array');
   Check(PostsArray.Count > 0, 'should have at least one post');
   FirstPost := _Safe(PostsArray.Values[0]);
@@ -1648,20 +2025,16 @@ end;
 
 procedure TTestAnalyticsService.GetRecentPostsFullEmpty;
 begin
-  CheckEqual(Context.Analytics.GetRecentPostsFull(0), '[]',
-    'limit 0 should return empty array');
+  CheckEqual(Context.Analytics.GetRecentPostsFull(0), '[]', 'limit 0 should return empty array');
 end;
-
-{ TTestAnalyticsResilience }
 
 procedure TTestAnalyticsResilience.GetOverviewWithoutPosts;
 var
   AnalyticsSvc: TAnalyticsService;
   Doc: TDocVariantData;
 begin
-  AnalyticsSvc := TAnalyticsService.Create(
-    TFailingPost.Create, TFailingUser.Create,
-    TFailingTag.Create, TFailingComment.Create);
+  AnalyticsSvc := TAnalyticsService.Create(TFailingPost.Create, TFailingUser.Create, TFailingTag.Create,
+    TFailingComment.Create);
   try
     Doc.InitJson(AnalyticsSvc.GetOverview, JSON_FAST_FLOAT);
     Check(Doc.B['postsUnavailable'], 'postsUnavailable flag');
@@ -1683,8 +2056,7 @@ var
   AnalyticsSvc: TAnalyticsService;
   Doc: TDocVariantData;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
-    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -1692,10 +2064,8 @@ begin
     PostImpl := TPostService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
     CommentImpl := TCommentService.Create(Server.Orm);
-    PostImpl.Add(
-      '{"Title":"Test","Body":"x","AuthorId":1,"Status":1}');
-    AnalyticsSvc := TAnalyticsService.Create(
-      PostImpl, TFailingUser.Create, TagImpl, CommentImpl);
+    PostImpl.Add('{"Title":"Test","Body":"x","AuthorId":1,"Status":1}');
+    AnalyticsSvc := TAnalyticsService.Create(PostImpl, TFailingUser.Create, TagImpl, CommentImpl);
     try
       Doc.InitJson(AnalyticsSvc.GetOverview, JSON_FAST_FLOAT);
       Check(Doc.I['posts'] > 0, 'posts should be counted');
@@ -1720,8 +2090,7 @@ var
   PostsArray: TDocVariantData;
   FirstPost: PDocVariantData;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
-    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -1730,18 +2099,14 @@ begin
     UserImpl := TUserService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
     UserImpl.Add('{"DisplayName":"Author"}');
-    PostImpl.Add(
-      '{"Title":"Test Post","Body":"x","AuthorId":1,"Status":1}');
-    AnalyticsSvc := TAnalyticsService.Create(
-      PostImpl, UserImpl, TagImpl, TFailingComment.Create);
+    PostImpl.Add('{"Title":"Test Post","Body":"x","AuthorId":1,"Status":1}');
+    AnalyticsSvc := TAnalyticsService.Create(PostImpl, UserImpl, TagImpl, TFailingComment.Create);
     try
-      PostsArray.InitJson(
-        AnalyticsSvc.GetRecentPostsFull(5), JSON_FAST_FLOAT);
+      PostsArray.InitJson(AnalyticsSvc.GetRecentPostsFull(5), JSON_FAST_FLOAT);
       Check(PostsArray.Count > 0, 'should have posts');
       FirstPost := _Safe(PostsArray.Values[0]);
       Check(FirstPost^.U['Title'] = 'Test Post', 'title intact');
-      Check(FirstPost^.B['CommentsUnavailable'],
-        'CommentsUnavailable flag');
+      Check(FirstPost^.B['CommentsUnavailable'], 'CommentsUnavailable flag');
     finally
       AnalyticsSvc.Free;
     end;
@@ -1762,8 +2127,7 @@ var
   PostsArray: TDocVariantData;
   FirstPost: PDocVariantData;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
-    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -1772,18 +2136,14 @@ begin
     UserImpl := TUserService.Create(Server.Orm);
     CommentImpl := TCommentService.Create(Server.Orm);
     UserImpl.Add('{"DisplayName":"Author"}');
-    PostImpl.Add(
-      '{"Title":"Test Post","Body":"x","AuthorId":1,"Status":1}');
-    AnalyticsSvc := TAnalyticsService.Create(
-      PostImpl, UserImpl, TFailingTag.Create, CommentImpl);
+    PostImpl.Add('{"Title":"Test Post","Body":"x","AuthorId":1,"Status":1}');
+    AnalyticsSvc := TAnalyticsService.Create(PostImpl, UserImpl, TFailingTag.Create, CommentImpl);
     try
-      PostsArray.InitJson(
-        AnalyticsSvc.GetRecentPostsFull(5), JSON_FAST_FLOAT);
+      PostsArray.InitJson(AnalyticsSvc.GetRecentPostsFull(5), JSON_FAST_FLOAT);
       Check(PostsArray.Count > 0, 'should have posts');
       FirstPost := _Safe(PostsArray.Values[0]);
       Check(FirstPost^.U['Title'] = 'Test Post', 'title intact');
-      Check(FirstPost^.B['TagsUnavailable'],
-        'TagsUnavailable flag');
+      Check(FirstPost^.B['TagsUnavailable'], 'TagsUnavailable flag');
     finally
       AnalyticsSvc.Free;
     end;
@@ -1792,8 +2152,6 @@ begin
     Model.Free;
   end;
 end;
-
-{ TTestConfigService }
 
 const
   TEST_MASTER_JSON: RawUtf8 =
@@ -1827,8 +2185,7 @@ var
 begin
   Svc := TConfigService.Create(TEST_MASTER_JSON);
   try
-    CheckEqual(Svc.GetServiceConfig('ms.nonexistent'), '{}',
-      'unknown service should return empty object');
+    CheckEqual(Svc.GetServiceConfig('ms.nonexistent'), '{}', 'unknown service should return empty object');
   finally
     Svc.Free;
   end;
@@ -1879,16 +2236,12 @@ begin
     Doc.InitJson(Svc.GetServiceRegistry, JSON_FAST_FLOAT);
     AuthEntry := Doc.O['ms.auth'];
     Check(AuthEntry <> nil, 'auth entry should exist');
-    CheckEqual(AuthEntry^.GetValueIndex('JwtSecret'), -1,
-      'JwtSecret must not be in registry');
-    CheckEqual(AuthEntry^.GetValueIndex('Database'), -1,
-      'Database must not be in registry');
+    CheckEqual(AuthEntry^.GetValueIndex('JwtSecret'), -1, 'JwtSecret must not be in registry');
+    CheckEqual(AuthEntry^.GetValueIndex('Database'), -1, 'Database must not be in registry');
   finally
     Svc.Free;
   end;
 end;
-
-{ TBlogTests }
 
 constructor TBlogTests.Create(
   const Ident: string

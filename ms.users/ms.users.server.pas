@@ -2,24 +2,20 @@
 ///   Interface-based service implementation for the Users microservice.
 ///
 ///   This unit demonstrates the standard mORMot2 microservice pattern:
-///   1. A <c>TInterfacedObject</c> descendant implements the SOA
-///      interface (<c>IUser</c>), receiving <c>IRestOrm</c> via
-///      constructor injection for testability.
-///   2. A <c>TMicroService</c> subclass (<c>TUsersServer</c>) wires
-///      the ORM model and service together via <c>CreateModel</c>
-///      and <c>SetupServices</c>.
+///   1. A <c>TInterfacedObject</c> descendant implements the SOA interface (<c>IUser</c>), receiving
+///      <c>IRestOrm</c> via constructor injection for testability.
+///   2. A <c>TMicroService</c> subclass (<c>TUsersServer</c>) wires the ORM model and service together
+///      via <c>CreateModel</c> and <c>SetupServices</c>.
 ///
 ///   Key mORMot2 patterns demonstrated:
-///   - <c>TDocVariantData</c>: flexible JSON parsing without fixed
-///     record types. <c>Doc.U['key']</c> reads a UTF-8 string,
-///     <c>Doc.I['key']</c> reads an integer.
-///   - <c>Doc.GetValueIndex('key') >= 0</c>: checks if a JSON
-///     field is present, enabling partial updates (PATCH semantics).
-///   - <c>IRestOrm.Add/Retrieve/Update/Delete</c>: the four CRUD
-///     operations of mORMot2's ORM, working on TOrm instances.
-///   - <c>JSON_FAST_FLOAT</c>: parsing option that enables fast
-///     floating-point conversion and returns null for missing keys
-///     instead of raising exceptions.
+///   - <c>TDocVariantData</c>: flexible JSON parsing without fixed record types. <c>Doc.U['key']</c>
+///     reads a UTF-8 string, <c>Doc.I['key']</c> reads an integer.
+///   - <c>Doc.GetValueIndex('key') >= 0</c>: checks if a JSON field is present, enabling partial
+///     updates (PATCH semantics).
+///   - <c>IRestOrm.Add/Retrieve/Update/Delete</c>: the four CRUD operations of mORMot2's ORM,
+///     working on TOrm instances.
+///   - <c>JSON_FAST_FLOAT</c>: parsing option that enables fast floating-point conversion and returns
+///     null for missing keys instead of raising exceptions.
 /// </summary>
 unit ms.users.server;
 
@@ -54,16 +50,14 @@ uses
 type
 
   /// <summary>
-  ///   Implements the <c>IUser</c> SOA interface for author profile CRUD.
-  ///   Receives <c>IRestOrm</c> via constructor injection, making it
-  ///   testable without HTTP or a running server (see ms.testCases.pas).
+  ///   Implements the <c>IUser</c> SOA interface for author profile CRUD. Receives <c>IRestOrm</c> via constructor
+  ///   injection, making it testable without HTTP or a running server (see ms.testCases.pas).
   /// </summary>
   TUserService = class(TInterfacedObject, IUser)
-  private
+  strict private
     /// <summary>
-    ///   Injected ORM interface for database operations.
-    ///   <c>IRestOrm</c> is mORMot2's abstraction over the ORM engine,
-    ///   providing Add/Retrieve/Update/Delete and query methods.
+    ///   Injected ORM interface for database operations. <c>IRestOrm</c> is mORMot2's abstraction over the ORM
+    ///   engine, providing Add/Retrieve/Update/Delete and query methods.
     /// </summary>
     FOrm: IRestOrm;
   public
@@ -99,8 +93,7 @@ type
     function GetAll: RawJson;
 
     /// <summary>
-    ///   Creates a new author profile from JSON data.
-    ///   Requires <c>DisplayName</c>. Auto-generates the URL slug.
+    ///   Creates a new author profile from JSON data. Requires <c>DisplayName</c>. Auto-generates the URL slug.
     /// </summary>
     /// <param name="aData">
     ///   JSON object with author fields.
@@ -113,9 +106,8 @@ type
       ): TID;
 
     /// <summary>
-    ///   Partially updates an existing author profile.
-    ///   Only JSON fields present in <c>aData</c> are modified
-    ///   (PATCH semantics via <c>GetValueIndex</c> checks).
+    ///   Partially updates an existing author profile. Only JSON fields present in <c>aData</c> are modified (PATCH
+    ///   semantics via <c>GetValueIndex</c> checks).
     /// </summary>
     /// <param name="aId">
     ///   The author's record ID.
@@ -146,13 +138,11 @@ type
   end;
 
   /// <summary>
-  ///   Microservice server hosting the <c>IUser</c> service.
-  ///   Subclasses <c>TMicroService</c> and overrides only two
-  ///   methods: <c>CreateModel</c> (defines ORM tables) and
-  ///   <c>SetupServices</c> (registers the SOA implementation).
+  ///   Microservice server hosting the <c>IUser</c> service. Subclasses <c>TMicroService</c> and overrides only two
+  ///   methods: <c>CreateModel</c> (defines ORM tables) and <c>SetupServices</c> (registers the SOA implementation).
   /// </summary>
   TUsersServer = class(TMicroService)
-  private
+  strict private
 
     /// <summary>
     ///   The user service implementation instance.
@@ -160,9 +150,8 @@ type
     FUserImpl: TUserService;
   protected
     /// <summary>
-    ///   Creates the ORM model with <c>TOrmAuthor</c>.
-    ///   The <c>MODEL_ROOT</c> parameter ('api') ensures URLs
-    ///   follow the /api/User/{Method} pattern.
+    ///   Creates the ORM model with <c>TOrmAuthor</c>. The <c>MODEL_ROOT</c> parameter ('api') ensures URLs follow
+    ///   the /api/User/{Method} pattern.
     /// </summary>
     /// <returns>
     ///   A new <c>TOrmModel</c> instance.
@@ -170,8 +159,7 @@ type
     function CreateModel: TOrmModel; override;
 
     /// <summary>
-    ///   Creates <c>TUserService</c> with the ORM interface
-    ///   and registers it as an <c>IUser</c> SOA service.
+    ///   Creates <c>TUserService</c> with the ORM interface and registers it as an <c>IUser</c> SOA service.
     /// </summary>
     procedure SetupServices; override;
   end;

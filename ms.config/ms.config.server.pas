@@ -1,8 +1,6 @@
 /// <summary>
-///   Configuration microservice implementation.
-///   Loads a master configuration file (<c>ms.config.master.json</c>)
-///   at startup and serves it to other services via the
-///   <c>IConfig</c> SOA interface. Each service queries its own
+///   Configuration microservice implementation. Loads a master configuration file (<c>ms.config.master.json</c>) at
+///   startup and serves it to other services via the <c>IConfig</c> SOA interface. Each service queries its own
 ///   configuration block during bootstrap.
 /// </summary>
 unit ms.config.server;
@@ -15,7 +13,7 @@ unit ms.config.server;
 interface
 
 uses
-  SysUtils,
+  System.SysUtils,
   mormot.core.base,
   mormot.core.json,
   mormot.core.log,
@@ -36,12 +34,11 @@ uses
 type
 
   /// <summary>
-  ///   Implements <c>IConfig</c> by serving configuration from an
-  ///   in-memory <c>TDocVariantData</c> loaded from the master
+  ///   Implements <c>IConfig</c> by serving configuration from an in-memory <c>TDocVariantData</c> loaded from the master
   ///   JSON file. No database is needed.
   /// </summary>
   TConfigService = class(TInterfacedObject, IConfig)
-  private
+  strict private
     /// <summary>
     ///   Parsed master configuration holding all service blocks.
     /// </summary>
@@ -52,8 +49,7 @@ type
     ///   Creates the config service and parses the master JSON.
     /// </summary>
     /// <param name="aMasterJson">
-    ///   Complete master configuration as a JSON object keyed
-    ///   by service name.
+    ///   Complete master configuration as a JSON object keyed by service name.
     /// </param>
     constructor Create(
       const aMasterJson: RawUtf8
@@ -66,8 +62,7 @@ type
     ///   Service identifier (e.g. 'ms.auth').
     /// </param>
     /// <returns>
-    ///   JSON object with all config fields, or '{}' if the
-    ///   service name is unknown.
+    ///   JSON object with all config fields, or '{}' if the service name is unknown.
     /// </returns>
     function GetServiceConfig(
       const aServiceName: RawUtf8
@@ -82,22 +77,19 @@ type
     function GetAllConfigs: RawJson;
 
     /// <summary>
-    ///   Returns the service registry containing only Host and Port
-    ///   per service. Secrets and database paths are excluded.
+    ///   Returns the service registry containing only Host and Port per service. Secrets and database paths are excluded.
     /// </summary>
     /// <returns>
-    ///   JSON object keyed by service name, each entry containing
-    ///   only <c>Host</c> and <c>Port</c>.
+    ///   JSON object keyed by service name, each entry containing only <c>Host</c> and <c>Port</c>.
     /// </returns>
     function GetServiceRegistry: RawJson;
   end;
 
   /// <summary>
-  ///   Microservice server hosting the <c>IConfig</c> service.
-  ///   Loads the master config file during <c>SetupServices</c>.
+  ///   Microservice server hosting the <c>IConfig</c> service. Loads the master config file during <c>SetupServices</c>.
   /// </summary>
   TConfigServer = class(TMicroService)
-  private
+  strict private
     /// <summary>
     ///   The config service implementation instance.
     /// </summary>
@@ -113,15 +105,12 @@ type
     function CreateModel: TOrmModel; override;
 
     /// <summary>
-    ///   Loads <c>ms.config.master.json</c> and registers the
-    ///   <c>IConfig</c> service implementation.
+    ///   Loads <c>ms.config.master.json</c> and registers the <c>IConfig</c> service implementation.
     /// </summary>
     procedure SetupServices; override;
   end;
 
 implementation
-
-{ TConfigService }
 
 constructor TConfigService.Create(
   const aMasterJson: RawUtf8
@@ -166,14 +155,11 @@ begin
         'Host', ServiceDoc^.U['Host'],
         'Port', ServiceDoc^.U['Port']
       ], JSON_FAST);
-      Registry.AddValue(
-        FMasterDoc.Names[ServiceIdx], variant(Entry));
+      Registry.AddValue(FMasterDoc.Names[ServiceIdx], variant(Entry));
     end;
   end;
   Result := Registry.ToJson;
 end;
-
-{ TConfigServer }
 
 function TConfigServer.CreateModel: TOrmModel;
 begin
@@ -190,8 +176,7 @@ begin
     MasterJson := StringFromFile(MasterPath)
   else
   begin
-    TSynLog.Add.Log(sllWarning,
-      'ms.config.master.json not found, serving empty config', self);
+    TSynLog.Add.Log(sllWarning, 'ms.config.master.json not found, serving empty config', self);
     MasterJson := '{}';
   end;
   FConfigImpl := TConfigService.Create(MasterJson);
