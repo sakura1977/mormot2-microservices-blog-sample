@@ -6,6 +6,22 @@ This project serves as both a working application and a learning resource for de
 
 ---
 
+## Learning to use Claude by Anthropic
+
+I use this demo project to learn coding with the AI Claude. I am using Claude as console app. 
+
+What I've learned so far: Do not trust the results ;-) Okay, I knew that upfront, but I believe I do have to tell you that upfront. Just so you know that there are hard limits. Claude, at this point, seems to be the best AI for Delphi coding, however, the best is not great.
+
+If you ask Claude to do something, do not expect Claude to take the best approach. Not at all, expect a working approach after a few rounds of AI coding. Agreed, mormot2 is a complex framework with many ways to reach your goal, but shouldn't AI know that? Shouldn't AI take the best approach automatically? Well, yes, it should! But it won't. You have to tell it which way to go, down to the nuts and bolts. And do not expect it to do it next time the way you asked it last time. Whether in the same session or the next makes no big difference.
+
+However, if you want to get better in telling your AI to do something, ask it afterwards, within the same session, how you should have phrased your prompt. Learn from it and try to aim better next time.
+
+Therefore, almost all codes in this demo are Claude generated, guided by me. Some fixes I implemented by hand, just because that's faster, but my aim was learning to AI code, not to present my coding style.
+
+Big Thanks to Arnaud Bouchez, "father" of [mORMot2](https://github.com/synopse/mORMot2). First for providing this great framework, but importantly for ruthlessly reviewing the demo and providing feedback. All feedback is (and will be) implemented by Claude and my prompts. This [repo](https://github.com/sakura1977/mormot2-microservices-blog-sample) has the biggest steps in the evolution of the demo as commits. Have fun browsing the steps.
+
+---
+
 ## The Idea
 
 Most microservice tutorials use Node.js, Go, or Java. But what about Delphi? With its native compilation, minimal runtime dependencies, and the powerful mORMot2 framework, Delphi is an excellent -- and underappreciated -- choice for microservices:
