@@ -105,6 +105,7 @@ type
     FTagsClient: TRestHttpClient;
     FCommentsClient: TRestHttpClient;
     FMediaClient: TRestHttpClient;
+    FServiceRegistry: TDocVariantData;
     FWwwPath: TFileName;
     FOriginalHandler: TOnHttpServerRequest;
     // Resolved remote interfaces
@@ -116,6 +117,8 @@ type
     FMedia: IMedia;
     function ConnectToBackend(const aHost, aPort: RawUtf8;
       const aInterfaces: array of PRttiInfo): TRestHttpClient;
+    function RegistryLookup(const aServiceName, aField,
+      aDefault: RawUtf8): RawUtf8;
     function ServeStaticFile(const aFilePath: TFileName;
       aCtxt: THttpServerRequestAbstract): cardinal;
     function HandleRequest(aCtxt: THttpServerRequestAbstract): cardinal;
@@ -275,28 +278,104 @@ begin
   Result := TOrmModel.Create([], MODEL_ROOT);
 end;
 
+function TGatewayServer.RegistryLookup(
+  const aServiceName, aField, aDefault: RawUtf8
+  ): RawUtf8;
+var
+  RegistryEntry: PDocVariantData;
+begin
+  RegistryEntry := FServiceRegistry.O[aServiceName];
+  if (RegistryEntry <> nil) and (RegistryEntry^.U[aField] <> '') then
+    Exit(RegistryEntry^.U[aField]);
+  Result := aDefault;
+end;
+
 procedure TGatewayServer.SetupServices;
+
+  procedure LoadServiceRegistry;
+  var
+    Bootstrap: TBootstrapConfig;
+    ConfigClientModel: TOrmModel;
+    ConfigClient: TRestHttpClient;
+    ConfigIntf: IConfig;
+    ConfigHost, ConfigPort: RawUtf8;
+    RegistryJson: RawUtf8;
+  begin
+    FServiceRegistry.InitObject([], JSON_FAST);
+    Bootstrap := LoadBootstrapConfig(SERVICE_GATEWAY);
+    if Bootstrap.ConfigUrl = '' then
+      Exit;
+    ConfigHost := Bootstrap.ConfigUrl;
+    if IdemPChar(pointer(ConfigHost), 'HTTP://') then
+      Delete(ConfigHost, 1, 7)
+    else if IdemPChar(pointer(ConfigHost), 'HTTPS://') then
+      Delete(ConfigHost, 1, 8);
+    ConfigPort := Split(ConfigHost, ':', ConfigHost);
+    if ConfigPort = '' then
+    begin
+      ConfigPort := ConfigHost;
+      ConfigHost := 'localhost';
+    end;
+    try
+      ConfigClientModel := TOrmModel.Create([], MODEL_ROOT);
+      ConfigClient := TRestHttpClient.Create(
+        ConfigHost, ConfigPort, ConfigClientModel);
+      try
+        ConfigClient.Model.Owner := ConfigClient;
+        ConfigClient.ServiceRegister([TypeInfo(IConfig)], sicShared);
+        TServiceFactoryClient(
+          ConfigClient.Services.Info(TypeInfo(IConfig)))
+          .ResultAsJsonObjectWithoutResult := True;
+        if ConfigClient.Services.Resolve(IConfig, ConfigIntf) then
+        begin
+          RegistryJson := ConfigIntf.GetServiceRegistry;
+          if RegistryJson <> '' then
+            FServiceRegistry.InitJson(RegistryJson, JSON_FAST_FLOAT);
+        end;
+      finally
+        ConfigIntf := nil;
+        ConfigClient.Free;
+      end;
+    except
+      // Config service unavailable -- use defaults
+    end;
+  end;
+
 begin
   FWwwPath := Executable.ProgramFilePath + 'www' + PathDelim;
   if not DirectoryExists(FWwwPath) then
     CreateDir(FWwwPath);
-  // Connect to backend services and resolve interfaces
-  FAuthClient := ConnectToBackend('localhost', PORT_AUTH,
+  // Load service registry from ms.config (fallback to defaults)
+  LoadServiceRegistry;
+  // Connect to backend services using registry or defaults
+  FAuthClient := ConnectToBackend(
+    RegistryLookup(SERVICE_AUTH, 'Host', 'localhost'),
+    RegistryLookup(SERVICE_AUTH, 'Port', PORT_AUTH),
     [TypeInfo(IAuth)]);
   FAuthClient.Services.Resolve(IAuth, FAuth);
-  FUsersClient := ConnectToBackend('localhost', PORT_USERS,
+  FUsersClient := ConnectToBackend(
+    RegistryLookup(SERVICE_USERS, 'Host', 'localhost'),
+    RegistryLookup(SERVICE_USERS, 'Port', PORT_USERS),
     [TypeInfo(IUser)]);
   FUsersClient.Services.Resolve(IUser, FUsers);
-  FPostsClient := ConnectToBackend('localhost', PORT_POSTS,
+  FPostsClient := ConnectToBackend(
+    RegistryLookup(SERVICE_POSTS, 'Host', 'localhost'),
+    RegistryLookup(SERVICE_POSTS, 'Port', PORT_POSTS),
     [TypeInfo(IPost)]);
   FPostsClient.Services.Resolve(IPost, FPosts);
-  FTagsClient := ConnectToBackend('localhost', PORT_TAGS,
+  FTagsClient := ConnectToBackend(
+    RegistryLookup(SERVICE_TAGS, 'Host', 'localhost'),
+    RegistryLookup(SERVICE_TAGS, 'Port', PORT_TAGS),
     [TypeInfo(ITag)]);
   FTagsClient.Services.Resolve(ITag, FTags);
-  FCommentsClient := ConnectToBackend('localhost', PORT_COMMENTS,
+  FCommentsClient := ConnectToBackend(
+    RegistryLookup(SERVICE_COMMENTS, 'Host', 'localhost'),
+    RegistryLookup(SERVICE_COMMENTS, 'Port', PORT_COMMENTS),
     [TypeInfo(IComment)]);
   FCommentsClient.Services.Resolve(IComment, FComments);
-  FMediaClient := ConnectToBackend('localhost', PORT_MEDIA,
+  FMediaClient := ConnectToBackend(
+    RegistryLookup(SERVICE_MEDIA, 'Host', 'localhost'),
+    RegistryLookup(SERVICE_MEDIA, 'Port', PORT_MEDIA),
     [TypeInfo(IMedia)]);
   FMediaClient.Services.Resolve(IMedia, FMedia);
   // Register resolved client interfaces directly as server services.

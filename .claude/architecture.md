@@ -24,6 +24,14 @@ graph TB
     DB_COMMENTS[(comments.db)]
     DB_MEDIA[(media.db)]
 
+    CONFIG["ms.config :8087<br/>IConfig"] -.-> AUTH
+    CONFIG -.-> USERS
+    CONFIG -.-> POSTS
+    CONFIG -.-> TAGS
+    CONFIG -.-> COMMENTS
+    CONFIG -.-> MEDIA
+    CONFIG -.-> GW
+
     GW --> AUTH
     GW --> USERS
     GW --> POSTS
@@ -50,6 +58,7 @@ graph TB
 | 5 | **ms.tags** | 8084 | ITag | Tags, post-tag associations (m:n) |
 | 6 | **ms.comments** | 8085 | IComment | Comments, moderation workflow |
 | 7 | **ms.media** | 8086 | IMedia | Image upload, storage |
+| 8 | **ms.config** | 8087 | IConfig | Central configuration registry |
 
 ## API Style: mORMot2 SOA
 
@@ -96,7 +105,8 @@ Every service automatically provides (via `TMicroService` base class):
 
 ```mermaid
 graph LR
-    GW[ms.gateway] --> AUTH[ms.auth]
+    CONFIG[ms.config] -.-> GW[ms.gateway]
+    GW --> AUTH[ms.auth]
     GW --> USERS[ms.users]
     GW --> POSTS[ms.posts]
     GW --> TAGS[ms.tags]

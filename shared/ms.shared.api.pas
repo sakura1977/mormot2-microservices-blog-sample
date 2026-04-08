@@ -671,6 +671,40 @@ type
       ): RawJson;
   end;
 
+  IConfig = interface(IInvokable)
+    ['{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}']
+
+    /// <summary>
+    ///   Returns the configuration for a specific service.
+    /// </summary>
+    /// <param name="aServiceName">
+    ///   Service identifier (e.g. 'ms.auth').
+    /// </param>
+    /// <returns>
+    ///   JSON object with all config fields, or '{}' if unknown.
+    /// </returns>
+    function GetServiceConfig(
+      const aServiceName: RawUtf8
+      ): RawJson;
+
+    /// <summary>
+    ///   Returns the complete configuration for all services.
+    /// </summary>
+    /// <returns>
+    ///   JSON object keyed by service name.
+    /// </returns>
+    function GetAllConfigs: RawJson;
+
+    /// <summary>
+    ///   Returns the service registry (Host + Port only).
+    ///   Does not include secrets or database paths.
+    /// </summary>
+    /// <returns>
+    ///   JSON object keyed by service name, each with Host and Port.
+    /// </returns>
+    function GetServiceRegistry: RawJson;
+  end;
+
 implementation
 
 end.

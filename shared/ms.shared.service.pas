@@ -43,10 +43,13 @@ uses
   mormot.rest.core,
   mormot.rest.server,
   mormot.rest.sqlite3,
+  mormot.rest.http.client,
   mormot.rest.http.server,
+  mormot.soa.client,
   mormot.soa.core,
   mormot.soa.server,
-  ms.shared;
+  ms.shared,
+  ms.shared.api;
 
 type
 
@@ -306,6 +309,60 @@ function OrmGetAll(
   const aWhere: RawUtf8 = ''
   ): RawJson;
 
+/// <summary>
+///   Fetches the configuration for a service from the central
+///   <c>ms.config</c> service via a temporary HTTP connection.
+/// </summary>
+/// <param name="aConfigUrl">
+///   URL of the config service (e.g. 'http://localhost:8087').
+/// </param>
+/// <param name="aServiceName">
+///   Service identifier to query (e.g. 'ms.auth').
+/// </param>
+/// <param name="aConfig">
+///   Output: the parsed configuration record.
+/// </param>
+/// <returns>
+///   True if the config was fetched and parsed successfully,
+///   False on any network or parsing error.
+/// </returns>
+function FetchRemoteConfig(
+  const aConfigUrl: RawUtf8;
+  const aServiceName: RawUtf8;
+  out aConfig: TMicroServiceConfig
+  ): boolean;
+
+/// <summary>
+///   Merges two configuration records. For each field, the remote
+///   value wins if it is non-empty/non-zero; otherwise the local
+///   value is kept.
+/// </summary>
+/// <param name="aLocal">
+///   The local baseline configuration (from .config.json).
+/// </param>
+/// <param name="aRemote">
+///   The remotely fetched configuration (from ms.config).
+/// </param>
+/// <returns>
+///   The merged configuration record.
+/// </returns>
+function MergeServiceConfig(
+  const aLocal, aRemote: TMicroServiceConfig
+  ): TMicroServiceConfig;
+
+/// <summary>
+///   Maps a string value to a <c>TRestHttpServerSecurity</c> enum.
+/// </summary>
+/// <param name="aValue">
+///   String representation: 'secNone' or 'secTLS'.
+/// </param>
+/// <returns>
+///   The corresponding enum value. Defaults to <c>secNone</c>.
+/// </returns>
+function SecurityFromString(
+  const aValue: RawUtf8
+  ): TRestHttpServerSecurity;
+
 implementation
 
 { TMicroService }
@@ -313,16 +370,53 @@ implementation
 constructor TMicroService.Create(
   const aServiceName, aDefaultPort: RawUtf8
   );
+var
+  Bootstrap: TBootstrapConfig;
+  RemoteConfig: TMicroServiceConfig;
+  CachePath: TFileName;
+  CacheJson: RawUtf8;
 begin
   inherited Create;
   FServiceName := aServiceName;
   FShutdownRequested := False;
-  // Load config from {serviceName}.config.json next to the executable.
-  // If the file doesn't exist, LoadServiceConfig returns sensible defaults.
+  // Step 1: Load local config (fallback baseline)
   FConfig := LoadServiceConfig(
     Executable.ProgramFilePath +
       Utf8ToString(aServiceName) + '.config.json',
     aDefaultPort);
+  // Step 2: Try remote config from ms.config (skip for ms.config itself)
+  if aServiceName <> SERVICE_CONFIG then
+  begin
+    Bootstrap := LoadBootstrapConfig(aServiceName);
+    if Bootstrap.ConfigUrl <> '' then
+    begin
+      if FetchRemoteConfig(Bootstrap.ConfigUrl, aServiceName, RemoteConfig) then
+      begin
+        FConfig := MergeServiceConfig(FConfig, RemoteConfig);
+        // Cache for offline fallback
+        CachePath := Executable.ProgramFilePath +
+          Utf8ToString(aServiceName) + '.config.cached.json';
+        FileFromString(
+          RecordSaveJson(RemoteConfig, TypeInfo(TMicroServiceConfig)),
+          CachePath);
+      end
+      else
+      begin
+        // Try cached config from previous successful fetch
+        CachePath := Executable.ProgramFilePath +
+          Utf8ToString(aServiceName) + '.config.cached.json';
+        if FileExists(CachePath) then
+        begin
+          CacheJson := StringFromFile(CachePath);
+          Finalize(RemoteConfig);
+          FillCharFast(RemoteConfig, SizeOf(RemoteConfig), 0);
+          RecordLoadJson(RemoteConfig, CacheJson,
+            TypeInfo(TMicroServiceConfig));
+          FConfig := MergeServiceConfig(FConfig, RemoteConfig);
+        end;
+      end;
+    end;
+  end;
   FPort := FConfig.Port;
   InitLogging;
 end;
@@ -472,10 +566,9 @@ begin
     // all network interfaces. 4 is the thread pool size.
     // secNone means no HTTPS (suitable for localhost/development).
     FHttpServer := TRestHttpServer.Create(
-      FPort, FRestServer, '+', useHttpAsync, nil, 4, secNone);
-    // Allow cross-origin requests (needed for SPA frontends
-    // served from a different port during development)
-    FHttpServer.AccessControlAllowOrigin := '*';
+      FPort, FRestServer, FConfig.HttpBind, useHttpAsync, nil,
+      FConfig.HttpThreads, SecurityFromString(FConfig.HttpSecurity));
+    FHttpServer.AccessControlAllowOrigin := FConfig.CorsOrigin;
     DoInitialize;
     TSynLog.Add.Log(sllInfo, '% running on port %.',
       [FServiceName, FPort], self);
@@ -559,6 +652,110 @@ begin
   finally
     Table.Free;
   end;
+end;
+
+function FetchRemoteConfig(
+  const aConfigUrl: RawUtf8;
+  const aServiceName: RawUtf8;
+  out aConfig: TMicroServiceConfig
+  ): boolean;
+var
+  ConfigClientModel: TOrmModel;
+  ConfigClient: TRestHttpClient;
+  ConfigIntf: IConfig;
+  ConfigHost, ConfigPort: RawUtf8;
+  ConfigJson: RawJson;
+begin
+  Result := False;
+  Finalize(aConfig);
+  FillCharFast(aConfig, SizeOf(aConfig), 0);
+  // Parse host:port from URL like "http://localhost:8087"
+  ConfigHost := aConfigUrl;
+  if IdemPChar(pointer(ConfigHost), 'HTTP://') then
+    Delete(ConfigHost, 1, 7)
+  else if IdemPChar(pointer(ConfigHost), 'HTTPS://') then
+    Delete(ConfigHost, 1, 8);
+  ConfigPort := Split(ConfigHost, ':', ConfigHost);
+  if ConfigPort = '' then
+  begin
+    ConfigPort := ConfigHost;
+    ConfigHost := 'localhost';
+  end;
+  try
+    ConfigClientModel := TOrmModel.Create([], MODEL_ROOT);
+    ConfigClient := TRestHttpClient.Create(
+      ConfigHost, ConfigPort, ConfigClientModel);
+    try
+      ConfigClient.Model.Owner := ConfigClient;
+      ConfigClient.ServiceRegister([TypeInfo(IConfig)], sicShared);
+      TServiceFactoryClient(
+        ConfigClient.Services.Info(TypeInfo(IConfig)))
+        .ResultAsJsonObjectWithoutResult := True;
+      if not ConfigClient.Services.Resolve(IConfig, ConfigIntf) then
+        Exit;
+      ConfigJson := ConfigIntf.GetServiceConfig(aServiceName);
+      if (ConfigJson = '') or (ConfigJson = '{}') then
+        Exit;
+      RecordLoadJson(aConfig, ConfigJson,
+        TypeInfo(TMicroServiceConfig));
+      Result := True;
+    finally
+      ConfigIntf := nil;
+      ConfigClient.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function MergeServiceConfig(
+  const aLocal, aRemote: TMicroServiceConfig
+  ): TMicroServiceConfig;
+begin
+  Result := aLocal;
+  if aRemote.Port <> '' then
+    Result.Port := aRemote.Port;
+  if aRemote.Database <> '' then
+    Result.Database := aRemote.Database;
+  if aRemote.LogLevel <> '' then
+    Result.LogLevel := aRemote.LogLevel;
+  if aRemote.AuthUrl <> '' then
+    Result.AuthUrl := aRemote.AuthUrl;
+  if aRemote.UsersUrl <> '' then
+    Result.UsersUrl := aRemote.UsersUrl;
+  if aRemote.PostsUrl <> '' then
+    Result.PostsUrl := aRemote.PostsUrl;
+  if aRemote.TagsUrl <> '' then
+    Result.TagsUrl := aRemote.TagsUrl;
+  if aRemote.CommentsUrl <> '' then
+    Result.CommentsUrl := aRemote.CommentsUrl;
+  if aRemote.MediaUrl <> '' then
+    Result.MediaUrl := aRemote.MediaUrl;
+  if aRemote.JwtSecret <> '' then
+    Result.JwtSecret := aRemote.JwtSecret;
+  if aRemote.Host <> '' then
+    Result.Host := aRemote.Host;
+  if aRemote.HttpThreads > 0 then
+    Result.HttpThreads := aRemote.HttpThreads;
+  if aRemote.HttpSecurity <> '' then
+    Result.HttpSecurity := aRemote.HttpSecurity;
+  if aRemote.HttpBind <> '' then
+    Result.HttpBind := aRemote.HttpBind;
+  if aRemote.ModelRoot <> '' then
+    Result.ModelRoot := aRemote.ModelRoot;
+  if aRemote.CorsOrigin <> '' then
+    Result.CorsOrigin := aRemote.CorsOrigin;
+  if aRemote.MaxUploadSize > 0 then
+    Result.MaxUploadSize := aRemote.MaxUploadSize;
+end;
+
+function SecurityFromString(
+  const aValue: RawUtf8
+  ): TRestHttpServerSecurity;
+begin
+  if IdemPropNameU(aValue, 'secTLS') then
+    Exit(secTLS);
+  Result := secNone;
 end;
 
 end.

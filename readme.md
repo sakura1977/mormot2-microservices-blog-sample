@@ -47,6 +47,13 @@ graph TB
     GW --> TAGS[ms.tags :8084]
     GW --> COMMENTS[ms.comments :8085]
     GW --> MEDIA[ms.media :8086]
+    CONFIG[ms.config :8087] -.-> AUTH
+    CONFIG -.-> USERS
+    CONFIG -.-> POSTS
+    CONFIG -.-> TAGS
+    CONFIG -.-> COMMENTS
+    CONFIG -.-> MEDIA
+    CONFIG -.-> GW
     AUTH --- DB1[(auth.db)]
     USERS --- DB2[(users.db)]
     POSTS --- DB3[(posts.db)]
@@ -55,10 +62,11 @@ graph TB
     MEDIA --- DB6[(media.db)]
 ```
 
-Seven independent services, each a standalone console application:
+Eight independent services, each a standalone console application:
 
 | Service | Port | SOA Interface | Responsibility |
 |---------|------|---------------|----------------|
+| **ms.config** | 8087 | IConfig | Central configuration registry |
 | **ms.gateway** | 8080 | IBlog + Proxies | API routing, response aggregation, SPA frontend |
 | **ms.auth** | 8081 | IAuth | SCRAM-MCF authentication, JWT token management |
 | **ms.users** | 8082 | IUser | Author profiles |
@@ -185,6 +193,10 @@ mormot2-microservices/
 |   +-- ms.comments.model.pas      TOrmBlogComment
 |-- ms.media/                    File upload and storage
 |   +-- ms.media.model.pas         TOrmMediaFile
+|
+|-- ms.config/                   Central configuration registry
+|   |-- ms.config.server.pas       TConfigService (IConfig), TConfigServer
+|   +-- ms.config.master.json      Master config for all services
 |
 |-- ms.gateway/                  API Gateway
 |   |-- ms.gateway.dpr

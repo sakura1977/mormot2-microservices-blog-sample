@@ -225,6 +225,11 @@ type
     function StopProcess(
       var aEntry: TServiceEntry
     ): boolean;
+
+    procedure WaitForHealth(
+      var aEntry: TServiceEntry;
+      aTimeoutMs: integer
+    );
   public
 
     /// <summary>
@@ -510,6 +515,7 @@ begin
   WriteLn('Registering services...');
 
   // Register all blog services (order matters for startup)
+  RegisterService(SERVICE_CONFIG,   PORT_CONFIG);
   RegisterService(SERVICE_MEDIA,    PORT_MEDIA);
   RegisterService(SERVICE_USERS,    PORT_USERS);
   RegisterService(SERVICE_AUTH,     PORT_AUTH);
@@ -530,7 +536,12 @@ begin
   WriteLn('Controller API running on port ', FPort);
   WriteLn('');
 
-  // Start all services
+  // Start config service first and wait for it to be healthy
+  WriteLn('Starting config service...');
+  StartProcess(FServices[0]);
+  WaitForHealth(FServices[0], 5000);
+
+  // Start remaining services
   StartAll;
 
   // Start monitor thread
@@ -702,6 +713,29 @@ begin
   aEntry.HealthOk := False;
   WriteLn('  Stopped: ', aEntry.Name);
   Result := True;
+end;
+
+procedure TServiceOrchestrator.WaitForHealth(
+  var aEntry: TServiceEntry;
+  aTimeoutMs: integer
+);
+var
+  Elapsed: integer;
+begin
+  Elapsed := 0;
+  while Elapsed < aTimeoutMs do
+  begin
+    if CheckHealth(aEntry) then
+    begin
+      WriteLn('  ', aEntry.Name, ' is healthy.');
+      Exit;
+    end;
+    SleepHiRes(500);
+    Inc(Elapsed, 500);
+  end;
+  WriteLn('  WARNING: ', aEntry.Name,
+    ' did not respond to health check within ',
+    aTimeoutMs, 'ms');
 end;
 
 initialization

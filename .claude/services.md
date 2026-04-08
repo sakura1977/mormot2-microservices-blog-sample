@@ -291,9 +291,35 @@ end;
 
 ---
 
+## 8. ms.config (Port 8087)
+
+### Responsibility
+Central configuration registry. Loads master config and serves it to all services at startup.
+
+### No Data Model (no ORM tables)
+
+### SOA Interface: IConfig
+
+```pascal
+IConfig = interface(IInvokable)
+  function GetServiceConfig(const aServiceName: RawUtf8): RawJson;
+  function GetAllConfigs: RawJson;
+  function GetServiceRegistry: RawJson;
+    // Returns only Host + Port per service (no secrets)
+end;
+```
+
+### Storage
+- Master config: `ms.config.master.json` (loaded into memory at startup)
+- No database
+
+---
+
 ## Service Dependencies
 
 ```
+ms.config   -->  (none -- starts first, reads from master JSON file)
+ms.gateway  -->  ms.config     (service registry for backend URLs)
 ms.gateway  -->  ms.auth       (token validation)
 ms.gateway  -->  ms.users      (author profiles)
 ms.gateway  -->  ms.posts      (blog posts)

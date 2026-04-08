@@ -16,6 +16,10 @@ graph TB
         SPA[SPA Frontend]
     end
 
+    subgraph Configuration
+        CONFIG[ms.config :8087]
+    end
+
     subgraph Backend Services
         AUTH[ms.auth :8081]
         USERS[ms.users :8082]
@@ -36,6 +40,13 @@ graph TB
 
     Browser -->|HTTP :8080| GW
     GW --> SPA
+    CONFIG -.->|IConfig| AUTH
+    CONFIG -.->|IConfig| USERS
+    CONFIG -.->|IConfig| POSTS
+    CONFIG -.->|IConfig| TAGS
+    CONFIG -.->|IConfig| COMMENTS
+    CONFIG -.->|IConfig| MEDIA
+    CONFIG -.->|IConfig| GW
     GW -->|REST/JSON| AUTH
     GW -->|REST/JSON| USERS
     GW -->|REST/JSON| POSTS
@@ -50,6 +61,7 @@ graph TB
     COMMENTS --- DB_COMMENTS
     MEDIA --- DB_MEDIA
 
+    Controller -.->|start/stop/monitor| CONFIG
     Controller -.->|start/stop/monitor| AUTH
     Controller -.->|start/stop/monitor| USERS
     Controller -.->|start/stop/monitor| POSTS
@@ -72,6 +84,7 @@ graph TB
 | ms.tags | 8084 | Tags + Post-Tag Associations |
 | ms.comments | 8085 | Comments + Moderation |
 | ms.media | 8086 | File Uploads |
+| ms.config | 8087 | Central Configuration Registry |
 | ms.controller | 8090 | Service Orchestrator |
 
 ---
@@ -299,15 +312,16 @@ graph LR
 
 Services start in dependency order:
 
-1. **ms.media** (8086) -- no dependencies
-2. **ms.users** (8082) -- no dependencies
-3. **ms.auth** (8081) -- references users
-4. **ms.posts** (8083) -- no dependencies
-5. **ms.tags** (8084) -- no dependencies
-6. **ms.comments** (8085) -- no dependencies
-7. **ms.gateway** (8080) -- depends on all others
+1. **ms.config** (8087) -- starts first, health-checked before proceeding
+2. **ms.media** (8086) -- no dependencies
+3. **ms.users** (8082) -- no dependencies
+4. **ms.auth** (8081) -- references users
+5. **ms.posts** (8083) -- no dependencies
+6. **ms.tags** (8084) -- no dependencies
+7. **ms.comments** (8085) -- no dependencies
+8. **ms.gateway** (8080) -- depends on all others
 
-Shutdown happens in **reverse order** (gateway first).
+Shutdown happens in **reverse order** (gateway first, config last).
 
 ---
 
@@ -338,6 +352,14 @@ The gateway combines three responsibilities:
 | ITag | ms.tags :8084 | Get, GetAll, GetByPost, GetPostIds, SetPostTags, Add, Update, Remove |
 | IComment | ms.comments :8085 | GetByPost, GetPending, Add, Approve, Reject, Remove |
 | IMedia | ms.media :8086 | Upload, GetInfo, GetFile, Remove |
+
+### Configuration Service
+
+| Interface | Backend | Methods |
+|-----------|---------|---------|
+| IConfig | ms.config :8087 | GetServiceConfig, GetAllConfigs, GetServiceRegistry |
+
+The gateway queries `IConfig.GetServiceRegistry` at startup to discover backend host:port addresses dynamically (with fallback to defaults).
 
 ### Local Aggregation Interface
 

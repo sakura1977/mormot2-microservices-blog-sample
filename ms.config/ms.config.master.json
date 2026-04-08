@@ -1,0 +1,83 @@
+{
+  "ms.config": {
+    "Host": "localhost",
+    "Port": "8087",
+    "LogLevel": "debug",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+"
+  },
+  "ms.auth": {
+    "Host": "localhost",
+    "Port": "8081",
+    "Database": "ms.auth.db",
+    "LogLevel": "debug",
+    "JwtSecret": "blog-microservices-change-me-in-production",
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+"
+  },
+  "ms.users": {
+    "Host": "localhost",
+    "Port": "8082",
+    "Database": "ms.users.db",
+    "LogLevel": "debug",
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+"
+  },
+  "ms.posts": {
+    "Host": "localhost",
+    "Port": "8083",
+    "Database": "ms.posts.db",
+    "LogLevel": "debug",
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+"
+  },
+  "ms.tags": {
+    "Host": "localhost",
+    "Port": "8084",
+    "Database": "ms.tags.db",
+    "LogLevel": "debug",
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+"
+  },
+  "ms.comments": {
+    "Host": "localhost",
+    "Port": "8085",
+    "Database": "ms.comments.db",
+    "LogLevel": "debug",
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+"
+  },
+  "ms.media": {
+    "Host": "localhost",
+    "Port": "8086",
+    "Database": "ms.media.db",
+    "LogLevel": "debug",
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+",
+    "MaxUploadSize": 3145728
+  },
+  "ms.gateway": {
+    "Host": "localhost",
+    "Port": "8080",
+    "LogLevel": "debug",
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+",
+    "CorsOrigin": "*",
+    "JwtSecret": "blog-microservices-change-me-in-production"
+  }
+}

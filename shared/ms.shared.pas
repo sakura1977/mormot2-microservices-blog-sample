@@ -38,6 +38,7 @@ const
   PORT_TAGS    = '8084';
   PORT_COMMENTS = '8085';
   PORT_MEDIA   = '8086';
+  PORT_CONFIG  = '8087';
 
   // -- Service names (used for logging, config files, DB files) --
   SERVICE_GATEWAY  = 'ms.gateway';
@@ -47,6 +48,7 @@ const
   SERVICE_TAGS     = 'ms.tags';
   SERVICE_COMMENTS = 'ms.comments';
   SERVICE_MEDIA    = 'ms.media';
+  SERVICE_CONFIG   = 'ms.config';
 
   // -- JWT configuration --
   /// <summary>
@@ -128,6 +130,18 @@ type
     ///   in production!
     /// </summary>
     JwtSecret: RawUtf8;
+    Host: RawUtf8;
+    HttpThreads: integer;
+    HttpSecurity: RawUtf8;
+    HttpBind: RawUtf8;
+    ModelRoot: RawUtf8;
+    CorsOrigin: RawUtf8;
+    MaxUploadSize: Int64;
+    ConfigUrl: RawUtf8;
+  end;
+
+  TBootstrapConfig = packed record
+    ConfigUrl: RawUtf8;
   end;
 
 /// <summary>
@@ -149,6 +163,10 @@ function LoadServiceConfig(
   const aConfigFile: TFileName;
   const aDefaultPort: RawUtf8
   ): TMicroServiceConfig;
+
+function LoadBootstrapConfig(
+  const aServiceName: RawUtf8
+  ): TBootstrapConfig;
 
 /// <summary>
 ///   Creates a URL-friendly slug from arbitrary text.
@@ -234,6 +252,50 @@ begin
     Result.MediaUrl := 'http://localhost:' + PORT_MEDIA;
   if Result.JwtSecret = '' then
     Result.JwtSecret := JWT_SECRET_DEFAULT;
+  if Result.Host = '' then
+    Result.Host := 'localhost';
+  if Result.HttpThreads = 0 then
+    Result.HttpThreads := 4;
+  if Result.HttpSecurity = '' then
+    Result.HttpSecurity := 'secNone';
+  if Result.HttpBind = '' then
+    Result.HttpBind := '+';
+  if Result.ModelRoot = '' then
+    Result.ModelRoot := 'api';
+  if Result.CorsOrigin = '' then
+    Result.CorsOrigin := '*';
+  if Result.MaxUploadSize = 0 then
+    Result.MaxUploadSize := MAX_UPLOAD_SIZE;
+end;
+
+function LoadBootstrapConfig(
+  const aServiceName: RawUtf8
+  ): TBootstrapConfig;
+var
+  ParamIdx: integer;
+  Param: string;
+  BootstrapFile: TFileName;
+  JsonContent: RawUtf8;
+begin
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  // Check CLI parameter --config=URL first
+  for ParamIdx := 1 to ParamCount do
+  begin
+    Param := ParamStr(ParamIdx);
+    if Copy(Param, 1, 9) = '--config=' then
+    begin
+      Result.ConfigUrl := StringToUtf8(Copy(Param, 10, MaxInt));
+      Exit;
+    end;
+  end;
+  // Fall back to bootstrap.json in the executable directory
+  BootstrapFile := Executable.ProgramFilePath + 'bootstrap.json';
+  if FileExists(BootstrapFile) then
+  begin
+    JsonContent := StringFromFile(BootstrapFile);
+    RecordLoadJson(Result, JsonContent, TypeInfo(TBootstrapConfig));
+  end;
 end;
 
 function TextToSlug(

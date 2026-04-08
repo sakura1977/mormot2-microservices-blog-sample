@@ -76,6 +76,7 @@ uses
   ms.comments.server,
   ms.media.model,
   ms.media.server,
+  ms.config.server,
   ms.gateway.server;
 
 type
@@ -211,6 +212,15 @@ type
     procedure GetPostFullWithoutUsers;
     procedure GetPostFullWithoutAllEnrichment;
     procedure GetPostsByTagWithoutUsers;
+  end;
+
+  TTestConfigService = class(TSynTestCase)
+  published
+    procedure GetServiceConfigKnown;
+    procedure GetServiceConfigUnknown;
+    procedure GetAllConfigs;
+    procedure GetServiceRegistry;
+    procedure GetServiceRegistryNoSecrets;
   end;
 
   TTestFullWorkflow = class(TMsTestCase)
@@ -1347,6 +1357,101 @@ begin
   end;
 end;
 
+{ TTestConfigService }
+
+const
+  TEST_MASTER_JSON: RawUtf8 =
+    '{"ms.auth":{"Host":"localhost","Port":"8081","Database":"auth.db",' +
+    '"JwtSecret":"secret123","LogLevel":"debug","ModelRoot":"api",' +
+    '"HttpThreads":4,"HttpSecurity":"secNone","HttpBind":"+"},' +
+    '"ms.users":{"Host":"localhost","Port":"8082","Database":"users.db",' +
+    '"LogLevel":"info","ModelRoot":"api","HttpThreads":2,' +
+    '"HttpSecurity":"secNone","HttpBind":"+"}}';
+
+procedure TTestConfigService.GetServiceConfigKnown;
+var
+  Svc: TConfigService;
+  Doc: TDocVariantData;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON);
+  try
+    Doc.InitJson(Svc.GetServiceConfig('ms.auth'), JSON_FAST_FLOAT);
+    CheckEqual(Doc.U['Host'], 'localhost', 'Host');
+    CheckEqual(Doc.U['Port'], '8081', 'Port');
+    CheckEqual(Doc.U['Database'], 'auth.db', 'Database');
+    CheckEqual(Doc.U['JwtSecret'], 'secret123', 'JwtSecret');
+  finally
+    Svc.Free;
+  end;
+end;
+
+procedure TTestConfigService.GetServiceConfigUnknown;
+var
+  Svc: TConfigService;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON);
+  try
+    CheckEqual(Svc.GetServiceConfig('ms.nonexistent'), '{}',
+      'unknown service should return empty object');
+  finally
+    Svc.Free;
+  end;
+end;
+
+procedure TTestConfigService.GetAllConfigs;
+var
+  Svc: TConfigService;
+  Doc: TDocVariantData;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON);
+  try
+    Doc.InitJson(Svc.GetAllConfigs, JSON_FAST_FLOAT);
+    Check(Doc.GetValueIndex('ms.auth') >= 0, 'should have ms.auth');
+    Check(Doc.GetValueIndex('ms.users') >= 0, 'should have ms.users');
+  finally
+    Svc.Free;
+  end;
+end;
+
+procedure TTestConfigService.GetServiceRegistry;
+var
+  Svc: TConfigService;
+  Doc: TDocVariantData;
+  AuthEntry: PDocVariantData;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON);
+  try
+    Doc.InitJson(Svc.GetServiceRegistry, JSON_FAST_FLOAT);
+    Check(Doc.GetValueIndex('ms.auth') >= 0, 'should have ms.auth');
+    AuthEntry := Doc.O['ms.auth'];
+    Check(AuthEntry <> nil, 'auth entry should exist');
+    CheckEqual(AuthEntry^.U['Host'], 'localhost', 'Host in registry');
+    CheckEqual(AuthEntry^.U['Port'], '8081', 'Port in registry');
+  finally
+    Svc.Free;
+  end;
+end;
+
+procedure TTestConfigService.GetServiceRegistryNoSecrets;
+var
+  Svc: TConfigService;
+  Doc: TDocVariantData;
+  AuthEntry: PDocVariantData;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON);
+  try
+    Doc.InitJson(Svc.GetServiceRegistry, JSON_FAST_FLOAT);
+    AuthEntry := Doc.O['ms.auth'];
+    Check(AuthEntry <> nil, 'auth entry should exist');
+    CheckEqual(AuthEntry^.GetValueIndex('JwtSecret'), -1,
+      'JwtSecret must not be in registry');
+    CheckEqual(AuthEntry^.GetValueIndex('Database'), -1,
+      'Database must not be in registry');
+  finally
+    Svc.Free;
+  end;
+end;
+
 { TBlogTests }
 
 constructor TBlogTests.Create(
@@ -1375,6 +1480,7 @@ begin
   AddCase(TTestMediaService);
   AddCase(TTestBlogAggregation);
   AddCase(TTestBlogResilience);
+  AddCase(TTestConfigService);
   AddCase(TTestFullWorkflow);
 end;
 

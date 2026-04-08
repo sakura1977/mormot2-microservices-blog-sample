@@ -6,13 +6,16 @@
         <Projects Include=".template\ms.template.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="ms.config\ms.config.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ms.controller\ms.controller.dproj">
+            <Dependencies/>
+        </Projects>
         <Projects Include="ms.auth\ms.auth.dproj">
             <Dependencies/>
         </Projects>
         <Projects Include="ms.comments\ms.comments.dproj">
-            <Dependencies/>
-        </Projects>
-        <Projects Include="ms.controller\ms.controller.dproj">
             <Dependencies/>
         </Projects>
         <Projects Include="ms.gateway\ms.gateway.dproj">
@@ -50,6 +53,24 @@
     <Target Name="ms_template:Make">
         <MSBuild Projects=".template\ms.template.dproj" Targets="Make"/>
     </Target>
+    <Target Name="ms_config">
+        <MSBuild Projects="ms.config\ms.config.dproj"/>
+    </Target>
+    <Target Name="ms_config:Clean">
+        <MSBuild Projects="ms.config\ms.config.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_config:Make">
+        <MSBuild Projects="ms.config\ms.config.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_controller">
+        <MSBuild Projects="ms.controller\ms.controller.dproj"/>
+    </Target>
+    <Target Name="ms_controller:Clean">
+        <MSBuild Projects="ms.controller\ms.controller.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_controller:Make">
+        <MSBuild Projects="ms.controller\ms.controller.dproj" Targets="Make"/>
+    </Target>
     <Target Name="ms_auth">
         <MSBuild Projects="ms.auth\ms.auth.dproj"/>
     </Target>
@@ -67,15 +88,6 @@
     </Target>
     <Target Name="ms_comments:Make">
         <MSBuild Projects="ms.comments\ms.comments.dproj" Targets="Make"/>
-    </Target>
-    <Target Name="ms_controller">
-        <MSBuild Projects="ms.controller\ms.controller.dproj"/>
-    </Target>
-    <Target Name="ms_controller:Clean">
-        <MSBuild Projects="ms.controller\ms.controller.dproj" Targets="Clean"/>
-    </Target>
-    <Target Name="ms_controller:Make">
-        <MSBuild Projects="ms.controller\ms.controller.dproj" Targets="Make"/>
     </Target>
     <Target Name="ms_gateway">
         <MSBuild Projects="ms.gateway\ms.gateway.dproj"/>
@@ -132,13 +144,13 @@
         <MSBuild Projects="test\ms.tests.dproj" Targets="Make"/>
     </Target>
     <Target Name="Build">
-        <CallTarget Targets="ms_template;ms_auth;ms_comments;ms_controller;ms_gateway;ms_media;ms_posts;ms_tags;ms_users;ms_tests"/>
+        <CallTarget Targets="ms_template;ms_config;ms_controller;ms_auth;ms_comments;ms_gateway;ms_media;ms_posts;ms_tags;ms_users;ms_tests"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="ms_template:Clean;ms_auth:Clean;ms_comments:Clean;ms_controller:Clean;ms_gateway:Clean;ms_media:Clean;ms_posts:Clean;ms_tags:Clean;ms_users:Clean;ms_tests:Clean"/>
+        <CallTarget Targets="ms_template:Clean;ms_config:Clean;ms_controller:Clean;ms_auth:Clean;ms_comments:Clean;ms_gateway:Clean;ms_media:Clean;ms_posts:Clean;ms_tags:Clean;ms_users:Clean;ms_tests:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="ms_template:Make;ms_auth:Make;ms_comments:Make;ms_controller:Make;ms_gateway:Make;ms_media:Make;ms_posts:Make;ms_tags:Make;ms_users:Make;ms_tests:Make"/>
+        <CallTarget Targets="ms_template:Make;ms_config:Make;ms_controller:Make;ms_auth:Make;ms_comments:Make;ms_gateway:Make;ms_media:Make;ms_posts:Make;ms_tags:Make;ms_users:Make;ms_tests:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>
