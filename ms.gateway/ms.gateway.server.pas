@@ -115,7 +115,7 @@ var
   AuthorId, PostId: TID;
 begin
   PostJson := FPosts.Get(aId);
-  if (PostJson = '') or (PostJson = '{}') then
+  if PostJson = '{}' then
   begin
     Result := '{}';
     Exit;
@@ -127,7 +127,7 @@ begin
     PostId := PostDoc.I['ID'];
   // Enrich with author
   AuthorJson := FUsers.Get(AuthorId);
-  if (AuthorJson <> '') and (AuthorJson <> '{}') then
+  if AuthorJson <> '{}' then
     PostDoc.AddValue('Author', _JsonFast(AuthorJson))
   else
     PostDoc.AddValue('Author', null);
@@ -135,13 +135,13 @@ begin
   if PostId > 0 then
   begin
     TagsJson := FTags.GetByPost(PostId);
-    if (TagsJson <> '') and (TagsJson <> '[]') then
+    if TagsJson <> '[]' then
       PostDoc.AddValue('Tags', _JsonFast(TagsJson))
     else
       PostDoc.AddValue('Tags', _ArrFast([]));
     // Enrich with comments
     CommentsJson := FComments.GetByPost(PostId);
-    if (CommentsJson <> '') and (CommentsJson <> '[]') then
+    if CommentsJson <> '[]' then
       PostDoc.AddValue('Comments', _JsonFast(CommentsJson))
     else
       PostDoc.AddValue('Comments', _ArrFast([]));

@@ -106,11 +106,12 @@ function TPostService.GetBySlug(const aSlug: RawUtf8): RawJson;
 var
   PostRecord: TOrmBlogPost;
 begin
-  Result := '';
   PostRecord := TOrmBlogPost.Create;
   try
     if FOrm.Retrieve('Slug=?', [], [aSlug], PostRecord) then
-      Result := PostRecord.GetJsonValues(True, True, ooSelect);
+      Result := PostRecord.GetJsonValues(True, True, ooSelect)
+    else
+      Result := '{}';
   finally
     PostRecord.Free;
   end;
