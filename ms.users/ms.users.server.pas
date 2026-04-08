@@ -88,10 +88,7 @@ var
 begin
   Doc.InitJson(aData, JSON_FAST_FLOAT);
   if Doc.U['DisplayName'] = '' then
-  begin
-    Result := 0;
-    Exit;
-  end;
+    Exit(0);
   Rec := TOrmAuthor.Create;
   try
     Rec.DisplayName := Doc.U['DisplayName'];
@@ -114,10 +111,7 @@ begin
   Rec := TOrmAuthor.Create;
   try
     if not FOrm.Retrieve(aId, Rec) then
-    begin
-      Result := False;
-      Exit;
-    end;
+      Exit(False);
     Doc.InitJson(aData, JSON_FAST_FLOAT);
     if Doc.GetValueIndex('DisplayName') >= 0 then
     begin

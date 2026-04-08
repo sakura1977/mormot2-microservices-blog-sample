@@ -116,10 +116,7 @@ var
 begin
   PostJson := FPosts.Get(aId);
   if PostJson = '{}' then
-  begin
-    Result := '{}';
-    Exit;
-  end;
+    Exit('{}');
   PostDoc.InitJson(PostJson, JSON_FAST_FLOAT);
   AuthorId := PostDoc.I['AuthorId'];
   PostId := PostDoc.I['RowID'];
@@ -256,8 +253,7 @@ begin
   if aCtxt.Method = 'OPTIONS' then
   begin
     aCtxt.OutContent := '';
-    Result := HTTP_NOCONTENT;
-    Exit;
+    Exit(HTTP_NOCONTENT);
   end;
   // API calls go to the REST server (interface-based services)
   if IdemPChar(pointer(aCtxt.Url), '/API/') or
@@ -281,10 +277,7 @@ begin
   begin
     // Prevent path traversal
     if PosEx('..', Path) > 0 then
-    begin
-      Result := HTTP_FORBIDDEN;
-      Exit;
-    end;
+      Exit(HTTP_FORBIDDEN);
     FilePath := FWwwPath + StringReplace(
       Utf8ToString(Copy(Path, 2, MaxInt)), '/', PathDelim, [rfReplaceAll]);
   end;

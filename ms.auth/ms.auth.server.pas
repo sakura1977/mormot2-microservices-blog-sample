@@ -324,9 +324,9 @@ var
   User: TOrmAuthUser;
   McfInfo, PersistedKey: RawUtf8;
 begin
-  Result := 0;
   if (aEmail = '') or (aPassword = '') then
-    Exit;
+    Exit(0);
+  Result := 0;
   // Check whether the email is already taken
   User := FindUserByEmail(aEmail);
   if User <> nil then

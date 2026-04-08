@@ -134,10 +134,7 @@ begin
     FormatUtf8('PostId=%', [aPostId]));
   try
     if (Table = nil) or (Table.RowCount = 0) then
-    begin
-      Result := '[]';
-      Exit;
-    end;
+      Exit('[]');
     Doc.InitArray([], JSON_FAST);
     for i := 1 to Table.RowCount do
     begin
@@ -204,10 +201,7 @@ var
 begin
   Doc.InitJson(aData, JSON_FAST_FLOAT);
   if Doc.U['Name'] = '' then
-  begin
-    Result := 0;
-    Exit;
-  end;
+    Exit(0);
   Tag := TOrmBlogTag.Create;
   try
     Tag.Name := Doc.U['Name'];

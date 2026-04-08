@@ -111,10 +111,7 @@ var
 begin
   Doc.InitJson(aData, JSON_FAST_FLOAT);
   if (aPostId <= 0) or (Doc.U['Body'] = '') then
-  begin
-    Result := 0;
-    Exit;
-  end;
+    Exit(0);
   Rec := TOrmBlogComment.Create;
   try
     Rec.PostId := aPostId;
@@ -136,10 +133,7 @@ begin
   Rec := TOrmBlogComment.Create;
   try
     if not FOrm.Retrieve(aId, Rec) then
-    begin
-      Result := False;
-      Exit;
-    end;
+      Exit(False);
     Rec.Status := COMMENT_STATUS_APPROVED;
     Rec.ModeratedBy := aModeratedBy;
     Rec.ModeratedAt := NowUtc;
@@ -156,10 +150,7 @@ begin
   Rec := TOrmBlogComment.Create;
   try
     if not FOrm.Retrieve(aId, Rec) then
-    begin
-      Result := False;
-      Exit;
-    end;
+      Exit(False);
     Rec.Status := COMMENT_STATUS_REJECTED;
     Rec.ModeratedBy := aModeratedBy;
     Rec.ModeratedAt := NowUtc;

@@ -87,10 +87,7 @@ var
   FilePath: TFileName;
 begin
   if (aFileName = '') or (aFileData = '') then
-  begin
-    Result := 0;
-    Exit;
-  end;
+    Exit(0);
   Content := Base64ToBin(aFileData);
   Rec := TOrmMediaFile.Create;
   try
