@@ -42,110 +42,8 @@ uses
 type
 
   /// <summary>
-  ///   Proxy implementation of IAuth that delegates to the auth backend.
-  /// </summary>
-  TAuthProxy = class(TInterfacedObject, IAuth)
-  private
-    FRemote: IAuth;
-  public
-    constructor Create(const aRemote: IAuth);
-    procedure Challenge(const aEmail: RawUtf8;
-      out aMcfInfo, aServerNonce: RawUtf8);
-    function Authenticate(const aEmail, aServerNonce, aClientProof: RawUtf8;
-      out aToken: RawUtf8; out aUserId: TID;
-      out aServerProof: RawUtf8): boolean;
-    function Register(const aEmail, aPassword: RawUtf8;
-      aUserId: TID): TID;
-    function Validate(const aToken: RawUtf8;
-      out aUserId: TID): boolean;
-    function ChangePassword(aUserId: TID;
-      const aOldPassword, aNewPassword: RawUtf8): boolean;
-  end;
-
-  /// <summary>
-  ///   Proxy implementation of IUser.
-  /// </summary>
-  TUserProxy = class(TInterfacedObject, IUser)
-  private
-    FRemote: IUser;
-  public
-    constructor Create(const aRemote: IUser);
-    function Get(aId: TID): RawJson;
-    function GetAll: RawJson;
-    function Add(const aData: RawJson): TID;
-    function Update(aId: TID; const aData: RawJson): boolean;
-    function Remove(aId: TID): boolean;
-  end;
-
-  /// <summary>
-  ///   Proxy implementation of IPost.
-  /// </summary>
-  TPostProxy = class(TInterfacedObject, IPost)
-  private
-    FRemote: IPost;
-  public
-    constructor Create(const aRemote: IPost);
-    function Get(aId: TID): RawJson;
-    function GetBySlug(const aSlug: RawUtf8): RawJson;
-    function GetList(aPage, aLimit, aStatus: integer;
-      aAuthorId: TID): RawJson;
-    function Add(const aData: RawJson): TID;
-    function Update(aId: TID; const aData: RawJson): boolean;
-    function Remove(aId: TID): boolean;
-  end;
-
-  /// <summary>
-  ///   Proxy implementation of ITag.
-  /// </summary>
-  TTagProxy = class(TInterfacedObject, ITag)
-  private
-    FRemote: ITag;
-  public
-    constructor Create(const aRemote: ITag);
-    function Get(aId: TID): RawJson;
-    function GetAll: RawJson;
-    function GetByPost(aPostId: TID): RawJson;
-    function SetPostTags(aPostId: TID;
-      const aTagIds: RawJson): boolean;
-    function Add(const aData: RawJson): TID;
-    function Update(aId: TID; const aData: RawJson): boolean;
-    function Remove(aId: TID): boolean;
-  end;
-
-  /// <summary>
-  ///   Proxy implementation of IComment.
-  /// </summary>
-  TCommentProxy = class(TInterfacedObject, IComment)
-  private
-    FRemote: IComment;
-  public
-    constructor Create(const aRemote: IComment);
-    function GetByPost(aPostId: TID): RawJson;
-    function GetPending: RawJson;
-    function Add(aPostId: TID; const aData: RawJson): TID;
-    function Approve(aId, aModeratedBy: TID): boolean;
-    function Reject(aId, aModeratedBy: TID): boolean;
-    function Remove(aId: TID): boolean;
-  end;
-
-  /// <summary>
-  ///   Proxy implementation of IMedia.
-  /// </summary>
-  TMediaProxy = class(TInterfacedObject, IMedia)
-  private
-    FRemote: IMedia;
-  public
-    constructor Create(const aRemote: IMedia);
-    function Upload(const aFileName, aFileData, aAltText: RawUtf8;
-      aUploadedBy: TID): TID;
-    function GetInfo(aId: TID): RawJson;
-    function GetFile(aId: TID;
-      out aContentType: RawUtf8): RawByteString;
-    function Remove(aId: TID): boolean;
-  end;
-
-  /// <summary>
   ///   Aggregation service: enriches a post with author, tags, comments.
+  ///   The only gateway-specific service with actual business logic.
   /// </summary>
   TBlogService = class(TInterfacedObject, IBlog)
   private
@@ -196,231 +94,6 @@ type
   end;
 
 implementation
-
-{ TAuthProxy }
-
-constructor TAuthProxy.Create(const aRemote: IAuth);
-begin
-  inherited Create;
-  FRemote := aRemote;
-end;
-
-procedure TAuthProxy.Challenge(const aEmail: RawUtf8;
-  out aMcfInfo, aServerNonce: RawUtf8);
-begin
-  FRemote.Challenge(aEmail, aMcfInfo, aServerNonce);
-end;
-
-function TAuthProxy.Authenticate(const aEmail, aServerNonce,
-  aClientProof: RawUtf8; out aToken: RawUtf8; out aUserId: TID;
-  out aServerProof: RawUtf8): boolean;
-begin
-  Result := FRemote.Authenticate(aEmail, aServerNonce, aClientProof,
-    aToken, aUserId, aServerProof);
-end;
-
-function TAuthProxy.Register(const aEmail, aPassword: RawUtf8;
-  aUserId: TID): TID;
-begin
-  Result := FRemote.Register(aEmail, aPassword, aUserId);
-end;
-
-function TAuthProxy.Validate(const aToken: RawUtf8;
-  out aUserId: TID): boolean;
-begin
-  Result := FRemote.Validate(aToken, aUserId);
-end;
-
-function TAuthProxy.ChangePassword(aUserId: TID;
-  const aOldPassword, aNewPassword: RawUtf8): boolean;
-begin
-  Result := FRemote.ChangePassword(aUserId, aOldPassword, aNewPassword);
-end;
-
-{ TUserProxy }
-
-constructor TUserProxy.Create(const aRemote: IUser);
-begin
-  inherited Create;
-  FRemote := aRemote;
-end;
-
-function TUserProxy.Get(aId: TID): RawJson;
-begin
-  Result := FRemote.Get(aId);
-end;
-
-function TUserProxy.GetAll: RawJson;
-begin
-  Result := FRemote.GetAll;
-end;
-
-function TUserProxy.Add(const aData: RawJson): TID;
-begin
-  Result := FRemote.Add(aData);
-end;
-
-function TUserProxy.Update(aId: TID; const aData: RawJson): boolean;
-begin
-  Result := FRemote.Update(aId, aData);
-end;
-
-function TUserProxy.Remove(aId: TID): boolean;
-begin
-  Result := FRemote.Remove(aId);
-end;
-
-{ TPostProxy }
-
-constructor TPostProxy.Create(const aRemote: IPost);
-begin
-  inherited Create;
-  FRemote := aRemote;
-end;
-
-function TPostProxy.Get(aId: TID): RawJson;
-begin
-  Result := FRemote.Get(aId);
-end;
-
-function TPostProxy.GetBySlug(const aSlug: RawUtf8): RawJson;
-begin
-  Result := FRemote.GetBySlug(aSlug);
-end;
-
-function TPostProxy.GetList(aPage, aLimit, aStatus: integer;
-  aAuthorId: TID): RawJson;
-begin
-  Result := FRemote.GetList(aPage, aLimit, aStatus, aAuthorId);
-end;
-
-function TPostProxy.Add(const aData: RawJson): TID;
-begin
-  Result := FRemote.Add(aData);
-end;
-
-function TPostProxy.Update(aId: TID; const aData: RawJson): boolean;
-begin
-  Result := FRemote.Update(aId, aData);
-end;
-
-function TPostProxy.Remove(aId: TID): boolean;
-begin
-  Result := FRemote.Remove(aId);
-end;
-
-{ TTagProxy }
-
-constructor TTagProxy.Create(const aRemote: ITag);
-begin
-  inherited Create;
-  FRemote := aRemote;
-end;
-
-function TTagProxy.Get(aId: TID): RawJson;
-begin
-  Result := FRemote.Get(aId);
-end;
-
-function TTagProxy.GetAll: RawJson;
-begin
-  Result := FRemote.GetAll;
-end;
-
-function TTagProxy.GetByPost(aPostId: TID): RawJson;
-begin
-  Result := FRemote.GetByPost(aPostId);
-end;
-
-function TTagProxy.SetPostTags(aPostId: TID;
-  const aTagIds: RawJson): boolean;
-begin
-  Result := FRemote.SetPostTags(aPostId, aTagIds);
-end;
-
-function TTagProxy.Add(const aData: RawJson): TID;
-begin
-  Result := FRemote.Add(aData);
-end;
-
-function TTagProxy.Update(aId: TID; const aData: RawJson): boolean;
-begin
-  Result := FRemote.Update(aId, aData);
-end;
-
-function TTagProxy.Remove(aId: TID): boolean;
-begin
-  Result := FRemote.Remove(aId);
-end;
-
-{ TCommentProxy }
-
-constructor TCommentProxy.Create(const aRemote: IComment);
-begin
-  inherited Create;
-  FRemote := aRemote;
-end;
-
-function TCommentProxy.GetByPost(aPostId: TID): RawJson;
-begin
-  Result := FRemote.GetByPost(aPostId);
-end;
-
-function TCommentProxy.GetPending: RawJson;
-begin
-  Result := FRemote.GetPending;
-end;
-
-function TCommentProxy.Add(aPostId: TID;
-  const aData: RawJson): TID;
-begin
-  Result := FRemote.Add(aPostId, aData);
-end;
-
-function TCommentProxy.Approve(aId, aModeratedBy: TID): boolean;
-begin
-  Result := FRemote.Approve(aId, aModeratedBy);
-end;
-
-function TCommentProxy.Reject(aId, aModeratedBy: TID): boolean;
-begin
-  Result := FRemote.Reject(aId, aModeratedBy);
-end;
-
-function TCommentProxy.Remove(aId: TID): boolean;
-begin
-  Result := FRemote.Remove(aId);
-end;
-
-{ TMediaProxy }
-
-constructor TMediaProxy.Create(const aRemote: IMedia);
-begin
-  inherited Create;
-  FRemote := aRemote;
-end;
-
-function TMediaProxy.Upload(const aFileName, aFileData,
-  aAltText: RawUtf8; aUploadedBy: TID): TID;
-begin
-  Result := FRemote.Upload(aFileName, aFileData, aAltText, aUploadedBy);
-end;
-
-function TMediaProxy.GetInfo(aId: TID): RawJson;
-begin
-  Result := FRemote.GetInfo(aId);
-end;
-
-function TMediaProxy.GetFile(aId: TID;
-  out aContentType: RawUtf8): RawByteString;
-begin
-  Result := FRemote.GetFile(aId, aContentType);
-end;
-
-function TMediaProxy.Remove(aId: TID): boolean;
-begin
-  Result := FRemote.Remove(aId);
-end;
 
 { TBlogService }
 
@@ -524,14 +197,22 @@ begin
   FMediaClient := ConnectToBackend('localhost', PORT_MEDIA,
     [TypeInfo(IMedia)]);
   FMediaClient.Services.Resolve(IMedia, FMedia);
-  // Register proxy services on our REST server
-  RegisterService(TAuthProxy.Create(FAuth), TypeInfo(IAuth));
-  RegisterService(TUserProxy.Create(FUsers), TypeInfo(IUser));
-  RegisterService(TPostProxy.Create(FPosts), TypeInfo(IPost));
-  RegisterService(TTagProxy.Create(FTags), TypeInfo(ITag));
-  RegisterService(TCommentProxy.Create(FComments), TypeInfo(IComment));
-  RegisterService(TMediaProxy.Create(FMedia), TypeInfo(IMedia));
-  // Register aggregation service
+  // Register resolved client interfaces directly as server services.
+  // The client-resolved interfaces are TInterfacedObjectFake instances
+  // that already implement the interface -- no manual proxy classes needed.
+  RegisterService(
+    ObjectFromInterface(FAuth) as TInterfacedObject, TypeInfo(IAuth));
+  RegisterService(
+    ObjectFromInterface(FUsers) as TInterfacedObject, TypeInfo(IUser));
+  RegisterService(
+    ObjectFromInterface(FPosts) as TInterfacedObject, TypeInfo(IPost));
+  RegisterService(
+    ObjectFromInterface(FTags) as TInterfacedObject, TypeInfo(ITag));
+  RegisterService(
+    ObjectFromInterface(FComments) as TInterfacedObject, TypeInfo(IComment));
+  RegisterService(
+    ObjectFromInterface(FMedia) as TInterfacedObject, TypeInfo(IMedia));
+  // Aggregation service -- actual business logic, not a proxy
   RegisterService(
     TBlogService.Create(FPosts, FUsers, FTags, FComments),
     TypeInfo(IBlog));
