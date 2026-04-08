@@ -1,55 +1,64 @@
-# Blog-Microservices -- Implementierungsplan
+# Blog Microservices -- Implementation Plan
 
-Status: **Implementierung abgeschlossen** (Stand: 2026-04-07)
+Status: **Implementation complete** (as of 2026-04-08)
 
-## Phase 1: Grundlagen (Shared Code) -- ERLEDIGT
+## Phase 1: Foundation (Shared Code) -- DONE
 
-- `ms.shared.pas` -- Konstanten, Config-Loading, TextToSlug
-- `ms.shared.api.pas` -- SOA-Interface-Definitionen (IAuth, IUser, IPost, ITag, IComment, IMedia, IBlog)
-- `ms.shared.jwt.pas` -- JWT-Token erstellen und validieren
-- `ms.shared.service.pas` -- Basisklasse TMicroService (Run-Loop, Health, Shutdown)
+- `ms.shared.pas` -- Constants, config loading, TextToSlug, GuessMimeType
+- `ms.shared.api.pas` -- SOA interface definitions (IAuth, IUser, IPost, ITag, IComment, IMedia, IBlog)
+- `ms.shared.jwt.pas` -- JWT token creation and validation
+- `ms.shared.service.pas` -- TMicroService base class (run loop, health, shutdown), RegisterService, OrmGetById, OrmGetAll
 
-## Phase 2: Backend-Services -- ERLEDIGT
+## Phase 2: Backend Services -- DONE
 
-| Service | ORM-Klassen | SOA-Interface | Status |
+| Service | ORM Classes | SOA Interface | Status |
 |---------|-------------|---------------|--------|
-| ms.users | TOrmAuthor | IUser | Fertig |
-| ms.auth | TOrmAuthUser | IAuth (SCRAM-MCF) | Fertig |
-| ms.posts | TOrmBlogPost | IPost | Fertig |
-| ms.tags | TOrmBlogTag, TOrmPostTag | ITag | Fertig |
-| ms.comments | TOrmBlogComment | IComment | Fertig |
-| ms.media | TOrmMediaFile | IMedia | Fertig |
+| ms.users | TOrmAuthor | IUser | Done |
+| ms.auth | TOrmAuthUser | IAuth (SCRAM-MCF) | Done |
+| ms.posts | TOrmBlogPost | IPost | Done |
+| ms.tags | TOrmBlogTag, TOrmPostTag | ITag | Done |
+| ms.comments | TOrmBlogComment | IComment | Done |
+| ms.media | TOrmMediaFile | IMedia | Done |
 
-## Phase 3: Gateway -- ERLEDIGT
+## Phase 3: Gateway -- DONE
 
-- Transparentes SOA-Proxying (keine manuellen Proxy-Klassen)
-- IBlog-Aggregationsservice (GetPostFull)
-- Statische Datei-Auslieferung (SPA aus www/)
-- CORS-Handling
-- Client-Factories mit ResultAsJsonObjectWithoutResult
+- Transparent SOA proxying (no manual proxy classes)
+- IBlog aggregation service (GetPostFull)
+- Static file serving (SPA from www/)
+- CORS handling
+- Client factories with ResultAsJsonObjectWithoutResult
 
-## Phase 4: Web-Frontend -- ERLEDIGT
+## Phase 4: Web Frontend -- DONE
 
-- SPA mit Vanilla JavaScript (keine Abhaengigkeiten)
-- SCRAM-MCF Login im Browser (PBKDF2 via Web Crypto API)
-- Beitragsliste, Einzelansicht, Kommentare
-- Autoren-Dashboard, Beitrags-Editor
-- Kommentar-Moderation
+- SPA with vanilla JavaScript (no dependencies)
+- SCRAM-MCF login in browser (PBKDF2 via Web Crypto API)
+- Post list, single view, comments
+- Author dashboard, post editor
+- Comment moderation
 
-## Phase 5: Betrieb -- ERLEDIGT
+## Phase 5: Testing -- DONE
 
-- TSynLog-Konfiguration mit Rotation
-- Management-Endpunkte: GET /api/health, POST /api/shutdown
-- Betriebsskripte: start-all.cmd, stop-all.cmd, status.cmd, seed-data.cmd
+- In-process integration tests (all services in one executable)
+- In-memory SQLite (SQLITE_MEMORY_DATABASE_NAME)
+- 130+ assertions covering positive and negative cases
+- TSynTestCase framework from mORMot2
 
-## Hinweise fuer zukuenftige Arbeiten
+## Phase 6: Operations -- DONE
 
-### ORM-Namenskonvention
-ORM-Klassennamen duerfen nach Entfernung des `TOrm`-Prefix nicht dem
-Interface-Namen (nach Entfernung des `I`-Prefix) entsprechen.
-Beispiel: `IPost` + `TOrmPost` -> Konflikt! Loesung: `TOrmBlogPost`.
+- TSynLog configuration with rotation
+- Management endpoints: GET /api/health, POST /api/shutdown
+- Operations scripts: start-all.cmd, stop-all.cmd, status.cmd, seed-data.cmd
+- Input validation on all Add methods
+- Upload size limit (3 MB)
 
-### SOA-Parameterformat
-`RawJson`-Parameter muessen als JSON-Objekte (nicht Strings) im Array uebergeben werden:
-- Richtig: `[{"Name":"Delphi"}]`
-- Falsch: `["{\"Name\":\"Delphi\"}"]`
+## Notes for Future Work
+
+### ORM Naming Convention
+ORM class names must not match their SOA interface name after stripping
+the TOrm/I prefixes. mORMot2 reports a routing conflict otherwise.
+Example: `IPost` + `TOrmPost` -> conflict! Solution: `TOrmBlogPost`.
+
+### SOA Parameter Format
+`RawJson` parameters must be passed as JSON objects (not strings) in the array:
+- Correct: `[{"Name":"Delphi"}]`
+- Wrong: `["{\"Name\":\"Delphi\"}"]`

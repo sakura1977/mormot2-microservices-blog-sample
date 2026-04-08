@@ -1,84 +1,84 @@
-# Blog-Microservices -- Dokumentation
+# Blog Microservices -- Documentation
 
-Microservice-basiertes Blog-System mit **Delphi 13** und **mORMot2**.
+Microservice-based blog system with **Delphi 13** and **mORMot2**.
 
-## Schnellstart
+## Quick Start
 
 ```
-1. BlogMicroservices.groupproj in Delphi oeffnen
-2. "Build All" ausfuehren
-3. start-all.cmd starten
-4. seed-data.cmd ausfuehren (Demo-Daten)
-5. http://localhost:8080 im Browser oeffnen
+1. Open BlogMicroservices.groupproj in Delphi
+2. Run "Build All"
+3. Run start-all.cmd
+4. Run seed-data.cmd (demo data)
+5. Open http://localhost:8080 in browser
 6. Login: max@example.com / demo1234
 ```
 
-## Dokumentation
+## Documentation
 
-| Datei | Inhalt |
-|-------|--------|
-| [architecture.md](architecture.md) | Architektur-Uebersicht, Service-Tabelle, Kommunikationsprinzipien |
-| [services.md](services.md) | Detaillierte Service-Definitionen mit SOA-Interfaces und Datenmodellen |
-| [technology.md](technology.md) | mORMot2-Module, Projektstruktur, Code-Muster, Konfiguration |
-| [workflows.md](workflows.md) | Sequenzdiagramme fuer alle wichtigen Ablaeufe |
+| File | Content |
+|------|---------|
+| [architecture.md](architecture.md) | Architecture overview, service table, communication principles |
+| [services.md](services.md) | Detailed service definitions with SOA interfaces and data models |
+| [technology.md](technology.md) | mORMot2 modules, project structure, code patterns, configuration |
+| [workflows.md](workflows.md) | Sequence diagrams for all key workflows |
 
-## Architektur
+## Architecture
 
-- **API-Stil**: mORMot2 SOA (Interface-basierte Services)
-- **URL-Format**: `POST /api/{ServiceName}/{MethodName}` mit JSON-Array als Body
-- **Authentifizierung**: SCRAM-MCF (PBKDF2-SHA256, Client-seitiges Hashing)
+- **API style**: mORMot2 SOA (interface-based services)
+- **URL format**: `POST /api/{ServiceName}/{MethodName}` with JSON array body
+- **Authentication**: SCRAM-MCF (PBKDF2-SHA256, client-side hashing)
 
 ## Services
 
-| Service | Port | SOA-Interface | Beschreibung |
-|---------|------|---------------|--------------|
-| ms.gateway | 8080 | IBlog + Proxies | API-Gateway + Web-Frontend |
-| ms.auth | 8081 | IAuth | SCRAM-MCF Authentifizierung, JWT-Tokens |
-| ms.users | 8082 | IUser | Autorenprofile und Biografien |
-| ms.posts | 8083 | IPost | Blog-Beitraege mit Paginierung |
-| ms.tags | 8084 | ITag | Tag-Verwaltung (m:n mit Beitraegen) |
-| ms.comments | 8085 | IComment | Kommentare mit Moderations-Workflow |
-| ms.media | 8086 | IMedia | Bild-Upload und -Auslieferung |
+| Service | Port | SOA Interface | Description |
+|---------|------|---------------|-------------|
+| ms.gateway | 8080 | IBlog + Proxies | API gateway + web frontend |
+| ms.auth | 8081 | IAuth | SCRAM-MCF authentication, JWT tokens |
+| ms.users | 8082 | IUser | Author profiles and bios |
+| ms.posts | 8083 | IPost | Blog posts with pagination |
+| ms.tags | 8084 | ITag | Tag management (m:n with posts) |
+| ms.comments | 8085 | IComment | Comments with moderation workflow |
+| ms.media | 8086 | IMedia | Image upload and serving |
 
-## Technologie
+## Technology
 
-- **Sprache**: Object Pascal (Delphi 13)
+- **Language**: Object Pascal (Delphi 13)
 - **Framework**: mORMot2
-- **Datenbank**: SQLite (eine DB pro Service)
-- **Kommunikation**: mORMot2 SOA ueber REST/HTTP mit JSON
-- **Authentifizierung**: SCRAM-MCF + JWT (HMAC-SHA256)
-- **Frontend**: Vanilla JS SPA (keine Abhaengigkeiten)
-- **Logging**: TSynLog mit Rotation (5 x 5 MB pro Service)
+- **Database**: SQLite (one DB per service)
+- **Communication**: mORMot2 SOA over REST/HTTP with JSON
+- **Authentication**: SCRAM-MCF + JWT (HMAC-SHA256)
+- **Frontend**: Vanilla JS SPA (no dependencies)
+- **Logging**: TSynLog with rotation (5 x 5 MB per service)
 
-## Betriebsskripte
+## Operations Scripts
 
-| Skript | Funktion |
-|--------|----------|
-| `start-all.cmd` | Alle 7 Services in korrekter Reihenfolge starten |
-| `stop-all.cmd` | Alle Services sauber herunterfahren (via POST /api/shutdown) |
-| `status.cmd` | Health-Check aller Services (via GET /api/health) |
-| `seed-data.cmd` | Demo-Daten anlegen (1 Autor, 3 Beitraege, 4 Tags) |
+| Script | Purpose |
+|--------|---------|
+| `start-all.cmd` | Start all 7 services in correct order |
+| `stop-all.cmd` | Graceful shutdown of all services (via POST /api/shutdown) |
+| `status.cmd` | Health check all services (via GET /api/health) |
+| `seed-data.cmd` | Create demo data (1 author, 3 posts, 4 tags) |
 
-## Projektstruktur
+## Project Structure
 
 ```
-BlogMicroservices.groupproj    IDE-Projektgruppe
-start-all.cmd / stop-all.cmd   Betriebsskripte
-seed-data.cmd / status.cmd     Demo-Daten / Health-Checks
-shared/                        4 gemeinsame Units
-  ms.shared.pas                  Konstanten, Config, Slug-Generierung
-  ms.shared.api.pas              SOA-Interface-Definitionen (IAuth, IUser, ...)
-  ms.shared.jwt.pas              JWT-Token-Erstellung und -Validierung
-  ms.shared.service.pas          Basisklasse TMicroService, RegisterService,
+BlogMicroservices.groupproj    IDE project group
+start-all.cmd / stop-all.cmd   Operations scripts
+seed-data.cmd / status.cmd     Demo data / health checks
+shared/                        4 shared units
+  ms.shared.pas                  Constants, config, slug generation
+  ms.shared.api.pas              SOA interface definitions (IAuth, IUser, ...)
+  ms.shared.jwt.pas              JWT token creation and validation
+  ms.shared.service.pas          TMicroService base class, RegisterService,
                                    OrmGetById, OrmGetAll
-ms.gateway/                    Gateway + www/ Frontend
-ms.auth/                       Auth-Service (model + server)
-ms.users/                      Users-Service (model + server)
-ms.posts/                      Posts-Service (model + server)
-ms.tags/                       Tags-Service (model + server)
-ms.comments/                   Comments-Service (model + server)
-ms.media/                      Media-Service (model + server)
-test/                          In-Process Integration Tests
-  ms.testCases.pas               130+ Assertions (positiv + negativ)
-  ms.tests.dpr                   Konsolen-Testrunner
+ms.gateway/                    Gateway + www/ frontend
+ms.auth/                       Auth service (model + server)
+ms.users/                      Users service (model + server)
+ms.posts/                      Posts service (model + server)
+ms.tags/                       Tags service (model + server)
+ms.comments/                   Comments service (model + server)
+ms.media/                      Media service (model + server)
+test/                          In-process integration tests
+  ms.testCases.pas               130+ assertions (positive + negative)
+  ms.tests.dpr                   Console test runner
 ```

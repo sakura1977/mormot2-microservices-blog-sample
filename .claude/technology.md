@@ -1,101 +1,102 @@
-# Blog-Microservices -- Technologie und mORMot2-Einsatz
+# Blog Microservices -- Technology and mORMot2 Usage
 
-## mORMot2-Module pro Aufgabe
+## mORMot2 Modules by Purpose
 
-### Alle Services (gemeinsam)
+### All Services (shared)
 
-| Aufgabe              | mORMot2-Unit                        | Verwendung                         |
+| Purpose              | mORMot2 Unit                        | Usage                              |
 |----------------------|-------------------------------------|------------------------------------|
-| ORM / Datenmodell    | `mormot.orm.core`                   | `TOrm`-Klassen definieren         |
-| SQLite-Datenbank     | `mormot.orm.sqlite3`                | `TRestServerDB` als DB-Backend     |
-| REST-HTTP-Server     | `mormot.rest.http.server`           | `TRestHttpServer` pro Service      |
-| SOA-Interfaces       | `mormot.soa.core`, `mormot.soa.server` | Interface-basierte Services     |
-| JSON-Verarbeitung    | `mormot.core.json`                  | `TDocVariantData` fuer JSON-Parsing |
-| Logging              | `mormot.core.log`                   | `TSynLog` fuer alle Services       |
-| Basis-Typen          | `mormot.core.base`, `mormot.core.text`, `mormot.core.unicode` | RawUtf8, Hilfsfunktionen |
+| ORM / data model     | `mormot.orm.core`                   | Define `TOrm` classes              |
+| SQLite database      | `mormot.orm.sqlite3`                | `TRestServerDB` as DB backend      |
+| REST HTTP server     | `mormot.rest.http.server`           | `TRestHttpServer` per service      |
+| SOA interfaces       | `mormot.soa.core`, `mormot.soa.server` | Interface-based services        |
+| JSON processing      | `mormot.core.json`                  | `TDocVariantData` for JSON parsing |
+| Logging              | `mormot.core.log`                   | `TSynLog` for all services         |
+| Base types           | `mormot.core.base`, `mormot.core.text`, `mormot.core.unicode` | RawUtf8, helper functions |
 
-### ms.auth (zusaetzlich)
+### ms.auth (additional)
 
-| Aufgabe              | mORMot2-Unit                        | Verwendung                         |
+| Purpose              | mORMot2 Unit                        | Usage                              |
 |----------------------|-------------------------------------|------------------------------------|
-| SCRAM/PBKDF2         | `mormot.crypt.core`                 | Passwort-Hashing (MCF-Format)      |
-| JWT-Tokens           | `mormot.crypt.jwt`                  | `TJwtHS256` fuer Token-Erstellung  |
+| SCRAM/PBKDF2         | `mormot.crypt.core`                 | Password hashing (MCF format)      |
+| JWT tokens           | `mormot.crypt.jwt`                  | `TJwtHS256` for token creation     |
 
-### ms.gateway (zusaetzlich)
+### ms.gateway (additional)
 
-| Aufgabe              | mORMot2-Unit                        | Verwendung                         |
+| Purpose              | mORMot2 Unit                        | Usage                              |
 |----------------------|-------------------------------------|------------------------------------|
-| HTTP-Client          | `mormot.rest.http.client`           | `TRestHttpClient` zu Backend-Services |
-| SOA-Client           | `mormot.soa.client`                 | `TServiceFactoryClient` fuer Proxies |
-| Async-HTTP           | `mormot.net.async`                  | `THttpAsyncServer` fuer Requests   |
+| HTTP client          | `mormot.rest.http.client`           | `TRestHttpClient` to backend services |
+| SOA client           | `mormot.soa.client`                 | `TServiceFactoryClient` for proxies |
+| Async HTTP           | `mormot.net.async`                  | `THttpAsyncServer` for requests    |
 
-## Projektstruktur
+## Project Structure
 
 ```
 mormot2-microservices/
 |
-+-- shared/                   Gemeinsamer Code
-|   +-- ms.shared.pas           Konstanten, Config-Loading, TextToSlug
-|   +-- ms.shared.api.pas       SOA-Interface-Definitionen (IAuth, IUser, ...)
-|   +-- ms.shared.jwt.pas       JWT-Token erstellen und validieren
-|   +-- ms.shared.service.pas   Basisklasse TMicroService (Run, Health, Shutdown)
++-- shared/                   Shared code
+|   +-- ms.shared.pas           Constants, config loading, TextToSlug, GuessMimeType
+|   +-- ms.shared.api.pas       SOA interface definitions (IAuth, IUser, ...)
+|   +-- ms.shared.jwt.pas       JWT token creation and validation
+|   +-- ms.shared.service.pas   TMicroService base class (Run, Health, Shutdown),
+|                                 RegisterService, OrmGetById, OrmGetAll
 |
 +-- ms.gateway/
-|   +-- ms.gateway.dpr          Hauptprogramm
-|   +-- ms.gateway.server.pas   Transparent SOA proxying, IBlog-Aggregation, Static-File-Serving
+|   +-- ms.gateway.dpr          Entry point
+|   +-- ms.gateway.server.pas   Transparent SOA proxying, IBlog aggregation, static file serving
 |   +-- www/                    Frontend SPA
 |       +-- index.html
 |       +-- css/style.css
-|       +-- js/api.js             SOA-Client + SCRAM-MCF Krypto
-|       +-- js/app.js             UI-Logik und Routing
+|       +-- js/api.js             SOA client + SCRAM-MCF crypto
+|       +-- js/app.js             UI logic and routing
 |
 +-- ms.auth/
 |   +-- ms.auth.dpr
-|   +-- ms.auth.model.pas       ORM-Modell (TOrmAuthUser)
+|   +-- ms.auth.model.pas       ORM model (TOrmAuthUser)
 |   +-- ms.auth.server.pas      TAuthService (IAuth), TAuthServer
 |
 +-- ms.users/
 |   +-- ms.users.dpr
-|   +-- ms.users.model.pas      ORM-Modell (TOrmAuthor)
+|   +-- ms.users.model.pas      ORM model (TOrmAuthor)
 |   +-- ms.users.server.pas     TUserService (IUser), TUsersServer
 |
 +-- ms.posts/
 |   +-- ms.posts.dpr
-|   +-- ms.posts.model.pas      ORM-Modell (TOrmBlogPost)
+|   +-- ms.posts.model.pas      ORM model (TOrmBlogPost)
 |   +-- ms.posts.server.pas     TPostService (IPost), TPostsServer
 |
 +-- ms.tags/
 |   +-- ms.tags.dpr
-|   +-- ms.tags.model.pas       ORM-Modell (TOrmBlogTag, TOrmPostTag)
+|   +-- ms.tags.model.pas       ORM model (TOrmBlogTag, TOrmPostTag)
 |   +-- ms.tags.server.pas      TTagService (ITag), TTagsServer
 |
 +-- ms.comments/
 |   +-- ms.comments.dpr
-|   +-- ms.comments.model.pas   ORM-Modell (TOrmBlogComment)
+|   +-- ms.comments.model.pas   ORM model (TOrmBlogComment)
 |   +-- ms.comments.server.pas  TCommentService (IComment), TCommentsServer
 |
 +-- ms.media/
 |   +-- ms.media.dpr
-|   +-- ms.media.model.pas      ORM-Modell (TOrmMediaFile)
+|   +-- ms.media.model.pas      ORM model (TOrmMediaFile)
 |   +-- ms.media.server.pas     TMediaService (IMedia), TMediaServer
 |
-+-- ms.controller/              Service-Orchestrator (optional)
++-- ms.controller/              Service orchestrator (optional)
 |
-+-- test/                       Integration Tests
-|   +-- ms.tests.dpr              Konsolen-Testrunner
-|   +-- ms.testCases.pas          130+ Assertions, alle Services in-process
++-- test/                       Integration tests
+|   +-- ms.tests.dpr              Console test runner
+|   +-- ms.testCases.pas          130+ assertions, all services in-process
 |
-+-- BlogMicroservices.groupproj  Delphi-Projektgruppe
-+-- start-all.cmd / stop-all.cmd Betriebsskripte
-+-- seed-data.cmd                Demo-Daten
-+-- status.cmd                   Health-Checks
++-- BlogMicroservices.groupproj  Delphi project group
++-- start-all.cmd / stop-all.cmd Operations scripts
++-- seed-data.cmd                Demo data
++-- status.cmd                   Health checks
 ```
 
-## Service-Architekturmuster
+## Service Architecture Pattern
 
-Jeder Microservice folgt dem gleichen Aufbau:
+Every microservice follows the same structure:
 
-### 1. ORM-Modell (model.pas)
+### 1. ORM Model (model.pas)
 ```pascal
 TOrmBlogPost = class(TOrm)
   property Title: RawUtf8 index 300
@@ -106,7 +107,7 @@ TOrmBlogPost = class(TOrm)
 end;
 ```
 
-### 2. Service-Implementierung (server.pas)
+### 2. Service Implementation (server.pas)
 ```pascal
 TPostService = class(TInterfacedObject, IPost)
 private
@@ -119,7 +120,7 @@ public
 end;
 ```
 
-### 3. Server-Klasse (server.pas)
+### 3. Server Class (server.pas)
 ```pascal
 TPostsServer = class(TMicroService)
 protected
@@ -128,16 +129,13 @@ protected
 end;
 
 procedure TPostsServer.SetupServices;
-var Factory: TServiceFactoryServerAbstract;
 begin
   FPostImpl := TPostService.Create(FRestServer.Orm);
-  Factory := FRestServer.ServiceRegister(FPostImpl, [TypeInfo(IPost)]);
-  Factory.ByPassAuthentication := True;
-  Factory.ResultAsJsonObjectWithoutResult := True;
+  RegisterService(FPostImpl, TypeInfo(IPost));
 end;
 ```
 
-### 4. Hauptprogramm (dpr)
+### 4. Main Program (dpr)
 ```pascal
 begin
   with TPostsServer.Create(SERVICE_POSTS, PORT_POSTS) do
@@ -149,9 +147,9 @@ begin
 end.
 ```
 
-## Konfiguration
+## Configuration
 
-Jeder Service liest seine Konfiguration aus `{service-name}.config.json`:
+Each service reads its configuration from `{service-name}.config.json`:
 
 ```json
 {
@@ -161,14 +159,14 @@ Jeder Service liest seine Konfiguration aus `{service-name}.config.json`:
 }
 ```
 
-Standardwerte werden automatisch gesetzt, wenn die Datei fehlt.
+Defaults are applied automatically if the file is missing.
 
-## ORM-Namenskonvention
+## ORM Naming Convention
 
-ORM-Klassen duerfen NICHT den gleichen Namen wie das SOA-Interface tragen
-(nach Entfernung der Prefixe TOrm/I), da mORMot2 sonst einen Routing-Konflikt meldet.
+ORM class names must NOT match their SOA interface name (after stripping
+the TOrm/I prefixes), as mORMot2 would report a routing conflict.
 
-| Service    | Interface | ORM-Klasse      | Tabellenname |
+| Service    | Interface | ORM Class       | Table Name   |
 |------------|-----------|-----------------|--------------|
 | ms.auth    | IAuth     | TOrmAuthUser    | AuthUser     |
 | ms.users   | IUser     | TOrmAuthor      | Author       |

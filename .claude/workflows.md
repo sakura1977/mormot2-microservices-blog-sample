@@ -1,9 +1,9 @@
-# Blog-Microservices -- Ablaeufe und Workflows
+# Blog Microservices -- Workflows and Sequence Diagrams
 
-Alle Aufrufe verwenden mORMot2 SOA-Format:
-`POST /api/{Interface}/{Method}` mit JSON-Array als Body.
+All calls use mORMot2 SOA format:
+`POST /api/{Interface}/{Method}` with JSON array body.
 
-## 1. Oeffentlichen Beitrag lesen (aggregiert ueber IBlog)
+## 1. Read a Published Post (aggregated via IBlog)
 
 ```
 Browser                Gateway              ms.posts     ms.users    ms.tags    ms.comments
@@ -19,7 +19,7 @@ Browser                Gateway              ms.posts     ms.users    ms.tags    
   |                       |-- IComment.GetByPost(42) ----->|---------->|            |
   |                       |<-- CommentsJson ---|------------|-----------|            |
   |                       |                    |            |           |            |
-  |<-- Aggregiertes JSON  |                    |            |           |            |
+  |<-- Aggregated JSON    |                    |            |           |            |
   |    (Post+Author+      |                    |            |           |            |
   |     Tags+Comments) ---|                    |            |           |            |
 ```
@@ -33,9 +33,9 @@ Browser                    Gateway         ms.auth
   |   Challenge ["max@.."] ->|               |
   |                           |-- IAuth.Challenge("max@..") -->|
   |                           |<-- {aMcfInfo, aServerNonce} ---|
-  |<-- MCF-Info + Nonce ------|               |
+  |<-- MCF info + nonce ------|               |
   |                           |               |
-  |   [Browser berechnet PBKDF2 + ClientProof]|
+  |   [Browser computes PBKDF2 + ClientProof] |
   |                           |               |
   |-- POST /api/Auth/        |               |
   |   Authenticate           |               |
@@ -43,13 +43,13 @@ Browser                    Gateway         ms.auth
   |                           |-- IAuth.Authenticate(...) --->|
   |                           |<-- {Result, aToken, aUserId,  |
   |                           |     aServerProof} ------------|
-  |<-- JWT-Token + UserId ----|               |
+  |<-- JWT token + UserId ----|               |
   |                           |               |
-  |   [Browser verifiziert ServerProof]       |
-  |   [Browser speichert JWT in localStorage] |
+  |   [Browser verifies ServerProof]          |
+  |   [Browser stores JWT in localStorage]    |
 ```
 
-## 3. Neuen Beitrag erstellen (angemeldet)
+## 3. Create a New Post (authenticated)
 
 ```
 Browser                Gateway         ms.posts
@@ -62,7 +62,7 @@ Browser                Gateway         ms.posts
   |<-- {Result: 42} ------|               |
 ```
 
-## 4. Kommentar abgeben (ohne Anmeldung)
+## 4. Submit a Comment (no login required)
 
 ```
 Browser                Gateway         ms.comments
@@ -72,10 +72,10 @@ Browser                Gateway         ms.comments
   |   Name, Body}] ------>|               |
   |                       |-- IComment.Add(42, {...}) -->|
   |                       |<-- {Result: 7} -------------|
-  |<-- {Result: 7} -------|  (Status: ausstehend)
+  |<-- {Result: 7} -------|  (status: pending)
 ```
 
-## 5. Kommentar moderieren (angemeldet)
+## 5. Moderate a Comment (authenticated)
 
 ```
 Browser                Gateway         ms.comments
@@ -84,8 +84,7 @@ Browser                Gateway         ms.comments
   |   GetPending [] ----->|               |
   |                       |-- IComment.GetPending -->|
   |                       |<-- [{id:7, body:"..."}] -|
-  |<-- Ausstehende -------|               |
-  |    Kommentare         |               |
+  |<-- Pending comments --|               |
   |                       |               |
   |-- POST /api/Comment/  |               |
   |   Approve [7, 1] ---->|               |
@@ -94,7 +93,7 @@ Browser                Gateway         ms.comments
   |<-- {Result: true} ----|               |
 ```
 
-## 6. Tags einem Beitrag zuordnen
+## 6. Assign Tags to a Post
 
 ```
 Browser                Gateway         ms.tags
@@ -107,7 +106,7 @@ Browser                Gateway         ms.tags
   |<-- {Result: true} ----|               |
 ```
 
-## 7. Beitrags-Liste laden (Startseite)
+## 7. Load Post List (home page)
 
 ```
 Browser                Gateway         ms.posts
@@ -115,11 +114,11 @@ Browser                Gateway         ms.posts
   |-- POST /api/Post/     |               |
   |   GetList             |               |
   |   [1, 10, 1, 0] ---->|               |
-  |   (page,limit,        |               |
-  |    status,authorId)   |               |
+  |   (page, limit,       |               |
+  |    status, authorId)  |               |
   |                       |-- IPost.GetList(1, 10, 1, 0) -->|
   |                       |<-- {Result: {items:[...],       |
   |                       |     total:3, page:1}} ----------|
-  |<-- Paginierte --------|               |
-  |    Beitragsliste      |               |
+  |<-- Paginated post  ---|               |
+  |    list               |               |
 ```

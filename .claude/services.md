@@ -1,82 +1,83 @@
-# Blog-Microservices -- Service-Definitionen und SOA-Interfaces
+# Blog Microservices -- Service Definitions and SOA Interfaces
 
-Alle Services nutzen mORMot2 interface-basierte Services (SOA).
-URL-Format: `POST /api/{InterfaceName}/{MethodName}` mit JSON-Array als Body.
-Antwortformat: JSON-Objekt mit benannten Parametern (`ResultAsJsonObjectWithoutResult`).
+All services use mORMot2 interface-based services (SOA).
+URL format: `POST /api/{InterfaceName}/{MethodName}` with JSON array body.
+Response format: JSON object with named parameters (`ResultAsJsonObjectWithoutResult`).
 
 ---
 
-## Service-uebergreifend: Management-Endpunkte
+## Cross-Service: Management Endpoints
 
-Jeder Microservice stellt automatisch zwei method-based Endpunkte bereit (via `TMicroService`-Basisklasse aus `ms.shared.service.pas`):
+Every microservice automatically provides two method-based endpoints (via `TMicroService` base class in `ms.shared.service.pas`):
 
 ```
-GET    /api/health      Health-Check
+GET    /api/health      Health check
          Response: { "service": "ms.auth", "status": "ok",
                      "port": "8081", "version": "0.2.0",
                      "uptime": "..." }
 
-POST   /api/shutdown    Sauberes Herunterfahren
+POST   /api/shutdown    Graceful shutdown
          Response: HTTP 200
 ```
 
 ---
 
-## SOA-Interface-Definitionen (ms.shared.api.pas)
+## SOA Interface Definitions (ms.shared.api.pas)
 
-Alle Interfaces sind in `ms.shared.api.pas` definiert und werden sowohl
-von den Backend-Services (Implementierung) als auch vom Gateway (Client-Proxies) genutzt.
+All interfaces are defined in `ms.shared.api.pas` and used by both
+backend services (implementation) and the gateway (client proxies).
 
 ---
 
 ## 1. ms.gateway (Port 8080)
 
-### Aufgabe
-API-Gateway und Web-Frontend. Leitet SOA-Aufrufe als Proxy an Backend-Services weiter
-und aggregiert Daten ueber den IBlog-Service.
+### Responsibility
+API gateway and web frontend. Proxies SOA calls to backend services
+and aggregates data via the IBlog service.
 
-### SOA-Interface: IBlog (nur im Gateway)
+### SOA Interface: IBlog (gateway only)
 
 ```pascal
 IBlog = interface(IInvokable)
   function GetPostFull(aId: TID): RawJson;
-    // Aggregiert: Post + Author + Tags + Comments
+    // Aggregates: Post + Author + Tags + Comments
 end;
 ```
 
-### Transparentes SOA-Proxying (keine manuellen Proxy-Klassen)
-- Backend-Interfaces werden via `TRestHttpClient.Services.Resolve` aufgeloest
-- Die resultierenden `TInterfacedObjectFake`-Instanzen werden direkt als
-  Server-Services auf dem Gateway registriert (`RegisterService`)
-- Client-Factories verwenden `ResultAsJsonObjectWithoutResult := True`
+### Transparent SOA Proxying (no manual proxy classes)
+- Backend interfaces are resolved via `TRestHttpClient.Services.Resolve`
+- The resulting `TInterfacedObjectFake` instances are registered directly
+  as server services on the gateway (`RegisterService`)
+- Client factories use `ResultAsJsonObjectWithoutResult := True`
 
-### Statische Dateien
-- SPA-Frontend aus `www/` (index.html, css/, js/)
-- Nicht-API-URLs werden als statische Dateien oder SPA-Fallback bedient
+### Static Files
+- SPA frontend from `www/` (index.html, css/, js/)
+- Non-API URLs served as static files with SPA fallback
 
-### Keine eigene Datenbank
+### No own database
 
 ---
 
 ## 2. ms.auth (Port 8081)
 
-### Aufgabe
-SCRAM-MCF Authentifizierung mit PBKDF2-SHA256 und JWT-Tokens.
+### Responsibility
+SCRAM-MCF authentication with PBKDF2-SHA256 and JWT tokens.
 
-### Datenmodell
+### Data Model
 
 ```pascal
 TOrmAuthUser = class(TOrm)
-  property Email: RawUtf8        // E-Mail (eindeutig, Login-Name)
-  property McfHash: RawUtf8      // MCF-Format Passwort-Hash (PBKDF2-SHA256)
-  property UserId: TID           // Referenz auf ms.users (Autoren-ID)
-  property IsActive: boolean     // Konto aktiv?
+  property Email: RawUtf8        // unique login identifier
+  property McfInfo: RawUtf8      // MCF format password hash (PBKDF2-SHA256)
+  property PersistedKey: RawUtf8 // SCRAM persisted key
+  property UserId: TID           // foreign key to ms.users (author ID)
+  property IsActive: boolean     // account active?
   property CreatedAt: TDateTime
   property LastLogin: TDateTime
 end;
 ```
 
-### SOA-Interface: IAuth
+### SOA Interface: IAuth
 
 ```pascal
 IAuth = interface(IInvokable)
@@ -94,20 +95,20 @@ IAuth = interface(IInvokable)
 end;
 ```
 
-### SCRAM-MCF Ablauf
-1. Client ruft `Challenge` auf -> erhaelt MCF-Info (Salt, Rounds) + ServerNonce
-2. Client berechnet PBKDF2 lokal, erzeugt ClientProof
-3. Client ruft `Authenticate` auf -> Server verifiziert, liefert JWT + ServerProof
-4. Client verifiziert ServerProof (gegenseitige Authentifizierung)
+### SCRAM-MCF Flow
+1. Client calls `Challenge` -> receives MCF info (salt, rounds) + ServerNonce
+2. Client computes PBKDF2 locally, derives ClientProof
+3. Client calls `Authenticate` -> server verifies, returns JWT + ServerProof
+4. Client verifies ServerProof (mutual authentication)
 
 ---
 
 ## 3. ms.users (Port 8082)
 
-### Aufgabe
-Verwaltung der Autorenprofile.
+### Responsibility
+Author profile management.
 
-### Datenmodell
+### Data Model
 
 ```pascal
 TOrmAuthor = class(TOrm)
@@ -120,7 +121,7 @@ TOrmAuthor = class(TOrm)
 end;
 ```
 
-### SOA-Interface: IUser
+### SOA Interface: IUser
 
 ```pascal
 IUser = interface(IInvokable)
@@ -136,10 +137,10 @@ end;
 
 ## 4. ms.posts (Port 8083)
 
-### Aufgabe
-Blog-Beitraege mit Paginierung, Filterung und SEO-Metadaten.
+### Responsibility
+Blog posts with pagination, filtering, and SEO metadata.
 
-### Datenmodell
+### Data Model
 
 ```pascal
 TOrmBlogPost = class(TOrm)
@@ -152,14 +153,14 @@ TOrmBlogPost = class(TOrm)
   property MetaTitle: RawUtf8
   property MetaDescription: RawUtf8
   property MetaKeywords: RawUtf8
-  property Status: integer        // 0=Entwurf, 1=Veroeffentlicht, 2=Archiviert
+  property Status: integer        // 0=draft, 1=published, 2=archived
   property PublishedAt: TDateTime
   property CreatedAt: TDateTime
   property UpdatedAt: TDateTime
 end;
 ```
 
-### SOA-Interface: IPost
+### SOA Interface: IPost
 
 ```pascal
 IPost = interface(IInvokable)
@@ -177,10 +178,10 @@ end;
 
 ## 5. ms.tags (Port 8084)
 
-### Aufgabe
-Tag-Verwaltung und m:n-Zuordnung zu Beitraegen.
+### Responsibility
+Tag management and many-to-many post-tag associations.
 
-### Datenmodell
+### Data Model
 
 ```pascal
 TOrmBlogTag = class(TOrm)
@@ -196,7 +197,7 @@ TOrmPostTag = class(TOrm)
 end;
 ```
 
-### SOA-Interface: ITag
+### SOA Interface: ITag
 
 ```pascal
 ITag = interface(IInvokable)
@@ -215,10 +216,10 @@ end;
 
 ## 6. ms.comments (Port 8085)
 
-### Aufgabe
-Kommentarsystem mit Moderations-Workflow.
+### Responsibility
+Comment system with moderation workflow.
 
-### Datenmodell
+### Data Model
 
 ```pascal
 TOrmBlogComment = class(TOrm)
@@ -226,14 +227,14 @@ TOrmBlogComment = class(TOrm)
   property AuthorName: RawUtf8
   property AuthorEmail: RawUtf8
   property Body: RawUtf8
-  property Status: integer       // 0=Ausstehend, 1=Freigegeben, 2=Abgelehnt
+  property Status: integer       // 0=pending, 1=approved, 2=rejected
   property ModeratedBy: TID
   property ModeratedAt: TDateTime
   property CreatedAt: TDateTime
 end;
 ```
 
-### SOA-Interface: IComment
+### SOA Interface: IComment
 
 ```pascal
 IComment = interface(IInvokable)
@@ -250,10 +251,10 @@ end;
 
 ## 7. ms.media (Port 8086)
 
-### Aufgabe
-Verwaltung von Mediendateien (Bilder). Upload via Base64, Speicherung auf Dateisystem.
+### Responsibility
+Media file management (images). Upload via Base64, stored on file system.
 
-### Datenmodell
+### Data Model
 
 ```pascal
 TOrmMediaFile = class(TOrm)
@@ -267,11 +268,11 @@ TOrmMediaFile = class(TOrm)
 end;
 ```
 
-### Speicherung
-- Bilder werden im lokalen Dateisystem abgelegt: `./media/{id}_{filename}`
-- Metadaten in der SQLite-Datenbank
+### Storage
+- Files stored on local file system: `./media/{id}_{filename}`
+- Metadata tracked in SQLite database
 
-### SOA-Interface: IMedia
+### SOA Interface: IMedia
 
 ```pascal
 IMedia = interface(IInvokable)
@@ -286,20 +287,20 @@ end;
 
 ---
 
-## Service-Abhaengigkeiten
+## Service Dependencies
 
 ```
-ms.gateway  -->  ms.auth       (Token-Validierung)
-ms.gateway  -->  ms.users      (Autorenprofile)
-ms.gateway  -->  ms.posts      (Beitraege)
-ms.gateway  -->  ms.tags       (Tags)
-ms.gateway  -->  ms.comments   (Kommentare)
-ms.gateway  -->  ms.media      (Bilder)
+ms.gateway  -->  ms.auth       (token validation)
+ms.gateway  -->  ms.users      (author profiles)
+ms.gateway  -->  ms.posts      (blog posts)
+ms.gateway  -->  ms.tags       (tags)
+ms.gateway  -->  ms.comments   (comments)
+ms.gateway  -->  ms.media      (media files)
 
-ms.auth     -->  (keine -- speichert nur UserId als Referenz)
-ms.posts    -->  (keine -- speichert nur IDs)
-ms.tags     -->  (keine -- speichert nur IDs)
-ms.comments -->  (keine -- speichert nur IDs)
-ms.media    -->  (keine -- speichert nur IDs)
-ms.users    -->  (keine -- speichert nur IDs)
+ms.auth     -->  (none -- stores only UserId as reference)
+ms.posts    -->  (none -- stores only IDs)
+ms.tags     -->  (none -- stores only IDs)
+ms.comments -->  (none -- stores only IDs)
+ms.media    -->  (none -- stores only IDs)
+ms.users    -->  (none -- stores only IDs)
 ```
