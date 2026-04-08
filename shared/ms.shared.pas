@@ -53,6 +53,9 @@ const
   COMMENT_STATUS_APPROVED = 1;
   COMMENT_STATUS_REJECTED = 2;
 
+  // Media
+  MAX_UPLOAD_SIZE = 3 * 1024 * 1024; // 3 MB
+
 type
 
   /// <summary>

@@ -89,6 +89,8 @@ begin
   if (aFileName = '') or (aFileData = '') then
     Exit(0);
   Content := Base64ToBin(aFileData);
+  if Length(Content) > MAX_UPLOAD_SIZE then
+    Exit(0);
   Rec := TOrmMediaFile.Create;
   try
     Rec.FileName := aFileName;
