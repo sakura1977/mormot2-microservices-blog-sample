@@ -75,19 +75,6 @@ type
       read FTagId write FTagId;
   end;
 
-/// <summary>
-///   Creates the ORM model for the Tags service.
-/// </summary>
-/// <returns>
-///   A TOrmModel instance containing TOrmBlogTag and TOrmPostTag.
-/// </returns>
-function CreateTagsModel: TOrmModel;
-
 implementation
-
-function CreateTagsModel: TOrmModel;
-begin
-  Result := TOrmModel.Create([TOrmBlogTag, TOrmPostTag]);
-end;
 
 end.

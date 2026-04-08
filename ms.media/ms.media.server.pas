@@ -63,7 +63,6 @@ type
   protected
     function CreateModel: TOrmModel; override;
     procedure SetupServices; override;
-    procedure DoInitialize; override;
   end;
 
 implementation
@@ -167,11 +166,6 @@ end;
 function TMediaServer.CreateModel: TOrmModel;
 begin
   Result := TOrmModel.Create([TOrmMediaFile], MODEL_ROOT);
-end;
-
-procedure TMediaServer.DoInitialize;
-begin
-  // media/ directory is already created in SetupServices
 end;
 
 procedure TMediaServer.SetupServices;

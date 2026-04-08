@@ -80,19 +80,6 @@ type
       read FCreatedAt write FCreatedAt;
   end;
 
-/// <summary>
-///   Creates the ORM model for the Comments service.
-/// </summary>
-/// <returns>
-///   A TOrmModel instance containing TOrmBlogComment.
-/// </returns>
-function CreateCommentsModel: TOrmModel;
-
 implementation
-
-function CreateCommentsModel: TOrmModel;
-begin
-  Result := TOrmModel.Create([TOrmBlogComment]);
-end;
 
 end.

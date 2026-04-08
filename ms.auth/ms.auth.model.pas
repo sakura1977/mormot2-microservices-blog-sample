@@ -76,19 +76,6 @@ type
       read FLastLogin write FLastLogin;
   end;
 
-/// <summary>
-///   Creates the ORM model for the Auth service.
-/// </summary>
-/// <returns>
-///   A TOrmModel instance containing TOrmAuthUser.
-/// </returns>
-function CreateAuthModel: TOrmModel;
-
 implementation
-
-function CreateAuthModel: TOrmModel;
-begin
-  Result := TOrmModel.Create([TOrmAuthUser]);
-end;
 
 end.

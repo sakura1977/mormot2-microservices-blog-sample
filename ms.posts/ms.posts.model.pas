@@ -116,19 +116,6 @@ type
       read FUpdatedAt write FUpdatedAt;
   end;
 
-/// <summary>
-///   Creates the ORM model for the Posts service.
-/// </summary>
-/// <returns>
-///   A TOrmModel instance containing TOrmBlogPost.
-/// </returns>
-function CreatePostsModel: TOrmModel;
-
 implementation
-
-function CreatePostsModel: TOrmModel;
-begin
-  Result := TOrmModel.Create([TOrmBlogPost]);
-end;
 
 end.

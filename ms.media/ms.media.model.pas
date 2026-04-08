@@ -73,19 +73,6 @@ type
       read FCreatedAt write FCreatedAt;
   end;
 
-/// <summary>
-///   Creates the ORM model for the Media service.
-/// </summary>
-/// <returns>
-///   A TOrmModel instance containing TOrmMediaFile.
-/// </returns>
-function CreateMediaModel: TOrmModel;
-
 implementation
-
-function CreateMediaModel: TOrmModel;
-begin
-  Result := TOrmModel.Create([TOrmMediaFile]);
-end;
 
 end.

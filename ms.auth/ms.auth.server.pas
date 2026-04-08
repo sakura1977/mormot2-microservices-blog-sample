@@ -253,23 +253,22 @@ begin
   Chal.CreatedAt := NowUtc;
   // Look up user
   User := FindUserByEmail(aEmail);
-  if (User <> nil) and User.IsActive then
-  begin
-    try
+  try
+    if (User <> nil) and User.IsActive then
+    begin
       Chal.McfInfo := User.McfInfo;
       Chal.PersistedKey := User.PersistedKey;
       Chal.UserId := User.UserId;
       Chal.IsReal := True;
-    finally
-      User.Free;
+    end
+    else
+    begin
+      // Anti-enumeration: return fake MCF info
+      Chal.McfInfo := ModularCryptFakeInfo(aEmail, mcfPbkdf2Sha256);
+      Chal.IsReal := False;
     end;
-  end
-  else
-  begin
+  finally
     User.Free;
-    // Anti-enumeration: return fake MCF info
-    Chal.McfInfo := ModularCryptFakeInfo(aEmail, mcfPbkdf2Sha256);
-    Chal.IsReal := False;
   end;
   StoreChallenge(Chal);
   aMcfInfo := Chal.McfInfo;

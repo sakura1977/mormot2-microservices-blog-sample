@@ -74,19 +74,6 @@ type
       read FUpdatedAt write FUpdatedAt;
   end;
 
-/// <summary>
-///   Creates the ORM model for the Users service.
-/// </summary>
-/// <returns>
-///   A TOrmModel instance containing TOrmAuthor.
-/// </returns>
-function CreateUsersModel: TOrmModel;
-
 implementation
-
-function CreateUsersModel: TOrmModel;
-begin
-  Result := TOrmModel.Create([TOrmAuthor]);
-end;
 
 end.
