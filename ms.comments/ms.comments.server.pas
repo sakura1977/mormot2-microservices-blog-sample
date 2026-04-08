@@ -110,6 +110,11 @@ var
   Rec: TOrmBlogComment;
 begin
   Doc.InitJson(aData, JSON_FAST_FLOAT);
+  if (aPostId <= 0) or (Doc.U['Body'] = '') then
+  begin
+    Result := 0;
+    Exit;
+  end;
   Rec := TOrmBlogComment.Create;
   try
     Rec.PostId := aPostId;

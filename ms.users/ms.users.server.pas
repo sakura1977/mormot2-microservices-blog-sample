@@ -87,6 +87,11 @@ var
   Rec: TOrmAuthor;
 begin
   Doc.InitJson(aData, JSON_FAST_FLOAT);
+  if Doc.U['DisplayName'] = '' then
+  begin
+    Result := 0;
+    Exit;
+  end;
   Rec := TOrmAuthor.Create;
   try
     Rec.DisplayName := Doc.U['DisplayName'];

@@ -174,6 +174,11 @@ var
   PostRecord: TOrmBlogPost;
 begin
   JsonDoc.InitJson(aData, JSON_FAST_FLOAT);
+  if JsonDoc.U['Title'] = '' then
+  begin
+    Result := 0;
+    Exit;
+  end;
   PostRecord := TOrmBlogPost.Create;
   try
     PostRecord.Title := JsonDoc.U['Title'];

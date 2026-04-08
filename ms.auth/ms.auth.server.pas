@@ -325,6 +325,8 @@ var
   McfInfo, PersistedKey: RawUtf8;
 begin
   Result := 0;
+  if (aEmail = '') or (aPassword = '') then
+    Exit;
   // Check whether the email is already taken
   User := FindUserByEmail(aEmail);
   if User <> nil then

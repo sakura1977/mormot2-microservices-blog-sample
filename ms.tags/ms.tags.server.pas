@@ -203,6 +203,11 @@ var
   Tag: TOrmBlogTag;
 begin
   Doc.InitJson(aData, JSON_FAST_FLOAT);
+  if Doc.U['Name'] = '' then
+  begin
+    Result := 0;
+    Exit;
+  end;
   Tag := TOrmBlogTag.Create;
   try
     Tag.Name := Doc.U['Name'];
