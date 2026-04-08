@@ -321,7 +321,7 @@ async function addNewTag() {
   const input = $('#editor-new-tag');
   const name = input.value.trim();
   if (!name) return;
-  const r = await soaCall('Tag', 'Add', [JSON.stringify({ Name: name, Description: '' })]);
+  const r = await soaCall('Tag', 'Add', [{ Name: name, Description: '' }]);
   if (r.ok) {
     const newId = r.data.Result;
     const selectedIds = getSelectedTagIds();

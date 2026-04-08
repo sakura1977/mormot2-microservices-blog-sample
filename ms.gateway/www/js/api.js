@@ -238,10 +238,10 @@ const API = {
     return r;
   },
   async createPost(data) {
-    return soaCall('Post', 'Add', [JSON.stringify(data)]);
+    return soaCall('Post', 'Add', [data]);
   },
   async updatePost(id, data) {
-    return soaCall('Post', 'Update', [id, JSON.stringify(data)]);
+    return soaCall('Post', 'Update', [id, data]);
   },
   async deletePost(id) {
     return soaCall('Post', 'Remove', [id]);
@@ -261,7 +261,7 @@ const API = {
     return r;
   },
   async setPostTags(postId, tagIds) {
-    return soaCall('Tag', 'SetPostTags', [postId, JSON.stringify(tagIds)]);
+    return soaCall('Tag', 'SetPostTags', [postId, tagIds]);
   },
 
   // --- Comments ---
@@ -272,7 +272,7 @@ const API = {
     return r;
   },
   async addComment(postId, data) {
-    return soaCall('Comment', 'Add', [postId, JSON.stringify(data)]);
+    return soaCall('Comment', 'Add', [postId, data]);
   },
   async getPendingComments() {
     const r = await soaCall('Comment', 'GetPending', []);
@@ -295,7 +295,7 @@ const API = {
     return r;
   },
   async updateUser(id, data) {
-    return soaCall('User', 'Update', [id, JSON.stringify(data)]);
+    return soaCall('User', 'Update', [id, data]);
   },
 
   // --- Media ---
