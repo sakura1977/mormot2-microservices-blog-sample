@@ -1,5 +1,12 @@
 ﻿/// <summary>
 ///   ORM model for the Comments service: comments with moderation.
+///
+///   Implements a simple moderation workflow via an integer Status
+///   field (pending/approved/rejected). The ModeratedBy and
+///   ModeratedAt fields track who reviewed the comment and when.
+///
+///   Named <c>TOrmBlogComment</c> (not TOrmComment) to avoid a
+///   routing conflict with the <c>IComment</c> SOA interface.
 /// </summary>
 unit ms.comments.model;
 

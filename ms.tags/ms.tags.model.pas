@@ -1,5 +1,14 @@
 ﻿/// <summary>
 ///   ORM models for the Tags service: tags and post-tag assignments.
+///
+///   Demonstrates the many-to-many (m:n) relationship pattern in
+///   mORMot2's ORM: <c>TOrmBlogTag</c> stores the tags, and
+///   <c>TOrmPostTag</c> is the junction table linking posts to tags.
+///   Both are registered in the same <c>TOrmModel</c> so they share
+///   one SQLite database.
+///
+///   Named <c>TOrmBlogTag</c> (not TOrmTag) to avoid a routing
+///   conflict with the <c>ITag</c> SOA interface.
 /// </summary>
 unit ms.tags.model;
 
@@ -54,7 +63,10 @@ type
   end;
 
   /// <summary>
-  ///   Junction table linking posts to tags (many-to-many).
+  ///   Junction table implementing the many-to-many relationship
+  ///   between posts and tags. Each record links one PostId to one
+  ///   TagId. mORMot2's ORM creates the SQLite table automatically
+  ///   from these published properties.
   /// </summary>
   TOrmPostTag = class(TOrm)
   private

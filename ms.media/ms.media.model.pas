@@ -1,5 +1,13 @@
 ﻿/// <summary>
-///   ORM model for the Media service: image metadata.
+///   ORM model for the Media service: uploaded file metadata.
+///
+///   The actual files are stored on the file system (not in SQLite).
+///   This ORM record tracks metadata (name, MIME type, size, path)
+///   and the file system path where the binary content is stored.
+///   <c>Int64</c> maps to SQLite INTEGER for the file size.
+///
+///   Named <c>TOrmMediaFile</c> (not TOrmMedia) to avoid a routing
+///   conflict with the <c>IMedia</c> SOA interface.
 /// </summary>
 unit ms.media.model;
 

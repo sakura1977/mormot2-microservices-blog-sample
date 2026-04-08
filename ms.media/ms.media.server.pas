@@ -1,7 +1,23 @@
 /// <summary>
 ///   Interface-based service implementation for the Media microservice.
-///   Implements the IMedia contract via TMediaService and hosts it
-///   inside TMediaServer (a TMicroService subclass).
+///   Implements <c>IMedia</c> for file upload, retrieval, and deletion.
+///
+///   Demonstrates file handling alongside ORM persistence:
+///   - Upload flow: Base64-decode the file data, store the binary on
+///     the file system, and track metadata (name, MIME type, size,
+///     storage path) in SQLite via the ORM.
+///   - <c>Base64ToBin</c> / <c>BinToBase64</c>: mORMot2 utilities
+///     for binary-to-text encoding (used because SOA parameters
+///     are JSON strings, not binary streams).
+///   - <c>FileFromString</c> / <c>StringFromFile</c>: mORMot2
+///     one-liner utilities for file I/O without TFileStream.
+///   - Upload size limit (<c>MAX_UPLOAD_SIZE</c>) enforced after
+///     Base64 decoding to prevent denial-of-service.
+///   - <c>GuessMimeType</c>: shared helper (ms.shared.pas) that
+///     maps file extensions to MIME types.
+///
+///   See <c>ms.users.server.pas</c> for detailed explanations of
+///   the basic CRUD and JSON parsing patterns used here.
 /// </summary>
 unit ms.media.server;
 

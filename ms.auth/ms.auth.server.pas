@@ -1,7 +1,32 @@
 /// <summary>
 ///   Interface-based service implementation for the Auth microservice.
-///   Implements IAuth using SCRAM-MCF for password verification,
-///   registered as a mORMot2 SOA service on TRestServerDB.
+///   Implements <c>IAuth</c> using SCRAM-MCF for password verification.
+///
+///   Demonstrates mORMot2's built-in cryptographic primitives:
+///   - <c>ModularCryptHash</c> (<c>mormot.crypt.secure</c>): computes
+///     a PBKDF2-SHA256 password hash in MCF (Modular Crypt Format),
+///     e.g. '$pbkdf2-sha256$310000$salt$checksum'. This is the
+///     industry-standard format used by passlib (Python), PHC, etc.
+///   - <c>ScramPersistedKey</c>: derives the SCRAM persisted key
+///     from the MCF hash and the user's email (used as salt).
+///   - <c>ScramServerProof</c>: verifies the client's SCRAM proof
+///     and computes the server proof for mutual authentication.
+///   - <c>ModularCryptFakeInfo</c>: returns a fake MCF info string
+///     for non-existent users, preventing email enumeration attacks
+///     (the response looks identical to a real challenge).
+///
+///   The SCRAM flow (RFC 5802 adapted for mORMot2):
+///   1. Client calls <c>Challenge(email)</c> -> gets MCF info + nonce.
+///   2. Client computes PBKDF2 locally, derives client proof.
+///   3. Client calls <c>Authenticate(email, nonce, proof)</c>.
+///   4. Server verifies proof, returns JWT + server proof.
+///   5. Client verifies server proof (mutual authentication).
+///
+///   The plaintext password is NEVER transmitted or stored. PBKDF2
+///   key derivation runs on both client (browser) and server
+///   (registration only).
+///
+///   See <c>ms.shared.jwt.pas</c> for JWT token creation/validation.
 /// </summary>
 unit ms.auth.server;
 

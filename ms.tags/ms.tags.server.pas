@@ -1,6 +1,20 @@
 /// <summary>
 ///   Interface-based service implementation for the Tags microservice.
-///   Implements ITag for tag CRUD and post-tag associations.
+///   Implements <c>ITag</c> for tag CRUD and many-to-many post-tag
+///   associations.
+///
+///   Demonstrates the junction table pattern in mORMot2:
+///   - <c>TOrmPostTag</c> links posts to tags (m:n relationship).
+///   - <c>SetPostTags</c> replaces all associations atomically by
+///     deleting existing entries and inserting new ones.
+///   - <c>GetByPost</c> queries the junction table, then retrieves
+///     each tag individually (N+1 pattern, acceptable for small
+///     tag counts per post).
+///   - <c>TDocVariantData</c> with <c>Kind = dvArray</c> is used
+///     to parse the JSON array of tag IDs passed to SetPostTags.
+///
+///   See <c>ms.users.server.pas</c> for detailed explanations of
+///   the basic CRUD and JSON parsing patterns used here.
 /// </summary>
 unit ms.tags.server;
 

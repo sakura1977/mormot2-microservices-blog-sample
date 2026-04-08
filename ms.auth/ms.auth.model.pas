@@ -1,5 +1,14 @@
 ﻿/// <summary>
 ///   ORM model for the Auth service: login credentials.
+///
+///   Stores SCRAM-MCF credentials for each user account.
+///   The MCF (Modular Crypt Format) hash and SCRAM persisted key
+///   are computed during registration via mORMot2's
+///   <c>ModularCryptHash</c> and <c>ScramPersistedKey</c> functions.
+///   The plaintext password is never stored.
+///
+///   Named <c>TOrmAuthUser</c> (not TOrmAuth) to avoid a routing
+///   conflict with the <c>IAuth</c> SOA interface.
 /// </summary>
 unit ms.auth.model;
 
@@ -18,7 +27,9 @@ uses
 type
 
   /// <summary>
-  ///   Stores authentication credentials for a user account.
+  ///   ORM record for user authentication credentials.
+  ///   Stores the SCRAM-MCF derived hash and persisted key,
+  ///   along with a foreign key to the author profile.
   /// </summary>
   TOrmAuthUser = class(TOrm)
   private

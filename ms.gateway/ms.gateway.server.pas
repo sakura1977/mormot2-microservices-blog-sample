@@ -1,6 +1,36 @@
 /// <summary>
-///   API Gateway: routes requests to backend microservices
-///   using interface-based service proxies and serves the web frontend.
+///   API Gateway: routes browser requests to backend microservices
+///   and serves the SPA web frontend as static files.
+///
+///   This is the most architecturally interesting service in the
+///   project. It demonstrates several advanced mORMot2 patterns:
+///
+///   1. <em>Transparent SOA proxying</em>: The gateway resolves
+///      backend service interfaces via <c>TRestHttpClient</c> +
+///      <c>Services.Resolve</c>, which returns a
+///      <c>TInterfacedObjectFake</c> that transparently forwards
+///      method calls as HTTP requests. These fake client objects
+///      are then re-registered as server-side services on the
+///      gateway's own <c>TRestServerDB</c> via
+///      <c>RegisterService</c> -- no manual proxy classes needed.
+///      The gateway acts as a pure pass-through for 6 interfaces.
+///
+///   2. <em>Response aggregation</em> (<c>TBlogService</c>):
+///      The <c>IBlog.GetPostFull</c> method queries 4 backend
+///      services (posts, users, tags, comments) and merges their
+///      responses into one enriched JSON document using
+///      <c>TDocVariantData</c>.
+///
+///   3. <em>HTTP request interception</em>: The gateway intercepts
+///      the <c>THttpAsyncServer.OnRequest</c> handler to split
+///      traffic between API calls (/api/...) and static file
+///      serving (SPA frontend from www/ directory).
+///
+///   4. <em>Client-side service format matching</em>: Backend
+///      services use <c>ResultAsJsonObjectWithoutResult</c>, so
+///      the gateway's client factories must also set this flag
+///      via <c>TServiceFactoryClient</c> to parse responses
+///      correctly.
 /// </summary>
 unit ms.gateway.server;
 

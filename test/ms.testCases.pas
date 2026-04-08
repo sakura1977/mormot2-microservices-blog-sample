@@ -1,6 +1,32 @@
-/// Integration tests for all blog microservices.
-/// All services run in a single process with in-memory SQLite --
-/// no HTTP, no ports, no processes.
+/// <summary>
+///   Integration tests for all blog microservices.
+///
+///   Demonstrates mORMot2's key testing advantage: all 7 microservices
+///   run in a SINGLE PROCESS with an in-memory SQLite database --
+///   no HTTP servers, no ports, no separate processes needed.
+///
+///   How it works:
+///   - <c>TBlogTestContext</c> creates ONE <c>TRestServerDB</c> with
+///     <c>SQLITE_MEMORY_DATABASE_NAME</c> (':memory:') containing ALL
+///     ORM tables from all services.
+///   - All service implementations are instantiated with the same
+///     <c>IRestOrm</c> and registered on the same REST server.
+///   - Tests call the SOA interfaces directly (in-process), exercising
+///     the full business logic without HTTP overhead.
+///   - This is exactly what Arnaud Bouchez recommends: "mORMot excels
+///     at running microservices in a single test executable to validate
+///     its process -- and then deploy as actual separated daemons."
+///
+///   mORMot2 test framework used:
+///   - <c>TSynTests</c>: top-level test suite that runs all test cases
+///     and collects pass/fail statistics.
+///   - <c>TSynTestCase</c>: individual test case class. Methods
+///     published in the 'published' section are auto-discovered
+///     and executed as test methods.
+///   - <c>Check(condition, msg)</c>: asserts a boolean condition.
+///   - <c>CheckEqual(a, b, msg)</c>: asserts equality with clear
+///     diff output on failure.
+/// </summary>
 unit ms.testCases;
 
 {$SCOPEDENUMS ON}

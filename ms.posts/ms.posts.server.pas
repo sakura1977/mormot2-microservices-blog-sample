@@ -1,6 +1,22 @@
 /// <summary>
 ///   Interface-based service implementation for the Posts microservice.
-///   Implements IPost with CRUD operations, pagination, and filtering.
+///   Implements <c>IPost</c> with CRUD, pagination, and filtering.
+///
+///   Demonstrates additional mORMot2 patterns beyond basic CRUD:
+///   - <c>IRestOrm.MultiFieldValues</c>: returns a <c>TOrmTable</c>
+///     (in-memory result set) for paginated queries with custom
+///     WHERE clauses, ORDER BY, LIMIT, and OFFSET.
+///   - <c>IRestOrm.OneFieldValueInt64</c>: efficient single-value
+///     query for aggregate functions like COUNT(*).
+///   - <c>FormatUtf8</c>: mORMot2's fast string formatting function,
+///     similar to Format but optimized for <c>RawUtf8</c> and safe
+///     against SQL injection when used with integer parameters.
+///   - Publication state machine: Status field transitions
+///     (draft -> published -> archived) with automatic PublishedAt
+///     timestamp on first publication.
+///
+///   See <c>ms.users.server.pas</c> for detailed explanations of
+///   the basic CRUD and JSON parsing patterns used here.
 /// </summary>
 unit ms.posts.server;
 

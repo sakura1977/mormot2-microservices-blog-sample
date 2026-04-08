@@ -1,7 +1,19 @@
 /// <summary>
 ///   Interface-based service implementation for the Comments microservice.
-///   Implements the IComment contract via TCommentService and hosts it
-///   inside TCommentsServer (a TMicroService subclass).
+///   Implements the <c>IComment</c> contract with moderation workflow.
+///
+///   Demonstrates the selective-field update pattern in mORMot2:
+///   - <c>IRestOrm.Update(Rec, 'Field1,Field2')</c>: the second
+///     parameter is a CSV list of field names to update. Only those
+///     columns are written to SQLite, which is more efficient than
+///     updating all fields and avoids accidentally overwriting
+///     fields that weren't intended to change.
+///   - Moderation workflow: comments start as pending (status 0),
+///     and are approved (1) or rejected (2) by an author. Only
+///     approved comments are returned by <c>GetByPost</c>.
+///
+///   See <c>ms.users.server.pas</c> for detailed explanations of
+///   the basic CRUD and JSON parsing patterns used here.
 /// </summary>
 unit ms.comments.server;
 

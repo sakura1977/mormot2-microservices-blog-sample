@@ -1,5 +1,16 @@
 ﻿/// <summary>
 ///   ORM model for the Posts service: blog posts.
+///
+///   Demonstrates several mORMot2 ORM features:
+///   - <c>stored AS_UNIQUE</c> on Slug for unique URL-friendly identifiers.
+///   - <c>TID</c> foreign keys (AuthorId, FeaturedImageId) referencing
+///     records in other services' databases. Cross-service joins are
+///     resolved at the gateway level, not in the ORM.
+///   - Integer status codes (draft/published/archived) as a simple
+///     state machine alternative to enums.
+///
+///   Named <c>TOrmBlogPost</c> (not TOrmPost) to avoid a routing
+///   conflict with the <c>IPost</c> SOA interface.
 /// </summary>
 unit ms.posts.model;
 
