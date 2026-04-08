@@ -84,52 +84,84 @@ type
   TTestUserService = class(TMsTestCase)
   published
     procedure AddAndGet;
+    procedure AddEmptyName;
+    procedure GetNotFound;
     procedure Update;
+    procedure UpdateNotFound;
     procedure GetAll;
     procedure Remove;
+    procedure RemoveNotFound;
   end;
 
   TTestAuthService = class(TMsTestCase)
   published
     procedure RegisterUser;
     procedure RegisterDuplicate;
+    procedure RegisterEmptyEmail;
+    procedure RegisterEmptyPassword;
     procedure ChallengeAndAuthenticate;
+    procedure AuthenticateWrongPassword;
+    procedure AuthenticateUnknownEmail;
+    procedure AuthenticateReplayedNonce;
     procedure ValidateToken;
+    procedure ValidateInvalidToken;
     procedure ChangePassword;
+    procedure ChangePasswordWrongOld;
   end;
 
   TTestPostService = class(TMsTestCase)
   published
     procedure AddAndGet;
+    procedure AddEmptyTitle;
+    procedure GetNotFound;
     procedure GetBySlug;
+    procedure GetBySlugNotFound;
     procedure GetList;
     procedure Update;
+    procedure UpdateNotFound;
     procedure Remove;
+    procedure RemoveNotFound;
   end;
 
   TTestTagService = class(TMsTestCase)
   published
     procedure AddAndGet;
+    procedure AddEmptyName;
+    procedure AddDuplicateName;
+    procedure GetNotFound;
     procedure GetAll;
     procedure SetPostTags;
+    procedure SetPostTagsInvalidJson;
     procedure GetByPost;
+    procedure GetByPostNoTags;
     procedure Remove;
+    procedure RemoveCascade;
   end;
 
   TTestCommentService = class(TMsTestCase)
   published
     procedure AddPending;
+    procedure AddEmptyBody;
+    procedure AddInvalidPostId;
     procedure GetPending;
     procedure Approve;
+    procedure ApproveNotFound;
     procedure Reject;
     procedure GetByPost;
+    procedure GetByPostNoComments;
   end;
 
   TTestMediaService = class(TMsTestCase)
   published
     procedure UploadAndGetInfo;
+    procedure UploadEmptyFileName;
+    procedure UploadEmptyData;
+    procedure UploadTooLarge;
+    procedure GetInfoNotFound;
     procedure GetFile;
+    procedure GetFileNotFound;
     procedure Remove;
+    procedure RemoveNotFound;
   end;
 
   TTestBlogAggregation = class(TMsTestCase)
@@ -264,6 +296,19 @@ begin
   CheckEqual(Doc.U['Bio'], 'Test author');
 end;
 
+procedure TTestUserService.AddEmptyName;
+begin
+  CheckEqual(Context.User.Add('{"Bio":"No name"}'), 0,
+    'empty DisplayName should return 0');
+  CheckEqual(Context.User.Add('{}'), 0,
+    'empty JSON should return 0');
+end;
+
+procedure TTestUserService.GetNotFound;
+begin
+  CheckEqual(Context.User.Get(99999), '{}');
+end;
+
 procedure TTestUserService.Update;
 var
   Id: TID;
@@ -275,6 +320,12 @@ begin
   Doc.InitJson(Context.User.Get(Id), JSON_FAST_FLOAT);
   CheckEqual(Doc.U['Bio'], 'Updated bio');
   CheckEqual(Doc.U['DisplayName'], 'Update Test');
+end;
+
+procedure TTestUserService.UpdateNotFound;
+begin
+  Check(not Context.User.Update(99999, '{"Bio":"ghost"}'),
+    'update non-existent should return false');
 end;
 
 procedure TTestUserService.GetAll;
@@ -299,6 +350,15 @@ begin
   CheckEqual(Context.User.Get(Id), '{}');
 end;
 
+procedure TTestUserService.RemoveNotFound;
+begin
+  // mORMot2 ORM returns True even if no row was deleted
+  Check(Context.User.Remove(99999),
+    'DELETE on non-existent is not an error in mORMot2');
+  CheckEqual(Context.User.Get(99999), '{}',
+    'record should still not exist');
+end;
+
 { TTestAuthService }
 
 procedure TTestAuthService.RegisterUser;
@@ -315,6 +375,18 @@ var
 begin
   Id := Context.Auth.Register('test@example.com', 'other', 1);
   CheckEqual(Id, 0, 'duplicate email should return 0');
+end;
+
+procedure TTestAuthService.RegisterEmptyEmail;
+begin
+  CheckEqual(Context.Auth.Register('', 'pass123', 1), 0,
+    'empty email should return 0');
+end;
+
+procedure TTestAuthService.RegisterEmptyPassword;
+begin
+  CheckEqual(Context.Auth.Register('nopass@example.com', '', 1), 0,
+    'empty password should return 0');
 end;
 
 procedure TTestAuthService.ChallengeAndAuthenticate;
@@ -346,6 +418,61 @@ begin
   Check(ServerProof <> '', 'should return ServerProof');
 end;
 
+procedure TTestAuthService.AuthenticateWrongPassword;
+var
+  McfInfo, ServerNonce, McfHash: RawUtf8;
+  ClientProof, Token, ServerProof: RawUtf8;
+  UserId: TID;
+  ClientSignature: THash256;
+begin
+  Context.Auth.Challenge('test@example.com', McfInfo, ServerNonce);
+  McfHash := ModularCryptHash(McfInfo, 'WRONG-PASSWORD');
+  ClientProof := ScramClientProof(McfHash, 'test@example.com',
+    ClientSignature, ['test@example.com', ServerNonce]);
+  Check(not Context.Auth.Authenticate('test@example.com', ServerNonce,
+    ClientProof, Token, UserId, ServerProof),
+    'wrong password should fail');
+  CheckEqual(Token, '', 'no token on failure');
+end;
+
+procedure TTestAuthService.AuthenticateUnknownEmail;
+var
+  McfInfo, ServerNonce, McfHash: RawUtf8;
+  ClientProof, Token, ServerProof: RawUtf8;
+  UserId: TID;
+  ClientSignature: THash256;
+begin
+  Context.Auth.Challenge('unknown@example.com', McfInfo, ServerNonce);
+  Check(McfInfo <> '', 'should return fake MCF info (anti-enumeration)');
+  McfHash := ModularCryptHash(McfInfo, 'anypass');
+  ClientProof := ScramClientProof(McfHash, 'unknown@example.com',
+    ClientSignature, ['unknown@example.com', ServerNonce]);
+  Check(not Context.Auth.Authenticate('unknown@example.com', ServerNonce,
+    ClientProof, Token, UserId, ServerProof),
+    'unknown email should fail');
+end;
+
+procedure TTestAuthService.AuthenticateReplayedNonce;
+var
+  McfInfo, ServerNonce, McfHash: RawUtf8;
+  ClientProof, Token, ServerProof: RawUtf8;
+  UserId: TID;
+  ClientSignature: THash256;
+begin
+  // Get a valid challenge
+  Context.Auth.Challenge('test@example.com', McfInfo, ServerNonce);
+  McfHash := ModularCryptHash(McfInfo, 'secret123');
+  ClientProof := ScramClientProof(McfHash, 'test@example.com',
+    ClientSignature, ['test@example.com', ServerNonce]);
+  // First auth consumes the nonce
+  Context.Auth.Authenticate('test@example.com', ServerNonce,
+    ClientProof, Token, UserId, ServerProof);
+  // Replay with same nonce should fail
+  Check(not Context.Auth.Authenticate('test@example.com', ServerNonce,
+    ClientProof, Token, UserId, ServerProof),
+    'replayed nonce should fail');
+end;
+
 procedure TTestAuthService.ValidateToken;
 var
   McfInfo, ServerNonce, McfHash: RawUtf8;
@@ -367,6 +494,16 @@ begin
   // Invalid token should fail
   Check(not Context.Auth.Validate('invalid.token.here', ValidatedUserId),
     'invalid token should fail');
+end;
+
+procedure TTestAuthService.ValidateInvalidToken;
+var
+  UserId: TID;
+begin
+  Check(not Context.Auth.Validate('', UserId),
+    'empty token should fail');
+  Check(not Context.Auth.Validate('not.a.jwt', UserId),
+    'garbage token should fail');
 end;
 
 procedure TTestAuthService.ChangePassword;
@@ -395,6 +532,16 @@ begin
   Check(Ok, 'login with new password should succeed');
 end;
 
+procedure TTestAuthService.ChangePasswordWrongOld;
+var
+  UserId: TID;
+begin
+  UserId := Context.User.Add('{"DisplayName":"WrongOld Test"}');
+  Context.Auth.Register('wrongold@example.com', 'correct', UserId);
+  Check(not Context.Auth.ChangePassword(UserId, 'WRONG', 'newpass'),
+    'wrong old password should fail');
+end;
+
 { TTestPostService }
 
 procedure TTestPostService.AddAndGet;
@@ -411,12 +558,30 @@ begin
   CheckEqual(Doc.I['Status'], POST_STATUS_PUBLISHED);
 end;
 
+procedure TTestPostService.AddEmptyTitle;
+begin
+  CheckEqual(Context.Post.Add('{"Body":"no title","AuthorId":1}'), 0,
+    'empty title should return 0');
+  CheckEqual(Context.Post.Add('{}'), 0,
+    'empty JSON should return 0');
+end;
+
+procedure TTestPostService.GetNotFound;
+begin
+  CheckEqual(Context.Post.Get(99999), '{}');
+end;
+
 procedure TTestPostService.GetBySlug;
 var
   Doc: TDocVariantData;
 begin
   Doc.InitJson(Context.Post.GetBySlug('first-post'), JSON_FAST_FLOAT);
   CheckEqual(Doc.U['Title'], 'First Post');
+end;
+
+procedure TTestPostService.GetBySlugNotFound;
+begin
+  CheckEqual(Context.Post.GetBySlug('no-such-slug'), '{}');
 end;
 
 procedure TTestPostService.GetList;
@@ -454,6 +619,12 @@ begin
   CheckEqual(Doc.I['Status'], POST_STATUS_PUBLISHED);
 end;
 
+procedure TTestPostService.UpdateNotFound;
+begin
+  Check(not Context.Post.Update(99999, '{"Title":"ghost"}'),
+    'update non-existent should return false');
+end;
+
 procedure TTestPostService.Remove;
 var
   Id: TID;
@@ -463,6 +634,15 @@ begin
   Check(Id > 0);
   Check(Context.Post.Remove(Id));
   CheckEqual(Context.Post.Get(Id), '{}');
+end;
+
+procedure TTestPostService.RemoveNotFound;
+begin
+  // mORMot2 ORM returns True even if no row was deleted
+  Check(Context.Post.Remove(99999),
+    'DELETE on non-existent is not an error in mORMot2');
+  CheckEqual(Context.Post.Get(99999), '{}',
+    'record should still not exist');
 end;
 
 { TTestTagService }
@@ -477,6 +657,23 @@ begin
   Doc.InitJson(Context.Tag.Get(Id), JSON_FAST_FLOAT);
   CheckEqual(Doc.U['Name'], 'Delphi');
   CheckEqual(Doc.U['Slug'], 'delphi');
+end;
+
+procedure TTestTagService.AddEmptyName;
+begin
+  CheckEqual(Context.Tag.Add('{"Description":"no name"}'), 0,
+    'empty name should return 0');
+end;
+
+procedure TTestTagService.AddDuplicateName;
+begin
+  CheckEqual(Context.Tag.Add('{"Name":"Delphi"}'), 0,
+    'duplicate name should fail (UNIQUE constraint)');
+end;
+
+procedure TTestTagService.GetNotFound;
+begin
+  CheckEqual(Context.Tag.Get(99999), '{}');
 end;
 
 procedure TTestTagService.GetAll;
@@ -498,12 +695,30 @@ begin
     'SetPostTags should succeed');
 end;
 
+procedure TTestTagService.SetPostTagsInvalidJson;
+begin
+  Check(not Context.Tag.SetPostTags(1, 'not-json'),
+    'invalid JSON should return false');
+  Check(not Context.Tag.SetPostTags(1, '{"not":"array"}'),
+    'non-array JSON should return false');
+end;
+
 procedure TTestTagService.GetByPost;
 var
   Arr: TDocVariantData;
 begin
   Arr.InitJson(Context.Tag.GetByPost(1), JSON_FAST_FLOAT);
   CheckEqual(Arr.Count, 2, 'post 1 should have 2 tags');
+end;
+
+procedure TTestTagService.GetByPostNoTags;
+var
+  PostId: TID;
+begin
+  PostId := Context.Post.Add(
+    '{"Title":"No Tags Post","Body":"x","AuthorId":1,"Status":0}');
+  CheckEqual(Context.Tag.GetByPost(PostId), '[]',
+    'post without tags should return empty array');
 end;
 
 procedure TTestTagService.Remove;
@@ -514,6 +729,24 @@ begin
   Check(Id > 0);
   Check(Context.Tag.Remove(Id));
   CheckEqual(Context.Tag.Get(Id), '{}');
+end;
+
+procedure TTestTagService.RemoveCascade;
+var
+  TagId, PostId: TID;
+  Arr: TDocVariantData;
+begin
+  TagId := Context.Tag.Add('{"Name":"CascadeTest"}');
+  PostId := Context.Post.Add(
+    '{"Title":"Cascade Post","Body":"x","AuthorId":1,"Status":0}');
+  Context.Tag.SetPostTags(PostId, FormatUtf8('[%]', [TagId]));
+  // Verify tag is assigned
+  Arr.InitJson(Context.Tag.GetByPost(PostId), JSON_FAST_FLOAT);
+  Check(Arr.Count = 1, 'should have 1 tag before remove');
+  // Remove tag — PostTag associations should be deleted too
+  Check(Context.Tag.Remove(TagId));
+  Arr.InitJson(Context.Tag.GetByPost(PostId), JSON_FAST_FLOAT);
+  CheckEqual(Arr.Count, 0, 'tag associations should be gone after remove');
 end;
 
 { TTestCommentService }
@@ -527,6 +760,22 @@ begin
   Check(Id > 0, 'Comment.Add should return positive ID');
 end;
 
+procedure TTestCommentService.AddEmptyBody;
+begin
+  CheckEqual(Context.Comment.Add(1, '{"AuthorName":"X","Body":""}'), 0,
+    'empty body should return 0');
+  CheckEqual(Context.Comment.Add(1, '{"AuthorName":"X"}'), 0,
+    'missing body should return 0');
+end;
+
+procedure TTestCommentService.AddInvalidPostId;
+begin
+  CheckEqual(Context.Comment.Add(0, '{"AuthorName":"X","Body":"text"}'), 0,
+    'postId=0 should return 0');
+  CheckEqual(Context.Comment.Add(-1, '{"AuthorName":"X","Body":"text"}'), 0,
+    'negative postId should return 0');
+end;
+
 procedure TTestCommentService.GetPending;
 var
   Arr: TDocVariantData;
@@ -538,6 +787,12 @@ end;
 procedure TTestCommentService.Approve;
 begin
   Check(Context.Comment.Approve(1, 1), 'Approve should succeed');
+end;
+
+procedure TTestCommentService.ApproveNotFound;
+begin
+  Check(not Context.Comment.Approve(99999, 1),
+    'approve non-existent should return false');
 end;
 
 procedure TTestCommentService.Reject;
@@ -560,6 +815,16 @@ begin
   CheckEqual(_Safe(Arr.Values[0])^.U['AuthorName'], 'Visitor');
 end;
 
+procedure TTestCommentService.GetByPostNoComments;
+var
+  PostId: TID;
+begin
+  PostId := Context.Post.Add(
+    '{"Title":"No Comments Post","Body":"x","AuthorId":1,"Status":0}');
+  CheckEqual(Context.Comment.GetByPost(PostId), '[]',
+    'post without approved comments should return empty array');
+end;
+
 { TTestMediaService }
 
 procedure TTestMediaService.UploadAndGetInfo;
@@ -576,6 +841,34 @@ begin
   CheckEqual(Doc.U['AltText'], 'Test image');
 end;
 
+procedure TTestMediaService.UploadEmptyFileName;
+begin
+  CheckEqual(Context.Media.Upload('', BinToBase64('data'), '', 1), 0,
+    'empty filename should return 0');
+end;
+
+procedure TTestMediaService.UploadEmptyData;
+begin
+  CheckEqual(Context.Media.Upload('test.png', '', '', 1), 0,
+    'empty data should return 0');
+end;
+
+procedure TTestMediaService.UploadTooLarge;
+var
+  LargeData: RawByteString;
+begin
+  SetLength(LargeData, MAX_UPLOAD_SIZE + 1);
+  FillCharFast(pointer(LargeData)^, Length(LargeData), Ord('X'));
+  CheckEqual(Context.Media.Upload('big.bin',
+    BinToBase64(LargeData), '', 1), 0,
+    'oversized upload should return 0');
+end;
+
+procedure TTestMediaService.GetInfoNotFound;
+begin
+  CheckEqual(Context.Media.GetInfo(99999), '{}');
+end;
+
 procedure TTestMediaService.GetFile;
 var
   Id: TID;
@@ -589,6 +882,14 @@ begin
   CheckEqual(FileData, 'Hello World');
 end;
 
+procedure TTestMediaService.GetFileNotFound;
+var
+  ContentType: RawUtf8;
+begin
+  CheckEqual(Context.Media.GetFile(99999, ContentType), '');
+  CheckEqual(ContentType, '');
+end;
+
 procedure TTestMediaService.Remove;
 var
   Id: TID;
@@ -598,6 +899,13 @@ begin
   Check(Id > 0);
   Check(Context.Media.Remove(Id));
   CheckEqual(Context.Media.GetInfo(Id), '{}');
+end;
+
+procedure TTestMediaService.RemoveNotFound;
+begin
+  // Media.Remove checks Retrieve first, so non-existent returns False
+  Check(not Context.Media.Remove(99999),
+    'remove non-existent media should return false');
 end;
 
 { TTestBlogAggregation }
