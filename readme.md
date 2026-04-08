@@ -143,10 +143,11 @@ All subsequent requests include the JWT in the `Authorization: Bearer` header.
 mormot2-microservices/
 |
 |-- shared/                      Shared units (used by all services)
-|   |-- ms.shared.pas              Constants, config loading, slug generation
+|   |-- ms.shared.pas              Constants, config loading, slug generation, MIME types
 |   |-- ms.shared.api.pas          SOA interface definitions (IAuth, IUser, ...)
 |   |-- ms.shared.jwt.pas          JWT token creation and validation
-|   +-- ms.shared.service.pas      Base service class (HTTP server, health, shutdown)
+|   +-- ms.shared.service.pas      TMicroService base class, RegisterService helper,
+|                                    OrmGetById/OrmGetAll, health + shutdown endpoints
 |
 |-- ms.auth/                     Authentication service
 |   |-- ms.auth.dpr                Entry point
@@ -166,12 +167,17 @@ mormot2-microservices/
 |
 |-- ms.gateway/                  API Gateway
 |   |-- ms.gateway.dpr
-|   |-- ms.gateway.server.pas      Proxy classes, IBlog aggregation, static files
+|   |-- ms.gateway.server.pas      Transparent SOA proxying, IBlog aggregation,
+|   |                                static file serving
 |   +-- www/                       Frontend SPA
 |       |-- index.html
 |       +-- js/
 |           |-- api.js               SOA client + SCRAM-MCF crypto (Web Crypto API)
 |           +-- app.js               UI logic and routing
+|
+|-- test/                        Integration test suite
+|   |-- ms.tests.dpr               Test runner (console)
+|   +-- ms.testCases.pas           130+ assertions, all services in-process
 |
 |-- BlogMicroservices.groupproj  Delphi project group
 |-- start-all.cmd                Start all services
@@ -275,6 +281,13 @@ Example (`ms.gateway.config.json`):
 - **CORS handling** -- cross-origin headers for API access
 - **SPA architecture** -- single-page application with vanilla JavaScript
 - **Web Crypto API** -- PBKDF2 key derivation in the browser
+
+### Testing with mORMot2
+
+- **In-process integration tests** -- all 7 services run in a single process with in-memory SQLite (`:memory:`) -- no HTTP, no ports, no separate processes
+- **TSynTestCase** -- mORMot2's test framework with `Check`, `CheckEqual` assertions
+- **130+ assertions** covering happy paths, validation errors, not-found cases, SCRAM authentication, cascading deletes, and upload limits
+- **Constructor injection** -- service implementations receive `IRestOrm` for easy test wiring
 
 ### Delphi Techniques
 
