@@ -41,6 +41,8 @@ and aggregates data via the IBlog service.
 IBlog = interface(IInvokable)
   function GetPostFull(aId: TID): RawJson;
     // Aggregates: Post + Author + Tags + Comments
+  function GetPostsByTag(aTagId: TID): RawJson;
+    // Returns {Tag:{...}, Posts:[...]} with author enrichment
 end;
 ```
 
@@ -204,6 +206,8 @@ ITag = interface(IInvokable)
   function Get(aId: TID): RawJson;
   function GetAll: RawJson;
   function GetByPost(aPostId: TID): RawJson;
+  function GetPostIds(aTagId: TID): RawJson;
+    // Returns JSON array of post IDs for a tag, e.g. [1,3,5]
   function SetPostTags(aPostId: TID;
     const aTagIds: RawJson): boolean;
   function Add(const aData: RawJson): TID;

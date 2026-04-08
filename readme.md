@@ -38,16 +38,21 @@ The blog platform demonstrates how to decompose a monolithic application into in
 
 ## Architecture at a Glance
 
-```
-                    Browser
-                       |
-                  [Gateway :8080]
-                  /   |   |   \
-           Auth  Users Posts  Tags  Comments  Media
-           :8081 :8082 :8083  :8084  :8085    :8086
-            |      |     |     |       |        |
-          auth.db users posts tags  comments  media
-                   .db   .db  .db    .db      .db
+```mermaid
+graph TB
+    Browser --> GW[ms.gateway :8080]
+    GW --> AUTH[ms.auth :8081]
+    GW --> USERS[ms.users :8082]
+    GW --> POSTS[ms.posts :8083]
+    GW --> TAGS[ms.tags :8084]
+    GW --> COMMENTS[ms.comments :8085]
+    GW --> MEDIA[ms.media :8086]
+    AUTH --- DB1[(auth.db)]
+    USERS --- DB2[(users.db)]
+    POSTS --- DB3[(posts.db)]
+    TAGS --- DB4[(tags.db)]
+    COMMENTS --- DB5[(comments.db)]
+    MEDIA --- DB6[(media.db)]
 ```
 
 Seven independent services, each a standalone console application:

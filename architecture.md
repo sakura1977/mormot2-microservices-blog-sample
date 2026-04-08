@@ -66,7 +66,7 @@ graph TB
 | Service | Port | Purpose |
 |---------|------|---------|
 | ms.gateway | 8080 | API Gateway + SPA Frontend |
-| ms.auth | 8081 | Authentication (JWT) |
+| ms.auth | 8081 | Authentication (SCRAM-MCF + JWT) |
 | ms.users | 8082 | Author Profiles |
 | ms.posts | 8083 | Blog Posts CRUD |
 | ms.tags | 8084 | Tags + Post-Tag Associations |
@@ -76,9 +76,30 @@ graph TB
 
 ---
 
+## SOA URL Format
+
+All services use mORMot2 interface-based services (SOA). The URL format is:
+
+```
+POST /api/{InterfaceName}/{MethodName}
+```
+
+Request body: JSON array of positional input parameters.
+Response body: JSON object with named output parameters.
+
+Example:
+
+```
+POST /api/Post/GetList
+Body: [1, 10, 1, 0]
+Response: {"Result": "{\"items\":[...],\"total\":5,\"page\":1}"}
+```
+
+---
+
 ## Request Flow
 
-### Public Page Request
+### Post List (Public)
 
 ```mermaid
 sequenceDiagram
@@ -86,13 +107,13 @@ sequenceDiagram
     participant GW as Gateway :8080
     participant P as Posts :8083
 
-    B->>GW: GET /api/posts?page=1&status=1
-    GW->>P: GET /api/posts?page=1&status=1
-    P-->>GW: {"items":[...], "total":N, "page":1}
-    GW-->>B: {"items":[...], "total":N, "page":1}
+    B->>GW: POST /api/Post/GetList [1, 10, 1, 0]
+    GW->>P: POST /api/Post/GetList [1, 10, 1, 0]
+    P-->>GW: {"Result": "{\"items\":[...],\"total\":N}"}
+    GW-->>B: {"Result": "{\"items\":[...],\"total\":N}"}
 ```
 
-### Single Post (Aggregated)
+### Single Post (Aggregated via IBlog)
 
 ```mermaid
 sequenceDiagram
@@ -103,25 +124,50 @@ sequenceDiagram
     participant T as Tags :8084
     participant C as Comments :8085
 
-    B->>GW: GET /api/posts/1
-    GW->>P: GET /api/posts/1
+    B->>GW: POST /api/Blog/GetPostFull [1]
+    Note over GW: TBlogService (local)
+    GW->>P: IPost.Get(1)
     P-->>GW: {RowID:1, Title:..., AuthorId:1}
-
-    par Parallel Enrichment
-        GW->>U: GET /api/users/1
-        U-->>GW: {DisplayName: "Max Mustermann"}
-    and
-        GW->>T: GET /api/posts/1/tags
-        T-->>GW: [{Name:"Delphi"}, {Name:"mORMot2"}]
-    and
-        GW->>C: GET /api/posts/1/comments
-        C-->>GW: [{AuthorName:"...", Body:"..."}]
-    end
-
+    GW->>U: IUser.Get(1)
+    U-->>GW: {DisplayName: "Max Mustermann"}
+    GW->>T: ITag.GetByPost(1)
+    T-->>GW: [{Name:"Delphi"}, {Name:"mORMot2"}]
+    GW->>C: IComment.GetByPost(1)
+    C-->>GW: [{AuthorName:"...", Body:"..."}]
     GW-->>B: {Title:..., Author:{...}, Tags:[...], Comments:[...]}
 ```
 
-### Authentication Flow
+### Posts by Tag (Aggregated via IBlog)
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant GW as Gateway :8080
+    participant T as Tags :8084
+    participant P as Posts :8083
+    participant U as Users :8082
+
+    B->>GW: POST /api/Blog/GetPostsByTag [3]
+    Note over GW: TBlogService (local)
+    GW->>T: ITag.Get(3)
+    T-->>GW: {Name:"mORMot2", ...}
+    GW->>T: ITag.GetPostIds(3)
+    T-->>GW: [1, 5, 7]
+    loop For each PostId
+        GW->>P: IPost.Get(id)
+        P-->>GW: {Title:..., AuthorId:..., Status:1}
+        GW->>U: IUser.Get(authorId)
+        U-->>GW: {DisplayName:...}
+    end
+    Note over GW: Filter: Status = PUBLISHED only
+    GW-->>B: {Tag:{Name:"mORMot2"}, Posts:[...]}
+```
+
+### Authentication Flow (SCRAM-MCF)
+
+Authentication uses the SCRAM protocol (RFC 5802) adapted for mORMot2
+with MCF (Modular Crypt Format) credential storage. The plaintext
+password is **never** transmitted over the wire.
 
 ```mermaid
 sequenceDiagram
@@ -129,20 +175,31 @@ sequenceDiagram
     participant GW as Gateway :8080
     participant A as Auth :8081
 
-    Note over B,A: Login
-    B->>GW: POST /api/auth/login {Email, Password}
-    GW->>A: POST /api/auth/login {Email, Password}
-    A->>A: Verify SHA-256(Salt + Password)
-    A->>A: Create JWT (HMAC-SHA256, 24h)
-    A-->>GW: {token: "eyJ...", userId: 1}
-    GW-->>B: {token: "eyJ...", userId: 1}
-    B->>B: Store token in localStorage
+    Note over B,A: Phase 1: Challenge
+    B->>GW: POST /api/Auth/Challenge [email]
+    GW->>A: IAuth.Challenge(email)
+    A->>A: Lookup MCF info for email<br/>(or generate fake MCF to prevent enumeration)
+    A->>A: Generate one-time server nonce
+    A-->>GW: {aMcfInfo: "$pbkdf2-sha256$...", aServerNonce: "..."}
+    GW-->>B: {aMcfInfo, aServerNonce}
 
-    Note over B,A: Authenticated Request
-    B->>GW: POST /api/posts {Title:...} + Bearer token
-    GW->>A: POST /api/auth/validate {Token: "eyJ..."}
-    A-->>GW: {valid: true, userId: 1}
-    GW->>GW: Extract userId, proceed
+    Note over B: Phase 2: Client-side PBKDF2
+    B->>B: Compute PBKDF2-SHA256 from password + salt
+    B->>B: Derive ClientKey, StoredKey via HMAC-SHA256
+    B->>B: Compute ClientProof = ClientKey XOR ClientSignature
+
+    Note over B,A: Phase 3: Authenticate
+    B->>GW: POST /api/Auth/Authenticate [email, nonce, proof]
+    GW->>A: IAuth.Authenticate(email, nonce, proof)
+    A->>A: Verify SCRAM client proof against persisted key
+    A->>A: Create JWT (HMAC-SHA256, 24h expiry)
+    A->>A: Compute server proof for mutual auth
+    A-->>GW: {Result:true, aToken:"eyJ...", aUserId:1, aServerProof:"..."}
+    GW-->>B: {Result, aToken, aUserId, aServerProof}
+
+    Note over B: Phase 4: Mutual Authentication
+    B->>B: Verify server proof (confirms server knows the key)
+    B->>B: Store JWT + userId in localStorage
 ```
 
 ### Post Creation with Tags
@@ -151,25 +208,21 @@ sequenceDiagram
 sequenceDiagram
     participant B as Browser
     participant GW as Gateway :8080
-    participant A as Auth :8081
     participant P as Posts :8083
     participant T as Tags :8084
 
-    B->>GW: POST /api/posts + Bearer token
-    GW->>A: Validate token
-    A-->>GW: {valid: true, userId: 1}
-    GW->>P: POST /api/posts {Title, Body, AuthorId:1, Status:1}
-    P-->>GW: {id: 5}
-    GW-->>B: {id: 5}
+    B->>GW: POST /api/Post/Add [{Title, Body, AuthorId, Status}]
+    Note over GW: Bearer token in header
+    GW->>P: IPost.Add(data)
+    P-->>GW: {Result: 5}
+    GW-->>B: {Result: 5}
 
-    B->>GW: PUT /api/posts/5/tags + Bearer token
-    GW->>A: Validate token
-    A-->>GW: {valid: true}
-    GW->>T: PUT /api/posts/5/tags {TagIds:[1,3]}
-    T->>T: Delete existing associations
+    B->>GW: POST /api/Tag/SetPostTags [5, [1, 3]]
+    GW->>T: ITag.SetPostTags(5, [1,3])
+    T->>T: Delete existing PostTag for PostId=5
     T->>T: Create new PostTag records
-    T-->>GW: {success: true}
-    GW-->>B: {success: true}
+    T-->>GW: {Result: true}
+    GW-->>B: {Result: true}
 ```
 
 ### Comment Moderation
@@ -182,22 +235,22 @@ sequenceDiagram
     participant C as Comments :8085
 
     Note over V,C: Public Comment Submission
-    V->>GW: POST /api/posts/1/comments {AuthorName, Body}
-    GW->>C: POST /api/posts/1/comments
+    V->>GW: POST /api/Comment/Add [postId, {AuthorName, Body}]
+    GW->>C: IComment.Add(postId, data)
     C->>C: Status = PENDING (0)
-    C-->>GW: {id: 1, status: 0}
+    C-->>GW: {Result: 1}
     GW-->>V: Comment submitted for review
 
     Note over A,C: Moderation by Author
-    A->>GW: GET /api/comments/pending + Bearer
-    GW->>C: GET /api/comments/pending
-    C-->>GW: [{id:1, AuthorName:"...", Body:"..."}]
+    A->>GW: POST /api/Comment/GetPending []
+    GW->>C: IComment.GetPending
+    C-->>GW: [{RowID:1, AuthorName:"...", Body:"..."}]
     GW-->>A: Pending comments list
 
-    A->>GW: PUT /api/comments/1/approve + Bearer
-    GW->>C: PUT /api/comments/1/approve {ModeratedBy:1}
-    C->>C: Status = APPROVED (1)
-    C-->>GW: {success: true}
+    A->>GW: POST /api/Comment/Approve [1, authorId]
+    GW->>C: IComment.Approve(1, authorId)
+    C->>C: Status = APPROVED (1), set ModeratedBy/ModeratedAt
+    C-->>GW: {Result: true}
     GW-->>A: Comment approved
 ```
 
@@ -258,43 +311,39 @@ Shutdown happens in **reverse order** (gateway first).
 
 ---
 
-## Gateway Routing Map
+## Gateway Architecture
 
-```mermaid
-graph TD
-    REQ[Incoming Request]
-    REQ --> PATH{URL Path}
+The gateway combines three responsibilities:
 
-    PATH -->|/api/auth/*| AUTH_ROUTE[Auth Service :8081]
-    PATH -->|/api/users*| USERS_ROUTE[Users Service :8082]
-    PATH -->|/api/posts*| POSTS_CHECK{Sub-route?}
-    PATH -->|/api/tags*| TAGS_ROUTE[Tags Service :8084]
-    PATH -->|/api/comments*| COMMENTS_ROUTE[Comments Service :8085]
-    PATH -->|/api/media*| MEDIA_ROUTE[Media Service :8086]
-    PATH -->|/*| STATIC[Static Files / SPA]
+1. **Transparent SOA proxying**: Resolves backend service interfaces
+   via `TRestHttpClient` + `Services.Resolve`, which returns a
+   `TInterfacedObjectFake`. These are re-registered on the gateway's
+   own `TRestServerDB` -- no manual proxy classes needed.
 
-    POSTS_CHECK -->|/comments| COMMENTS_ROUTE
-    POSTS_CHECK -->|/tags| TAGS_ROUTE
-    POSTS_CHECK -->|single post| AGGREGATE[Aggregated Response<br/>Post + Author + Tags + Comments]
-    POSTS_CHECK -->|list / by-slug / by-author| POSTS_ROUTE[Posts Service :8083]
+2. **Response aggregation** (`TBlogService`): The `IBlog` interface
+   provides `GetPostFull` and `GetPostsByTag`, which query multiple
+   backend services and merge their responses using `TDocVariantData`.
 
-    style AGGREGATE fill:#e0e7ff,stroke:#2563eb
-    style AUTH_ROUTE fill:#fef3c7,stroke:#d97706
-```
+3. **Static file serving**: Non-API requests serve the SPA frontend
+   from the `www/` directory. Unmatched routes fall back to
+   `index.html` for client-side routing.
 
-### Authentication Requirements
+### Proxied Interfaces
 
-| Endpoint | GET | POST | PUT | DELETE |
-|----------|-----|------|-----|--------|
-| `/api/auth/*` | -- | Public | Auth | -- |
-| `/api/users*` | Public | Auth | Auth | Auth |
-| `/api/posts` | Public | Auth | Auth | Auth |
-| `/api/posts/{id}/comments` | Public | **Public** | -- | -- |
-| `/api/posts/{id}/tags` | Public | Auth | Auth | -- |
-| `/api/tags*` | Public | Auth | Auth | Auth |
-| `/api/comments/pending` | Auth | -- | -- | -- |
-| `/api/comments/{id}/*` | Public | Auth | Auth | Auth |
-| `/api/media*` | Public | Auth | -- | Auth |
+| Interface | Backend | Methods |
+|-----------|---------|---------|
+| IAuth | ms.auth :8081 | Challenge, Authenticate, Register, Validate, ChangePassword |
+| IUser | ms.users :8082 | Get, GetAll, Add, Update, Remove |
+| IPost | ms.posts :8083 | Get, GetBySlug, GetList, Add, Update, Remove |
+| ITag | ms.tags :8084 | Get, GetAll, GetByPost, GetPostIds, SetPostTags, Add, Update, Remove |
+| IComment | ms.comments :8085 | GetByPost, GetPending, Add, Approve, Reject, Remove |
+| IMedia | ms.media :8086 | Upload, GetInfo, GetFile, Remove |
+
+### Local Aggregation Interface
+
+| Interface | Methods | Description |
+|-----------|---------|-------------|
+| IBlog | GetPostFull, GetPostsByTag | Enriches posts with author, tags, comments |
 
 ---
 
@@ -305,8 +354,8 @@ erDiagram
     AuthUser {
         int ID PK
         string Email UK
-        string PasswordHash
-        string Salt
+        string McfInfo
+        string PersistedKey
         int UserId FK
         boolean IsActive
         datetime CreatedAt
@@ -409,6 +458,6 @@ erDiagram
 | HTTP Server | THttpAsyncServer (IOCP) |
 | ORM | mORMot2 TRestServerDB |
 | Database | SQLite (one per service) |
-| Auth | JWT (HMAC-SHA256, 24h expiry) |
+| Auth | SCRAM-MCF (RFC 5802) + JWT (HMAC-SHA256, 24h) |
 | Frontend | Vanilla JavaScript SPA |
-| IPC | REST/JSON over HTTP |
+| IPC | REST/JSON over HTTP (SOA interface-based) |
