@@ -156,26 +156,41 @@ begin
   PostId := PostDoc.I['RowID'];
   if PostId = 0 then
     PostId := PostDoc.I['ID'];
-  // Enrich with author
-  AuthorJson := FUsers.Get(AuthorId);
-  if AuthorJson <> '{}' then
-    PostDoc.AddValue('Author', _JsonFast(AuthorJson))
-  else
+  // Enrich with author (graceful degradation)
+  try
+    AuthorJson := FUsers.Get(AuthorId);
+    if AuthorJson <> '{}' then
+      PostDoc.AddValue('Author', _JsonFast(AuthorJson))
+    else
+      PostDoc.AddValue('Author', null);
+  except
     PostDoc.AddValue('Author', null);
-  // Enrich with tags
+    PostDoc.B['AuthorUnavailable'] := True;
+  end;
+  // Enrich with tags (graceful degradation)
   if PostId > 0 then
   begin
-    TagsJson := FTags.GetByPost(PostId);
-    if TagsJson <> '[]' then
-      PostDoc.AddValue('Tags', _JsonFast(TagsJson))
-    else
+    try
+      TagsJson := FTags.GetByPost(PostId);
+      if TagsJson <> '[]' then
+        PostDoc.AddValue('Tags', _JsonFast(TagsJson))
+      else
+        PostDoc.AddValue('Tags', _ArrFast([]));
+    except
       PostDoc.AddValue('Tags', _ArrFast([]));
-    // Enrich with comments
-    CommentsJson := FComments.GetByPost(PostId);
-    if CommentsJson <> '[]' then
-      PostDoc.AddValue('Comments', _JsonFast(CommentsJson))
-    else
+      PostDoc.B['TagsUnavailable'] := True;
+    end;
+    // Enrich with comments (graceful degradation)
+    try
+      CommentsJson := FComments.GetByPost(PostId);
+      if CommentsJson <> '[]' then
+        PostDoc.AddValue('Comments', _JsonFast(CommentsJson))
+      else
+        PostDoc.AddValue('Comments', _ArrFast([]));
+    except
       PostDoc.AddValue('Comments', _ArrFast([]));
+      PostDoc.B['CommentsUnavailable'] := True;
+    end;
   end;
   Result := RawJson(PostDoc.ToJson);
 end;
@@ -205,18 +220,28 @@ begin
   for PostIdx := 0 to PostIds.Count - 1 do
   begin
     PostId := PostIds.Values[PostIdx];
-    PostJson := FPosts.Get(PostId);
+    // Post service unavailable -> skip this post
+    try
+      PostJson := FPosts.Get(PostId);
+    except
+      continue;
+    end;
     if PostJson = '{}' then
       continue;
     PostDoc.InitJson(PostJson, JSON_FAST_FLOAT);
     if PostDoc.I['Status'] <> POST_STATUS_PUBLISHED then
       continue;
+    // Author service unavailable -> post without author
     AuthorId := PostDoc.I['AuthorId'];
-    AuthorJson := FUsers.Get(AuthorId);
-    if AuthorJson <> '{}' then
-      PostDoc.AddValue('Author', _JsonFast(AuthorJson))
-    else
+    try
+      AuthorJson := FUsers.Get(AuthorId);
+      if AuthorJson <> '{}' then
+        PostDoc.AddValue('Author', _JsonFast(AuthorJson))
+      else
+        PostDoc.AddValue('Author', null);
+    except
       PostDoc.AddValue('Author', null);
+    end;
     Posts.AddItem(_JsonFast(RawUtf8(PostDoc.ToJson)));
   end;
   ResultDoc.InitObject([

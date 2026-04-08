@@ -1,4 +1,4 @@
-/// <summary>
+﻿/// <summary>
 ///   Integration tests for all blog microservices.
 ///
 ///   Demonstrates mORMot2's key testing advantage: all 7 microservices
@@ -38,6 +38,7 @@ interface
 
 uses
   SysUtils,
+  Variants,
   mormot.core.base,
   mormot.core.buffers,
   mormot.core.datetime,
@@ -201,6 +202,15 @@ type
     procedure GetPostFullNotFound;
     procedure GetPostsByTag;
     procedure GetPostsByTagNotFound;
+  end;
+
+  TTestBlogResilience = class(TSynTestCase)
+  published
+    procedure GetPostFullWithoutComments;
+    procedure GetPostFullWithoutTags;
+    procedure GetPostFullWithoutUsers;
+    procedure GetPostFullWithoutAllEnrichment;
+    procedure GetPostsByTagWithoutUsers;
   end;
 
   TTestFullWorkflow = class(TMsTestCase)
@@ -1045,6 +1055,298 @@ begin
   Check(Doc.A_['Comments']^.Count >= 1, '10d. has comments');
 end;
 
+{ Failing service mocks for resilience tests }
+
+type
+  TFailingUser = class(TInterfacedObject, IUser)
+    function Get(aId: TID): RawJson;
+    function GetAll: RawJson;
+    function Add(const aData: RawJson): TID;
+    function Update(aId: TID; const aData: RawJson): boolean;
+    function Remove(aId: TID): boolean;
+  end;
+
+  TFailingTag = class(TInterfacedObject, ITag)
+    function Get(aId: TID): RawJson;
+    function GetAll: RawJson;
+    function GetByPost(aPostId: TID): RawJson;
+    function GetPostIds(aTagId: TID): RawJson;
+    function SetPostTags(aPostId: TID; const aTagIds: RawJson): boolean;
+    function Add(const aData: RawJson): TID;
+    function Update(aId: TID; const aData: RawJson): boolean;
+    function Remove(aId: TID): boolean;
+  end;
+
+  TFailingComment = class(TInterfacedObject, IComment)
+    function GetByPost(aPostId: TID): RawJson;
+    function GetPending: RawJson;
+    function Add(aPostId: TID; const aData: RawJson): TID;
+    function Approve(aId, aModeratedBy: TID): boolean;
+    function Reject(aId, aModeratedBy: TID): boolean;
+    function Remove(aId: TID): boolean;
+  end;
+
+function TFailingUser.Get(aId: TID): RawJson;
+begin raise Exception.Create('ms.users unavailable'); end;
+function TFailingUser.GetAll: RawJson;
+begin raise Exception.Create('ms.users unavailable'); end;
+function TFailingUser.Add(const aData: RawJson): TID;
+begin raise Exception.Create('ms.users unavailable'); end;
+function TFailingUser.Update(aId: TID; const aData: RawJson): boolean;
+begin raise Exception.Create('ms.users unavailable'); end;
+function TFailingUser.Remove(aId: TID): boolean;
+begin raise Exception.Create('ms.users unavailable'); end;
+
+function TFailingTag.Get(aId: TID): RawJson;
+begin raise Exception.Create('ms.tags unavailable'); end;
+function TFailingTag.GetAll: RawJson;
+begin raise Exception.Create('ms.tags unavailable'); end;
+function TFailingTag.GetByPost(aPostId: TID): RawJson;
+begin raise Exception.Create('ms.tags unavailable'); end;
+function TFailingTag.GetPostIds(aTagId: TID): RawJson;
+begin raise Exception.Create('ms.tags unavailable'); end;
+function TFailingTag.SetPostTags(aPostId: TID; const aTagIds: RawJson): boolean;
+begin raise Exception.Create('ms.tags unavailable'); end;
+function TFailingTag.Add(const aData: RawJson): TID;
+begin raise Exception.Create('ms.tags unavailable'); end;
+function TFailingTag.Update(aId: TID; const aData: RawJson): boolean;
+begin raise Exception.Create('ms.tags unavailable'); end;
+function TFailingTag.Remove(aId: TID): boolean;
+begin raise Exception.Create('ms.tags unavailable'); end;
+
+function TFailingComment.GetByPost(aPostId: TID): RawJson;
+begin raise Exception.Create('ms.comments unavailable'); end;
+function TFailingComment.GetPending: RawJson;
+begin raise Exception.Create('ms.comments unavailable'); end;
+function TFailingComment.Add(aPostId: TID; const aData: RawJson): TID;
+begin raise Exception.Create('ms.comments unavailable'); end;
+function TFailingComment.Approve(aId, aModeratedBy: TID): boolean;
+begin raise Exception.Create('ms.comments unavailable'); end;
+function TFailingComment.Reject(aId, aModeratedBy: TID): boolean;
+begin raise Exception.Create('ms.comments unavailable'); end;
+function TFailingComment.Remove(aId: TID): boolean;
+begin raise Exception.Create('ms.comments unavailable'); end;
+
+{ TTestBlogResilience }
+
+procedure TTestBlogResilience.GetPostFullWithoutComments;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  UserImpl: TUserService;
+  TagImpl: TTagService;
+  BlogSvc: TBlogService;
+  Doc: TDocVariantData;
+  PostId: TID;
+begin
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
+    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    UserImpl := TUserService.Create(Server.Orm);
+    TagImpl := TTagService.Create(Server.Orm);
+    UserImpl.Add('{"DisplayName":"Author"}');
+    PostId := PostImpl.Add(
+      '{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
+    Check(PostId > 0, 'post created');
+    BlogSvc := TBlogService.Create(PostImpl, UserImpl, TagImpl,
+      TFailingComment.Create);
+    try
+      Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
+      Check(Doc.U['Title'] = 'Test Post', 'should have Title');
+      Check(Doc.GetValueIndex('Author') >= 0, 'should have Author');
+      Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags');
+      Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments key');
+      CheckEqual(Doc.A['Comments']^.Count, 0,
+        'Comments should be empty array when service unavailable');
+      Check(Doc.B['CommentsUnavailable'],
+        'CommentsUnavailable flag should be true');
+    finally
+      BlogSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestBlogResilience.GetPostFullWithoutTags;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  UserImpl: TUserService;
+  CommentImpl: TCommentService;
+  BlogSvc: TBlogService;
+  Doc: TDocVariantData;
+  PostId: TID;
+begin
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
+    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    UserImpl := TUserService.Create(Server.Orm);
+    CommentImpl := TCommentService.Create(Server.Orm);
+    UserImpl.Add('{"DisplayName":"Author"}');
+    PostId := PostImpl.Add(
+      '{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
+    Check(PostId > 0, 'post created');
+    BlogSvc := TBlogService.Create(PostImpl, UserImpl,
+      TFailingTag.Create, CommentImpl);
+    try
+      Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
+      Check(Doc.U['Title'] = 'Test Post', 'should have Title');
+      Check(Doc.GetValueIndex('Author') >= 0, 'should have Author');
+      Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags key');
+      CheckEqual(Doc.A['Tags']^.Count, 0,
+        'Tags should be empty array when service unavailable');
+      Check(Doc.B['TagsUnavailable'],
+        'TagsUnavailable flag should be true');
+      Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments');
+    finally
+      BlogSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestBlogResilience.GetPostFullWithoutUsers;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  TagImpl: TTagService;
+  CommentImpl: TCommentService;
+  BlogSvc: TBlogService;
+  Doc: TDocVariantData;
+  PostId: TID;
+begin
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
+    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    TagImpl := TTagService.Create(Server.Orm);
+    CommentImpl := TCommentService.Create(Server.Orm);
+    PostId := PostImpl.Add(
+      '{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
+    Check(PostId > 0, 'post created');
+    BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create,
+      TagImpl, CommentImpl);
+    try
+      Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
+      Check(Doc.U['Title'] = 'Test Post', 'should have Title');
+      Check(Doc.GetValueIndex('Author') >= 0, 'should have Author key');
+      Check(VarIsNull(Doc.Value['Author']),
+        'Author should be null when service unavailable');
+      Check(Doc.B['AuthorUnavailable'],
+        'AuthorUnavailable flag should be true');
+      Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags');
+      Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments');
+    finally
+      BlogSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestBlogResilience.GetPostFullWithoutAllEnrichment;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  BlogSvc: TBlogService;
+  Doc: TDocVariantData;
+  PostId: TID;
+begin
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
+    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    PostId := PostImpl.Add(
+      '{"Title":"Lonely Post","Body":"no services","AuthorId":1,"Status":1}');
+    Check(PostId > 0, 'post created');
+    BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create,
+      TFailingTag.Create, TFailingComment.Create);
+    try
+      Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
+      Check(Doc.U['Title'] = 'Lonely Post',
+        'should still return the post');
+      Check(VarIsNull(Doc.Value['Author']), 'Author should be null');
+      Check(Doc.B['AuthorUnavailable'], 'AuthorUnavailable flag');
+      CheckEqual(Doc.A['Tags']^.Count, 0, 'Tags should be empty');
+      Check(Doc.B['TagsUnavailable'], 'TagsUnavailable flag');
+      CheckEqual(Doc.A['Comments']^.Count, 0, 'Comments should be empty');
+      Check(Doc.B['CommentsUnavailable'], 'CommentsUnavailable flag');
+    finally
+      BlogSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestBlogResilience.GetPostsByTagWithoutUsers;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  TagImpl: TTagService;
+  BlogSvc: TBlogService;
+  Doc, PostDoc: TDocVariantData;
+  PostId, TagId: TID;
+  Posts: PDocVariantData;
+begin
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
+    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    TagImpl := TTagService.Create(Server.Orm);
+    PostId := PostImpl.Add(
+      '{"Title":"Tagged Post","Body":"content","AuthorId":1,"Status":1}');
+    TagId := TagImpl.Add('{"Name":"TestTag"}');
+    TagImpl.SetPostTags(PostId, FormatUtf8('[%]', [TagId]));
+    BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create,
+      TagImpl, TFailingComment.Create);
+    try
+      Doc.InitJson(BlogSvc.GetPostsByTag(TagId), JSON_FAST_FLOAT);
+      Check(Doc.GetValueIndex('Tag') >= 0, 'should have Tag');
+      Posts := Doc.A['Posts'];
+      Check(Posts <> nil, 'should have Posts array');
+      Check(Posts^.Count > 0, 'should have at least one post');
+      PostDoc.InitJson(RawUtf8(Posts^.Values[0]), JSON_FAST_FLOAT);
+      Check(PostDoc.U['Title'] = 'Tagged Post', 'post title intact');
+      Check(VarIsNull(PostDoc.Value['Author']),
+        'Author should be null when user service unavailable');
+    finally
+      BlogSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
 { TBlogTests }
 
 constructor TBlogTests.Create(
@@ -1072,6 +1374,7 @@ begin
   AddCase(TTestCommentService);
   AddCase(TTestMediaService);
   AddCase(TTestBlogAggregation);
+  AddCase(TTestBlogResilience);
   AddCase(TTestFullWorkflow);
 end;
 

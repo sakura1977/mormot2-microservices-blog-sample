@@ -81,34 +81,38 @@ async function loadPost(id) {
   const tags = p.Tags || [];
   const comments = p.Comments || [];
 
-  let tagsHtml = tags.map(t => `<span class="tag" onclick="loadPostsByTag(${t.RowID || t.ID})">${esc(t.Name || '')}</span>`).join('');
+  let tagsHtml = '';
+  if (p.TagsUnavailable)
+    tagsHtml = '<p class="error" style="margin:.5rem 0">Tags could not be loaded.</p>';
+  else if (tags.length > 0)
+    tagsHtml = '<div style="margin:.5rem 0">' +
+      tags.map(t => `<span class="tag" onclick="loadPostsByTag(${t.RowID || t.ID})">${esc(t.Name || '')}</span>`).join('') +
+      '</div>';
+
+  let authorHtml = '';
+  if (p.AuthorUnavailable)
+    authorHtml = ' &mdash; <span style="color:var(--text-light)">(Author unavailable)</span>';
+  else if (author.DisplayName)
+    authorHtml = ' &mdash; <a href="#" onclick="loadAuthor(' + (author.RowID || author.ID) + '); return false;">' + esc(author.DisplayName) + '</a>';
 
   let commentsHtml = '';
-  for (const c of comments) {
-    const cDate = c.CreatedAt ? new Date(c.CreatedAt).toLocaleDateString('en') : '';
-    commentsHtml += `
-      <div class="comment">
-        <span class="comment-author">${esc(c.AuthorName)}</span>
-        <span class="comment-date">${cDate}</span>
-        <div class="comment-body">${esc(c.Body)}</div>
-      </div>`;
+  if (p.CommentsUnavailable) {
+    commentsHtml = '<p class="error">Comments could not be loaded.</p>';
+  } else if (comments.length > 0) {
+    for (const c of comments) {
+      const cDate = c.CreatedAt ? new Date(c.CreatedAt).toLocaleDateString('en') : '';
+      commentsHtml += `
+        <div class="comment">
+          <span class="comment-author">${esc(c.AuthorName)}</span>
+          <span class="comment-date">${cDate}</span>
+          <div class="comment-body">${esc(c.Body)}</div>
+        </div>`;
+    }
+  } else {
+    commentsHtml = '<p style="color:var(--text-light)">No comments yet.</p>';
   }
 
-  app.innerHTML = `
-    <article class="post-full">
-      <h1>${esc(p.Title)}</h1>
-      <div class="post-meta">
-        ${date}
-        ${author.DisplayName ? ' &mdash; <a href="#" onclick="loadAuthor(' + (author.RowID || author.ID) + '); return false;">' + esc(author.DisplayName) + '</a>' : ''}
-      </div>
-      ${tagsHtml ? '<div style="margin:.5rem 0">' + tagsHtml + '</div>' : ''}
-      <div class="post-body">${esc(p.Body)}</div>
-    </article>
-
-    <section class="comments-section">
-      <h3>Comments (${comments.length})</h3>
-      ${commentsHtml || '<p style="color:var(--text-light)">No comments yet.</p>'}
-
+  const commentsFormHtml = p.CommentsUnavailable ? '' : `
       <div class="comment-form">
         <h4>Write a Comment</h4>
         <form onsubmit="submitComment(event, ${postId})">
@@ -121,7 +125,22 @@ async function loadPost(id) {
           <button type="submit">Submit</button>
           <p id="c-msg" class="success hidden" style="margin-top:.5rem"></p>
         </form>
+      </div>`;
+
+  app.innerHTML = `
+    <article class="post-full">
+      <h1>${esc(p.Title)}</h1>
+      <div class="post-meta">
+        ${date}${authorHtml}
       </div>
+      ${tagsHtml}
+      <div class="post-body">${esc(p.Body)}</div>
+    </article>
+
+    <section class="comments-section">
+      <h3>Comments${p.CommentsUnavailable ? '' : ' (' + comments.length + ')'}</h3>
+      ${commentsHtml}
+      ${commentsFormHtml}
     </section>
 
     <p style="margin-top:2rem"><a href="#" onclick="loadPosts(); return false;">&laquo; Back to overview</a></p>
