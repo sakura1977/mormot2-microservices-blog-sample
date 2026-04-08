@@ -382,6 +382,19 @@ type
       ): RawJson;
 
     /// <summary>
+    ///   Retrieves all post IDs that have a specific tag assigned.
+    /// </summary>
+    /// <param name="aTagId">
+    ///   The tag's record ID.
+    /// </param>
+    /// <returns>
+    ///   JSON array of post IDs, e.g. '[1,3,5]', or '[]' if none.
+    /// </returns>
+    function GetPostIds(
+      aTagId: TID
+      ): RawJson;
+
+    /// <summary>
     ///   Replaces all tag assignments for a post. Deletes existing
     ///   associations and creates new ones from the provided tag IDs.
     /// </summary>
@@ -640,6 +653,21 @@ type
     /// </returns>
     function GetPostFull(
       aId: TID
+      ): RawJson;
+
+    /// <summary>
+    ///   Returns a list of posts that have a specific tag assigned,
+    ///   enriched with author information.
+    /// </summary>
+    /// <param name="aTagId">
+    ///   The tag's record ID to filter by.
+    /// </param>
+    /// <returns>
+    ///   JSON object with tag info and posts array, or '{}' if
+    ///   the tag was not found.
+    /// </returns>
+    function GetPostsByTag(
+      aTagId: TID
       ): RawJson;
   end;
 

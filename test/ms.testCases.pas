@@ -163,6 +163,8 @@ type
     procedure SetPostTagsInvalidJson;
     procedure GetByPost;
     procedure GetByPostNoTags;
+    procedure GetPostIds;
+    procedure GetPostIdsNoResults;
     procedure Remove;
     procedure RemoveCascade;
   end;
@@ -197,6 +199,8 @@ type
   published
     procedure GetPostFull;
     procedure GetPostFullNotFound;
+    procedure GetPostsByTag;
+    procedure GetPostsByTagNotFound;
   end;
 
   TTestFullWorkflow = class(TMsTestCase)
@@ -750,6 +754,21 @@ begin
     'post without tags should return empty array');
 end;
 
+procedure TTestTagService.GetPostIds;
+var
+  Arr: TDocVariantData;
+begin
+  // Post 1 was assigned 2 tags in SetPostTags -- check reverse lookup
+  Arr.InitJson(Context.Tag.GetPostIds(1), JSON_FAST_FLOAT);
+  Check(Arr.Count > 0, 'tag 1 should have at least one post');
+end;
+
+procedure TTestTagService.GetPostIdsNoResults;
+begin
+  CheckEqual(Context.Tag.GetPostIds(9999), '[]',
+    'non-existent tag should return empty array');
+end;
+
 procedure TTestTagService.Remove;
 var
   Id: TID;
@@ -953,6 +972,23 @@ end;
 procedure TTestBlogAggregation.GetPostFullNotFound;
 begin
   CheckEqual(Context.Blog.GetPostFull(99999), '{}');
+end;
+
+procedure TTestBlogAggregation.GetPostsByTag;
+var
+  Doc: TDocVariantData;
+  Posts: PDocVariantData;
+begin
+  Doc.InitJson(Context.Blog.GetPostsByTag(1), JSON_FAST_FLOAT);
+  Check(Doc.GetValueIndex('Tag') >= 0, 'should have Tag');
+  Check(Doc.GetValueIndex('Posts') >= 0, 'should have Posts');
+  Posts := Doc.A['Posts'];
+  Check(Posts <> nil, 'Posts should be an array');
+end;
+
+procedure TTestBlogAggregation.GetPostsByTagNotFound;
+begin
+  CheckEqual(Context.Blog.GetPostsByTag(99999), '{}');
 end;
 
 { TTestFullWorkflow }

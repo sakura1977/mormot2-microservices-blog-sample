@@ -76,6 +76,11 @@ type
     function GetByPost(aPostId: TID): RawJson;
 
     /// <summary>
+    ///   Retrieves all post IDs that have a specific tag assigned.
+    /// </summary>
+    function GetPostIds(aTagId: TID): RawJson;
+
+    /// <summary>
     ///   Replaces all tag associations for a post with the given tag IDs.
     /// </summary>
     function SetPostTags(aPostId: TID;
@@ -163,6 +168,26 @@ begin
       end;
     end;
     Result := Doc.ToJson;
+  finally
+    Table.Free;
+  end;
+end;
+
+function TTagService.GetPostIds(aTagId: TID): RawJson;
+var
+  Table: TOrmTable;
+  Arr: TDocVariantData;
+  RowIdx: PtrInt;
+begin
+  Table := FOrm.MultiFieldValues(TOrmPostTag, 'PostId',
+    FormatUtf8('TagId=%', [aTagId]));
+  try
+    if (Table = nil) or (Table.RowCount = 0) then
+      Exit('[]');
+    Arr.InitArray([], JSON_FAST);
+    for RowIdx := 1 to Table.RowCount do
+      Arr.AddItem(Table.GetAsInt64(RowIdx, 0));
+    Result := Arr.ToJson;
   finally
     Table.Free;
   end;

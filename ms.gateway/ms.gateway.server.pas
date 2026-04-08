@@ -88,6 +88,7 @@ type
     constructor Create(const aPosts: IPost; const aUsers: IUser;
       const aTags: ITag; const aComments: IComment);
     function GetPostFull(aId: TID): RawJson;
+    function GetPostsByTag(aTagId: TID): RawJson;
   end;
 
   /// <summary>
@@ -177,6 +178,52 @@ begin
       PostDoc.AddValue('Comments', _ArrFast([]));
   end;
   Result := RawJson(PostDoc.ToJson);
+end;
+
+function TBlogService.GetPostsByTag(aTagId: TID): RawJson;
+var
+  TagJson, PostIdsJson, PostJson, AuthorJson: RawJson;
+  ResultDoc, PostDoc: TDocVariantData;
+  PostIds, Posts: TDocVariantData;
+  PostIdx: PtrInt;
+  PostId, AuthorId: TID;
+begin
+  TagJson := FTags.Get(aTagId);
+  if TagJson = '{}' then
+    Exit('{}');
+  PostIdsJson := FTags.GetPostIds(aTagId);
+  if PostIdsJson = '[]' then
+  begin
+    ResultDoc.InitObject([
+      'Tag', _JsonFast(TagJson),
+      'Posts', _ArrFast([])
+    ], JSON_FAST);
+    Exit(RawJson(ResultDoc.ToJson));
+  end;
+  PostIds.InitJson(PostIdsJson, JSON_FAST_FLOAT);
+  Posts.InitArray([], JSON_FAST);
+  for PostIdx := 0 to PostIds.Count - 1 do
+  begin
+    PostId := PostIds.Values[PostIdx];
+    PostJson := FPosts.Get(PostId);
+    if PostJson = '{}' then
+      continue;
+    PostDoc.InitJson(PostJson, JSON_FAST_FLOAT);
+    if PostDoc.I['Status'] <> POST_STATUS_PUBLISHED then
+      continue;
+    AuthorId := PostDoc.I['AuthorId'];
+    AuthorJson := FUsers.Get(AuthorId);
+    if AuthorJson <> '{}' then
+      PostDoc.AddValue('Author', _JsonFast(AuthorJson))
+    else
+      PostDoc.AddValue('Author', null);
+    Posts.AddItem(_JsonFast(RawUtf8(PostDoc.ToJson)));
+  end;
+  ResultDoc.InitObject([
+    'Tag', _JsonFast(TagJson),
+    'Posts', variant(Posts)
+  ], JSON_FAST);
+  Result := RawJson(ResultDoc.ToJson);
 end;
 
 { TGatewayServer }

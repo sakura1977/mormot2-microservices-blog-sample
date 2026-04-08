@@ -263,6 +263,12 @@ const API = {
   async setPostTags(postId, tagIds) {
     return soaCall('Tag', 'SetPostTags', [postId, tagIds]);
   },
+  async getPostsByTag(tagId) {
+    const r = await soaCall('Blog', 'GetPostsByTag', [tagId]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
 
   // --- Comments ---
   async getComments(postId) {

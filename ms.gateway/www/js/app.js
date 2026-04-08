@@ -81,7 +81,7 @@ async function loadPost(id) {
   const tags = p.Tags || [];
   const comments = p.Comments || [];
 
-  let tagsHtml = tags.map(t => `<span class="tag">${esc(t.Name || '')}</span>`).join('');
+  let tagsHtml = tags.map(t => `<span class="tag" onclick="loadPostsByTag(${t.RowID || t.ID})">${esc(t.Name || '')}</span>`).join('');
 
   let commentsHtml = '';
   for (const c of comments) {
@@ -163,19 +163,46 @@ async function loadTags() {
   }
   let html = '<h2>Tags</h2><ul class="tag-list">';
   for (const t of tags)
-    html += `<li><span class="tag" onclick="loadPostsByTag(${t.RowID || t.ID}, '${esc(t.Name)}')">${esc(t.Name)}</span></li>`;
+    html += `<li><span class="tag" onclick="loadPostsByTag(${t.RowID || t.ID})">${esc(t.Name)}</span></li>`;
   html += '</ul>';
   app.innerHTML = html;
 }
 
-async function loadPostsByTag(tagId, tagName) {
-  // Tag-based post filtering is not yet supported via SOA.
-  // Show a placeholder with link back to tags.
-  app.innerHTML = `
-    <h2>Tag: ${esc(tagName)}</h2>
-    <p>Post filtering by tag will be available soon.</p>
-    <p><a href="#" onclick="loadTags(); return false;">&laquo; All Tags</a></p>
-  `;
+async function loadPostsByTag(tagId) {
+  app.innerHTML = '<div class="loading">Loading posts...</div>';
+  const r = await API.getPostsByTag(tagId);
+  if (!r.ok || !r.data || !r.data.Tag) {
+    app.innerHTML = '<p class="error">Tag not found.</p>';
+    return;
+  }
+
+  const tag = r.data.Tag;
+  const posts = r.data.Posts || [];
+  const tagName = tag.Name || '';
+
+  let html = `<h2>Tag: ${esc(tagName)}</h2>`;
+  if (tag.Description)
+    html += `<p>${esc(tag.Description)}</p>`;
+
+  if (posts.length === 0) {
+    html += '<p>No posts with this tag.</p>';
+  } else {
+    html += '<ul class="post-list">';
+    for (const p of posts) {
+      const date = p.PublishedAt ? new Date(p.PublishedAt).toLocaleDateString('en') : '';
+      const author = p.Author ? p.Author.DisplayName : '';
+      html += `
+        <li class="post-card">
+          <h2><a href="#" onclick="loadPost(${p.RowID || p.ID}); return false;">${esc(p.Title)}</a></h2>
+          <div class="post-meta">${date}${author ? ' &mdash; ' + esc(author) : ''}</div>
+          <p class="post-excerpt">${esc(p.Excerpt || '')}</p>
+        </li>`;
+    }
+    html += '</ul>';
+  }
+
+  html += '<p style="margin-top:1rem"><a href="#" onclick="loadTags(); return false;">&laquo; All Tags</a></p>';
+  app.innerHTML = html;
 }
 
 // === Author Profile ===
