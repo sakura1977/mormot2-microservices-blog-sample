@@ -40,20 +40,26 @@ implementation
 end.
 ```
 
-### 1.3
+### 1.3  Zeilenlänge
 
-Zeilenlänge sollte maximal 120 Zeichen betragen. Ein paar wenige mehr sind aber kein Problem.
+- Maximal **120 Zeichen** pro Zeile. Ein paar wenige mehr (bis ~125) sind kein Problem.
+- **Nicht zu früh umbrechen!** Zeilen sollen die verfügbaren 120 Zeichen **ausnutzen**. Code,
+  der auf eine Zeile unter 120 Zeichen passt, gehört auf **eine** Zeile. Umbrüche bei 60, 70
+  oder 80 Zeichen sind **genauso falsch** wie Zeilen mit 150 Zeichen.
+- Diese Regel gilt für Code **und** Kommentare gleichermaßen.
+- **Ausnahme**: Methodensignaturen mit Parametern folgen §5.2 (ein Parameter pro Zeile) — dort
+  werden kurze Zeilen akzeptiert, weil die Struktur wichtiger ist als die Zeilenausnutzung.
 
-### 1.3  Compiler-Direktiven
+### 1.4  Compiler-Direktiven
 Direkt nach dem `unit`-Statement, vor `interface`:
 
 | Direktive | Pflicht | Anmerkung |
 |-----------|---------|-----------|
 | `{$SCOPEDENUMS ON}` | ja | immer erste Direktive |
-| `{$WARN SYMBOL_PLATFORM OFF}` | ja | nicht ausgerichtet |
-| `{$WARN UNIT_PLATFORM OFF}` | ja | nicht ausgerichtet |
-| `{$WARN IMPLICIT_STRING_CAST OFF}` | bei Bedarf | nicht ausgerichtet |
-| `{$WARN IMPLICIT_STRING_CAST_LOSS OFF}` | bei Bedarf | nicht ausgerichtet |
+| `{$WARN SYMBOL_PLATFORM OFF}` | ja |  |
+| `{$WARN UNIT_PLATFORM OFF}` | ja |  |
+| `{$WARN IMPLICIT_STRING_CAST OFF}` | bei Bedarf |  |
+| `{$WARN IMPLICIT_STRING_CAST_LOSS OFF}` | bei Bedarf |  |
 
 ---
 
@@ -192,31 +198,55 @@ unit lw.lexer.example;
 
 ---
 
-## 5  Methodensignaturen
+## 5  Methodensignaturen (Deklarationen und Implementierungsköpfe)
+
+Diese Regeln gelten für **Deklarationen** (`interface`-Teil) und **Implementierungsköpfe**
+(`implementation`-Teil). Sie gelten **NICHT** für Funktions-/Methodenaufrufe im Code-Body —
+diese folgen nur der Zeilenlängenregel (§1.3).
 
 ### 5.1  Keine Parameter → einzeilig
 ```pascal
 function AtEnd: Boolean; inline;
 ```
 
-### 5.2  Ein oder mehr Parameter → mehrzeilig
+### 5.2  Ein oder mehr Parameter → IMMER mehrzeilig
+
+**Diese Regel ist absolut.** Auch wenn die gesamte Signatur auf eine Zeile passen würde,
+wird sie mehrzeilig formatiert. Die Struktur hat Vorrang vor der Zeilenlänge.
+
 ```pascal
+// RICHTIG — immer mehrzeilig, auch bei kurzen Signaturen:
+constructor Create(
+  const aOrm: IRestOrm
+  );
+
+function Get(
+  aId: TID
+  ): RawJson;
+
 procedure Advance(
-    const aCount: Integer = 1
-    ); inline;
+  const aCount: Integer = 1
+  ); inline;
 
 class function Create(
   const aKind: TTriviaKind;
   const aText: string;
   const aOffset: Integer
   ): TTrivia; static; inline;
+
+// FALSCH — Parameter NIEMALS auf eine Zeile zusammenfassen:
+constructor Create(const aOrm: IRestOrm);
+function Get(aId: TID): RawJson;
+constructor Create(const aPosts: IPost; const aUsers: IUser;
+  const aTags: ITag; const aComments: IComment);
 ```
 
 Regeln:
-- Jeder Parameter auf einer eigenen Zeile, mit **2 Leerzeichen** eingerückt.
+- **Jeder** Parameter auf einer **eigenen** Zeile, mit **2 Leerzeichen** eingerückt.
 - Die schließende `)` auf einer eigenen Zeile, mit **2 Leerzeichen** eingerückt.
 - Rückgabetyp und Direktiven (`static`, `inline`, `override` …) auf der
   `):`-Zeile.
+- Auch bei nur **einem** Parameter wird mehrzeilig formatiert.
 
 Gleiche Regel gilt für Implementierungsköpfe:
 ```pascal
@@ -228,6 +258,29 @@ class function TTrivia.Create(
 begin
   …
 end;
+```
+
+### 5.3  Funktionsaufrufe im Code-Body
+
+Funktionsaufrufe (nicht Deklarationen) folgen **nur** der Zeilenlängenregel (§1.3).
+Parameter werden **nicht** einzeln auf eigene Zeilen verteilt, sondern auf eine Zeile
+geschrieben, solange sie unter ~120 Zeichen bleibt:
+
+```pascal
+// RICHTIG — Aufruf auf einer Zeile, solange unter ~120 Zeichen:
+Table := FOrm.MultiFieldValues(TOrmPostTag, 'TagId', FormatUtf8('PostId=%', [aPostId]));
+RegisterService(ObjectFromInterface(FAuth) as TInterfacedObject, TypeInfo(IAuth));
+TSynLog.Add.Log(sllInfo, '% starting on port %...', [FServiceName, FPort], self);
+
+// RICHTIG — Aufruf umbrechen, wenn über ~120 Zeichen:
+FHttpServer := TRestHttpServer.Create(FPort, FRestServer, FConfig.HttpBind, useHttpAsync, nil,
+  FConfig.HttpThreads, SecurityFromString(FConfig.HttpSecurity));
+
+// FALSCH — Aufruf zu früh umbrechen:
+Table := FOrm.MultiFieldValues(TOrmPostTag, 'TagId',
+  FormatUtf8('PostId=%', [aPostId]));
+RegisterService(
+  ObjectFromInterface(FAuth) as TInterfacedObject, TypeInfo(IAuth));
 ```
 
 ---
@@ -441,7 +494,7 @@ MethodCall;
 - **Build-Output**: `..\_out\$(Platform)\$(Config)\DCU` und `..\_out\$(Platform)\$(Config)\APP`
 - **Zielplattformen**: Win32 und Win64; Android, iOS etc. werden aus `.dproj` entfernt.
 - **Warnungen**: Im `.dpr` und in allen neuen Units nahezu alle Compiler-Warnungen aktiv
-  lassen; nur gezielt supprimieren (siehe Abschnitt 1.3).
+  lassen; nur gezielt supprimieren (siehe Abschnitt 1.4).
 
 ---
 
@@ -461,6 +514,9 @@ MethodCall;
 - [ ] Konstanten in UPPER\_SNAKE\_CASE benannt
 - [ ] Keine lokalen Variablen mit `L`-Präfix oder einbuchstabigen Namen
 - [ ] Schleifen-Indexvariablen beschreibend (kein `i`, `j`, `k`)
-- [ ] Mehrzeilige Parameter-Signaturen korrekt formatiert
+- [ ] Methoden-Deklarationen: jeder Parameter auf eigener Zeile (§5.2), auch bei nur einem Parameter
+- [ ] Funktionsaufrufe im Code: auf eine Zeile, solange unter ~120 Zeichen (§5.3)
+- [ ] Zeilenlänge: keine Zeile unter 120 Zeichen unnötig umbrochen (§1.3)
+- [ ] Zeilenlänge: keine Zeile deutlich über 120 Zeichen (§1.3)
 - [ ] Ausrichtung von Mehrfachzuweisungen geprüft
 - [ ] Kein Android/iOS-Ballast im `.dproj`
