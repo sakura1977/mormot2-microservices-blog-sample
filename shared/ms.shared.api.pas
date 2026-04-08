@@ -705,6 +705,71 @@ type
     function GetServiceRegistry: RawJson;
   end;
 
+  /// <summary>
+  ///   Analytics service for cross-service data aggregation.
+  ///   Demonstrates how to combine data from multiple microservices
+  ///   -- the equivalent of SQL JOINs across service boundaries.
+  /// </summary>
+  IAnalytics = interface(IInvokable)
+    ['{B1C2D3E4-F5A6-7B8C-9D0E-1F2A3B4C5D6E}']
+
+    /// <summary>
+    ///   Returns aggregate counts from all services: total posts,
+    ///   authors, tags, and pending comments.
+    /// </summary>
+    /// <returns>
+    ///   JSON object with count fields and optional
+    ///   <c>*Unavailable</c> flags for unreachable services.
+    /// </returns>
+    function GetOverview: RawJson;
+
+    /// <summary>
+    ///   Returns per-author statistics: post count and total
+    ///   comment count on their posts.
+    /// </summary>
+    /// <returns>
+    ///   JSON array of author stat objects, or '[]' if the
+    ///   users service is unavailable.
+    /// </returns>
+    function GetAuthorStats: RawJson;
+
+    /// <summary>
+    ///   Returns all tags ranked by the number of posts that
+    ///   use them. Demonstrates grouped counting across services.
+    /// </summary>
+    /// <returns>
+    ///   JSON array of tag objects with <c>postCount</c> field,
+    ///   sorted descending by usage.
+    /// </returns>
+    function GetTagCloud: RawJson;
+
+    /// <summary>
+    ///   Returns comment activity: pending count and the top
+    ///   commented posts.
+    /// </summary>
+    /// <returns>
+    ///   JSON object with <c>pendingCount</c> and
+    ///   <c>topCommentedPosts</c> array.
+    /// </returns>
+    function GetCommentActivity: RawJson;
+
+    /// <summary>
+    ///   Returns the most recent published posts, each enriched
+    ///   with author, tags, and up to 10 comments. This is the
+    ///   cross-service JOIN equivalent -- the key teaching method.
+    /// </summary>
+    /// <param name="aLimit">
+    ///   Maximum number of posts to return (clamped to 1..50).
+    /// </param>
+    /// <returns>
+    ///   JSON array of enriched post objects, or '[]' if the
+    ///   posts service is unavailable.
+    /// </returns>
+    function GetRecentPostsFull(
+      aLimit: integer
+      ): RawJson;
+  end;
+
 implementation
 
 end.

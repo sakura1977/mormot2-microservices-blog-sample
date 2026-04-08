@@ -153,6 +153,10 @@ type
   /// </summary>
   TUsersServer = class(TMicroService)
   private
+
+    /// <summary>
+    ///   The user service implementation instance.
+    /// </summary>
     FUserImpl: TUserService;
   protected
     /// <summary>
@@ -174,7 +178,29 @@ type
 
 implementation
 
-{ TUserService }
+function TUserService.Add(
+  const aData: RawJson
+  ): TID;
+var
+  Doc: TDocVariantData;
+  Rec: TOrmAuthor;
+begin
+  Doc.InitJson(aData, JSON_FAST_FLOAT);
+  if Doc.U['DisplayName'] = '' then
+    Exit(0);
+  Rec := TOrmAuthor.Create;
+  try
+    Rec.DisplayName := Doc.U['DisplayName'];
+    Rec.Bio := Doc.U['Bio'];
+    Rec.WebsiteUrl := Doc.U['WebsiteUrl'];
+    Rec.Slug := TextToSlug(Rec.DisplayName);
+    Rec.CreatedAt := NowUtc;
+    Rec.UpdatedAt := NowUtc;
+    Result := FOrm.Add(Rec, True);
+  finally
+    Rec.Free;
+  end;
+end;
 
 constructor TUserService.Create(
   const aOrm: IRestOrm
@@ -188,51 +214,19 @@ function TUserService.Get(
   aId: TID
   ): RawJson;
 begin
-  // OrmGetById is a shared helper (ms.shared.service.pas) that
-  // encapsulates the Retrieve + GetJsonValues pattern.
   Result := OrmGetById(FOrm, TOrmAuthor, aId);
 end;
 
 function TUserService.GetAll: RawJson;
 begin
-  // OrmGetAll wraps MultiFieldValues + GetJsonValues.
-  // Pass an empty WHERE clause to retrieve all records.
   Result := OrmGetAll(FOrm, TOrmAuthor);
 end;
 
-function TUserService.Add(
-  const aData: RawJson
-  ): TID;
-var
-  Doc: TDocVariantData;
-  Rec: TOrmAuthor;
+function TUserService.Remove(
+  aId: TID
+  ): boolean;
 begin
-  // TDocVariantData is mORMot2's Swiss-army-knife for JSON.
-  // InitJson parses the JSON string into a variant object.
-  // JSON_FAST_FLOAT enables fast number parsing and returns
-  // empty/zero for missing keys instead of raising exceptions.
-  Doc.InitJson(aData, JSON_FAST_FLOAT);
-  // Validate required fields before touching the database
-  if Doc.U['DisplayName'] = '' then
-    Exit(0);
-  Rec := TOrmAuthor.Create;
-  try
-    // Doc.U['key'] reads a RawUtf8 value from the parsed JSON.
-    // Doc.I['key'] reads an Int64 value.
-    Rec.DisplayName := Doc.U['DisplayName'];
-    Rec.Bio := Doc.U['Bio'];
-    Rec.WebsiteUrl := Doc.U['WebsiteUrl'];
-    Rec.Slug := TextToSlug(Rec.DisplayName);
-    Rec.CreatedAt := NowUtc;
-    Rec.UpdatedAt := NowUtc;
-    // IRestOrm.Add inserts the record into SQLite.
-    // The True parameter means "send all fields including ID=0"
-    // which lets SQLite auto-assign the RowID.
-    // Returns the new RowID on success, 0 on failure.
-    Result := FOrm.Add(Rec, True);
-  finally
-    Rec.Free;
-  end;
+  Result := FOrm.Delete(TOrmAuthor, aId);
 end;
 
 function TUserService.Update(
@@ -245,14 +239,9 @@ var
 begin
   Rec := TOrmAuthor.Create;
   try
-    // First retrieve the existing record so we can apply
-    // partial updates (only modify fields present in the JSON).
     if not FOrm.Retrieve(aId, Rec) then
       Exit(False);
     Doc.InitJson(aData, JSON_FAST_FLOAT);
-    // GetValueIndex returns -1 if the key doesn't exist in the JSON.
-    // This implements PATCH semantics: only update fields that the
-    // client explicitly included in the request.
     if Doc.GetValueIndex('DisplayName') >= 0 then
     begin
       Rec.DisplayName := Doc.U['DisplayName'];
@@ -265,39 +254,20 @@ begin
     if Doc.GetValueIndex('AvatarMediaId') >= 0 then
       Rec.AvatarMediaId := Doc.I['AvatarMediaId'];
     Rec.UpdatedAt := NowUtc;
-    // IRestOrm.Update writes all fields back to SQLite.
     Result := FOrm.Update(Rec);
   finally
     Rec.Free;
   end;
 end;
 
-function TUserService.Remove(
-  aId: TID
-  ): boolean;
-begin
-  // IRestOrm.Delete executes DELETE FROM Author WHERE RowID=aId.
-  // Returns True even if no row matched (SQLite behavior).
-  Result := FOrm.Delete(TOrmAuthor, aId);
-end;
-
-{ TUsersServer }
-
 function TUsersServer.CreateModel: TOrmModel;
 begin
-  // TOrmModel.Create takes an array of TOrm classes that define
-  // the SQLite tables for this service. MODEL_ROOT ('api') sets
-  // the URL prefix for all endpoints.
   Result := TOrmModel.Create([TOrmAuthor], MODEL_ROOT);
 end;
 
 procedure TUsersServer.SetupServices;
 begin
-  // Inject the ORM interface into the service implementation.
-  // FRestServer.Orm returns the IRestOrm interface of the REST server.
   FUserImpl := TUserService.Create(FRestServer.Orm);
-  // RegisterService (from TMicroService base class) registers the
-  // implementation as an IUser SOA service with standard settings.
   RegisterService(FUserImpl, TypeInfo(IUser));
 end;
 

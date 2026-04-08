@@ -315,12 +315,42 @@ end;
 
 ---
 
+## 9. ms.analytics (Port 8088)
+
+### Responsibility
+Cross-service data aggregation. Demonstrates the microservice equivalent of SQL JOINs.
+
+### No Data Model (no ORM tables, no database)
+
+### SOA Interface: IAnalytics
+
+```pascal
+IAnalytics = interface(IInvokable)
+  function GetOverview: RawJson;
+  function GetAuthorStats: RawJson;
+  function GetTagCloud: RawJson;
+  function GetCommentActivity: RawJson;
+  function GetRecentPostsFull(aLimit: integer): RawJson;
+    // Cross-service JOIN: enriches posts with author, tags, comments
+end;
+```
+
+### Backend Connections
+Connects directly to ms.posts, ms.users, ms.tags, ms.comments (same pattern as gateway).
+
+---
+
 ## Service Dependencies
 
 ```
-ms.config   -->  (none -- starts first, reads from master JSON file)
-ms.gateway  -->  ms.config     (service registry for backend URLs)
-ms.gateway  -->  ms.auth       (token validation)
+ms.config     -->  (none -- starts first, reads from master JSON file)
+ms.analytics  -->  ms.config     (service registry)
+ms.analytics  -->  ms.posts      (post data)
+ms.analytics  -->  ms.users      (author data)
+ms.analytics  -->  ms.tags       (tag data)
+ms.analytics  -->  ms.comments   (comment data)
+ms.gateway    -->  ms.config     (service registry for backend URLs)
+ms.gateway    -->  ms.auth       (token validation)
 ms.gateway  -->  ms.users      (author profiles)
 ms.gateway  -->  ms.posts      (blog posts)
 ms.gateway  -->  ms.tags       (tags)

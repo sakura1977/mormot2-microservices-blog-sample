@@ -85,6 +85,7 @@ graph TB
 | ms.comments | 8085 | Comments + Moderation |
 | ms.media | 8086 | File Uploads |
 | ms.config | 8087 | Central Configuration Registry |
+| ms.analytics | 8088 | Cross-Service Data Aggregation |
 | ms.controller | 8090 | Service Orchestrator |
 
 ---
@@ -319,7 +320,8 @@ Services start in dependency order:
 5. **ms.posts** (8083) -- no dependencies
 6. **ms.tags** (8084) -- no dependencies
 7. **ms.comments** (8085) -- no dependencies
-8. **ms.gateway** (8080) -- depends on all others
+8. **ms.analytics** (8088) -- depends on backend services
+9. **ms.gateway** (8080) -- depends on all others
 
 Shutdown happens in **reverse order** (gateway first, config last).
 

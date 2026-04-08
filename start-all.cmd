@@ -29,34 +29,39 @@ start "ms.config" /MIN "%OUTDIR%\ms.config.exe"
 timeout /t 2 /nobreak >nul
 
 :: 1. Backend services without dependencies
-echo [2/8] Starting ms.media...
+echo [2/9] Starting ms.media...
 start "ms.media" /MIN "%OUTDIR%\ms.media.exe"
 timeout /t 1 /nobreak >nul
 
-echo [3/8] Starting ms.users...
+echo [3/9] Starting ms.users...
 start "ms.users" /MIN "%OUTDIR%\ms.users.exe"
 timeout /t 1 /nobreak >nul
 
 :: 2. Auth (requires ms.users)
-echo [4/8] Starting ms.auth...
+echo [4/9] Starting ms.auth...
 start "ms.auth" /MIN "%OUTDIR%\ms.auth.exe"
 timeout /t 1 /nobreak >nul
 
 :: 3. Remaining backend services
-echo [5/8] Starting ms.posts...
+echo [5/9] Starting ms.posts...
 start "ms.posts" /MIN "%OUTDIR%\ms.posts.exe"
 timeout /t 1 /nobreak >nul
 
-echo [6/8] Starting ms.tags...
+echo [6/9] Starting ms.tags...
 start "ms.tags" /MIN "%OUTDIR%\ms.tags.exe"
 timeout /t 1 /nobreak >nul
 
-echo [7/8] Starting ms.comments...
+echo [7/9] Starting ms.comments...
 start "ms.comments" /MIN "%OUTDIR%\ms.comments.exe"
 timeout /t 1 /nobreak >nul
 
-:: 4. Gateway (requires all others)
-echo [8/8] Starting ms.gateway...
+:: 4. Analytics (requires backend services)
+echo [8/9] Starting ms.analytics...
+start "ms.analytics" /MIN "%OUTDIR%\ms.analytics.exe"
+timeout /t 1 /nobreak >nul
+
+:: 5. Gateway (requires all others)
+echo [9/9] Starting ms.gateway...
 start "ms.gateway" /MIN "%OUTDIR%\ms.gateway.exe"
 timeout /t 2 /nobreak >nul
 
@@ -71,6 +76,7 @@ echo   Posts:      http://localhost:8083
 echo   Tags:       http://localhost:8084
 echo   Comments:   http://localhost:8085
 echo   Media:      http://localhost:8086
+echo   Analytics:  http://localhost:8088
 echo.
 echo   Open blog: http://localhost:8080
 echo.

@@ -522,6 +522,7 @@ begin
   RegisterService(SERVICE_POSTS,    PORT_POSTS);
   RegisterService(SERVICE_TAGS,     PORT_TAGS);
   RegisterService(SERVICE_COMMENTS, PORT_COMMENTS);
+  RegisterService(SERVICE_ANALYTICS, PORT_ANALYTICS);
   RegisterService(SERVICE_GATEWAY,  PORT_GATEWAY);
 
   WriteLn(Length(FServices), ' services registered.');

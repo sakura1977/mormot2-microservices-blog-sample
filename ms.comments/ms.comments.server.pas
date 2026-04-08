@@ -47,43 +47,196 @@ uses
 type
 
   /// <summary>
-  ///   Implements the IComment interface for comment CRUD and moderation.
+  ///   Implements the <c>IComment</c> interface for comment CRUD
+  ///   and moderation.
   /// </summary>
   TCommentService = class(TInterfacedObject, IComment)
   private
+
+    /// <summary>
+    ///   ORM interface for database access.
+    /// </summary>
     FOrm: IRestOrm;
   public
-    constructor Create(const aOrm: IRestOrm);
-    function GetByPost(aPostId: TID): RawJson;
+
+    /// <summary>
+    ///   Creates the comment service with an injected ORM interface.
+    /// </summary>
+    /// <param name="aOrm">
+    ///   The ORM interface for database operations.
+    /// </param>
+    constructor Create(
+      const aOrm: IRestOrm
+      );
+
+    /// <summary>
+    ///   Adds a new comment to a post with status pending.
+    /// </summary>
+    /// <param name="aPostId">
+    ///   The post to comment on (must be greater than 0).
+    /// </param>
+    /// <param name="aData">
+    ///   JSON object with at least <c>Body</c> (required).
+    /// </param>
+    /// <returns>
+    ///   The new comment ID, or 0 if validation failed.
+    /// </returns>
+    function Add(
+      aPostId: TID;
+      const aData: RawJson
+      ): TID;
+
+    /// <summary>
+    ///   Approves a pending comment, making it publicly visible.
+    /// </summary>
+    /// <param name="aId">
+    ///   The comment's record ID.
+    /// </param>
+    /// <param name="aModeratedBy">
+    ///   The author ID who approved the comment.
+    /// </param>
+    /// <returns>
+    ///   True if the comment was found and approved.
+    /// </returns>
+    function Approve(
+      aId, aModeratedBy: TID
+      ): boolean;
+
+    /// <summary>
+    ///   Retrieves all approved comments for a post.
+    /// </summary>
+    /// <param name="aPostId">
+    ///   The post's record ID.
+    /// </param>
+    /// <returns>
+    ///   JSON array of approved comment objects, or '[]'.
+    /// </returns>
+    function GetByPost(
+      aPostId: TID
+      ): RawJson;
+
+    /// <summary>
+    ///   Retrieves all comments awaiting moderation.
+    /// </summary>
+    /// <returns>
+    ///   JSON array of pending comment objects, or '[]'.
+    /// </returns>
     function GetPending: RawJson;
-    function Add(aPostId: TID; const aData: RawJson): TID;
-    function Approve(aId, aModeratedBy: TID): boolean;
-    function Reject(aId, aModeratedBy: TID): boolean;
-    function Remove(aId: TID): boolean;
+
+    /// <summary>
+    ///   Rejects a pending comment, hiding it from public view.
+    /// </summary>
+    /// <param name="aId">
+    ///   The comment's record ID.
+    /// </param>
+    /// <param name="aModeratedBy">
+    ///   The author ID who rejected the comment.
+    /// </param>
+    /// <returns>
+    ///   True if the comment was found and rejected.
+    /// </returns>
+    function Reject(
+      aId, aModeratedBy: TID
+      ): boolean;
+
+    /// <summary>
+    ///   Deletes a comment permanently.
+    /// </summary>
+    /// <param name="aId">
+    ///   The comment's record ID.
+    /// </param>
+    /// <returns>
+    ///   True if the DELETE statement executed successfully.
+    /// </returns>
+    function Remove(
+      aId: TID
+      ): boolean;
   end;
 
   /// <summary>
-  ///   Microservice server hosting the IComment service implementation.
+  ///   Microservice server hosting the <c>IComment</c> service
+  ///   implementation.
   /// </summary>
   TCommentsServer = class(TMicroService)
   private
+
+    /// <summary>
+    ///   The comment service implementation instance.
+    /// </summary>
     FCommentImpl: TCommentService;
   protected
+
+    /// <summary>
+    ///   Creates the ORM model with <c>TOrmBlogComment</c>.
+    /// </summary>
+    /// <returns>
+    ///   A new <c>TOrmModel</c> for the comments table.
+    /// </returns>
     function CreateModel: TOrmModel; override;
+
+    /// <summary>
+    ///   Registers the <c>IComment</c> service implementation.
+    /// </summary>
     procedure SetupServices; override;
   end;
 
 implementation
 
-{ TCommentService }
+function TCommentService.Add(
+  aPostId: TID;
+  const aData: RawJson
+  ): TID;
+var
+  Doc: TDocVariantData;
+  Rec: TOrmBlogComment;
+begin
+  Doc.InitJson(aData, JSON_FAST_FLOAT);
+  if (aPostId <= 0) or (Doc.U['Body'] = '') then
+    Exit(0);
+  Rec := TOrmBlogComment.Create;
+  try
+    Rec.PostId := aPostId;
+    Rec.AuthorName := Doc.U['AuthorName'];
+    Rec.AuthorEmail := Doc.U['AuthorEmail'];
+    Rec.Body := Doc.U['Body'];
+    Rec.Status := COMMENT_STATUS_PENDING;
+    Rec.CreatedAt := NowUtc;
+    Result := FOrm.Add(Rec, True);
+  finally
+    Rec.Free;
+  end;
+end;
 
-constructor TCommentService.Create(const aOrm: IRestOrm);
+function TCommentService.Approve(
+  aId, aModeratedBy: TID
+  ): boolean;
+var
+  Rec: TOrmBlogComment;
+begin
+  Rec := TOrmBlogComment.Create;
+  try
+    if not FOrm.Retrieve(aId, Rec) then
+      Exit(False);
+    Rec.Status := COMMENT_STATUS_APPROVED;
+    Rec.ModeratedBy := aModeratedBy;
+    Rec.ModeratedAt := NowUtc;
+    Result := FOrm.Update(Rec, 'Status,ModeratedBy,ModeratedAt');
+  finally
+    Rec.Free;
+  end;
+end;
+
+constructor TCommentService.Create(
+  const aOrm: IRestOrm
+  );
 begin
   inherited Create;
   FOrm := aOrm;
 end;
 
-function TCommentService.GetByPost(aPostId: TID): RawJson;
+function TCommentService.GetByPost(
+  aPostId: TID
+  ): RawJson;
 var
   Table: TOrmTable;
 begin
@@ -116,46 +269,9 @@ begin
   end;
 end;
 
-function TCommentService.Add(aPostId: TID; const aData: RawJson): TID;
-var
-  Doc: TDocVariantData;
-  Rec: TOrmBlogComment;
-begin
-  Doc.InitJson(aData, JSON_FAST_FLOAT);
-  if (aPostId <= 0) or (Doc.U['Body'] = '') then
-    Exit(0);
-  Rec := TOrmBlogComment.Create;
-  try
-    Rec.PostId := aPostId;
-    Rec.AuthorName := Doc.U['AuthorName'];
-    Rec.AuthorEmail := Doc.U['AuthorEmail'];
-    Rec.Body := Doc.U['Body'];
-    Rec.Status := COMMENT_STATUS_PENDING;
-    Rec.CreatedAt := NowUtc;
-    Result := FOrm.Add(Rec, True);
-  finally
-    Rec.Free;
-  end;
-end;
-
-function TCommentService.Approve(aId, aModeratedBy: TID): boolean;
-var
-  Rec: TOrmBlogComment;
-begin
-  Rec := TOrmBlogComment.Create;
-  try
-    if not FOrm.Retrieve(aId, Rec) then
-      Exit(False);
-    Rec.Status := COMMENT_STATUS_APPROVED;
-    Rec.ModeratedBy := aModeratedBy;
-    Rec.ModeratedAt := NowUtc;
-    Result := FOrm.Update(Rec, 'Status,ModeratedBy,ModeratedAt');
-  finally
-    Rec.Free;
-  end;
-end;
-
-function TCommentService.Reject(aId, aModeratedBy: TID): boolean;
+function TCommentService.Reject(
+  aId, aModeratedBy: TID
+  ): boolean;
 var
   Rec: TOrmBlogComment;
 begin
@@ -172,12 +288,12 @@ begin
   end;
 end;
 
-function TCommentService.Remove(aId: TID): boolean;
+function TCommentService.Remove(
+  aId: TID
+  ): boolean;
 begin
   Result := FOrm.Delete(TOrmBlogComment, aId);
 end;
-
-{ TCommentsServer }
 
 function TCommentsServer.CreateModel: TOrmModel;
 begin

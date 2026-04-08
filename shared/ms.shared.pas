@@ -38,7 +38,8 @@ const
   PORT_TAGS    = '8084';
   PORT_COMMENTS = '8085';
   PORT_MEDIA   = '8086';
-  PORT_CONFIG  = '8087';
+  PORT_CONFIG    = '8087';
+  PORT_ANALYTICS = '8088';
 
   // -- Service names (used for logging, config files, DB files) --
   SERVICE_GATEWAY  = 'ms.gateway';
@@ -48,7 +49,8 @@ const
   SERVICE_TAGS     = 'ms.tags';
   SERVICE_COMMENTS = 'ms.comments';
   SERVICE_MEDIA    = 'ms.media';
-  SERVICE_CONFIG   = 'ms.config';
+  SERVICE_CONFIG    = 'ms.config';
+  SERVICE_ANALYTICS = 'ms.analytics';
 
   // -- JWT configuration --
   /// <summary>

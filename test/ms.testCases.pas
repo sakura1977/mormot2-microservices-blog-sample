@@ -77,6 +77,7 @@ uses
   ms.media.model,
   ms.media.server,
   ms.config.server,
+  ms.analytics.server,
   ms.gateway.server;
 
 type
@@ -95,6 +96,7 @@ type
     FCommentImpl: TCommentService;
     FMediaImpl: TMediaService;
     FBlogImpl: TBlogService;
+    FAnalyticsImpl: TAnalyticsService;
   public
     Auth: IAuth;
     User: IUser;
@@ -103,6 +105,7 @@ type
     Comment: IComment;
     Media: IMedia;
     Blog: IBlog;
+    Analytics: IAnalytics;
     constructor Create;
     destructor Destroy; override;
   end;
@@ -214,6 +217,24 @@ type
     procedure GetPostsByTagWithoutUsers;
   end;
 
+  TTestAnalyticsService = class(TMsTestCase)
+  published
+    procedure GetOverview;
+    procedure GetAuthorStats;
+    procedure GetTagCloud;
+    procedure GetCommentActivity;
+    procedure GetRecentPostsFull;
+    procedure GetRecentPostsFullEmpty;
+  end;
+
+  TTestAnalyticsResilience = class(TSynTestCase)
+  published
+    procedure GetOverviewWithoutPosts;
+    procedure GetOverviewWithoutUsers;
+    procedure GetRecentPostsFullWithoutComments;
+    procedure GetRecentPostsFullWithoutTags;
+  end;
+
   TTestConfigService = class(TSynTestCase)
   published
     procedure GetServiceConfigKnown;
@@ -286,6 +307,7 @@ begin
   FCommentImpl := TCommentService.Create(FRestServer.Orm);
   FMediaImpl := TMediaService.Create(FRestServer.Orm, FMediaPath);
   FBlogImpl := TBlogService.Create(FPostImpl, FUserImpl, FTagImpl, FCommentImpl);
+  FAnalyticsImpl := TAnalyticsService.Create(FPostImpl, FUserImpl, FTagImpl, FCommentImpl);
   // Keep interface references
   Auth := FAuthImpl;
   User := FUserImpl;
@@ -294,6 +316,7 @@ begin
   Comment := FCommentImpl;
   Media := FMediaImpl;
   Blog := FBlogImpl;
+  Analytics := FAnalyticsImpl;
   // Register on REST server
   RegisterService(FAuthImpl, TypeInfo(IAuth));
   RegisterService(FUserImpl, TypeInfo(IUser));
@@ -302,6 +325,7 @@ begin
   RegisterService(FCommentImpl, TypeInfo(IComment));
   RegisterService(FMediaImpl, TypeInfo(IMedia));
   RegisterService(FBlogImpl, TypeInfo(IBlog));
+  RegisterService(FAnalyticsImpl, TypeInfo(IAnalytics));
 end;
 
 destructor TBlogTestContext.Destroy;
@@ -314,6 +338,7 @@ begin
   Comment := nil;
   Media := nil;
   Blog := nil;
+  Analytics := nil;
   FreeAndNil(FRestServer);
   FreeAndNil(FModel);
   FreeAndNil(FJwt);
@@ -1068,74 +1093,268 @@ end;
 { Failing service mocks for resilience tests }
 
 type
+
   TFailingUser = class(TInterfacedObject, IUser)
-    function Get(aId: TID): RawJson;
+    function Get(
+      aId: TID
+      ): RawJson;
     function GetAll: RawJson;
-    function Add(const aData: RawJson): TID;
-    function Update(aId: TID; const aData: RawJson): boolean;
-    function Remove(aId: TID): boolean;
+    function Add(
+      const aData: RawJson
+      ): TID;
+    function Update(
+      aId: TID;
+      const aData: RawJson
+      ): boolean;
+    function Remove(
+      aId: TID
+      ): boolean;
+  end;
+
+  TFailingPost = class(TInterfacedObject, IPost)
+    function Get(
+      aId: TID
+      ): RawJson;
+    function GetBySlug(
+      const aSlug: RawUtf8
+      ): RawJson;
+    function GetList(
+      aPage, aLimit, aStatus: integer;
+      aAuthorId: TID
+      ): RawJson;
+    function Add(
+      const aData: RawJson
+      ): TID;
+    function Update(
+      aId: TID;
+      const aData: RawJson
+      ): boolean;
+    function Remove(
+      aId: TID
+      ): boolean;
   end;
 
   TFailingTag = class(TInterfacedObject, ITag)
-    function Get(aId: TID): RawJson;
+    function Get(
+      aId: TID
+      ): RawJson;
     function GetAll: RawJson;
-    function GetByPost(aPostId: TID): RawJson;
-    function GetPostIds(aTagId: TID): RawJson;
-    function SetPostTags(aPostId: TID; const aTagIds: RawJson): boolean;
-    function Add(const aData: RawJson): TID;
-    function Update(aId: TID; const aData: RawJson): boolean;
-    function Remove(aId: TID): boolean;
+    function GetByPost(
+      aPostId: TID
+      ): RawJson;
+    function GetPostIds(
+      aTagId: TID
+      ): RawJson;
+    function SetPostTags(
+      aPostId: TID;
+      const aTagIds: RawJson
+      ): boolean;
+    function Add(
+      const aData: RawJson
+      ): TID;
+    function Update(
+      aId: TID;
+      const aData: RawJson
+      ): boolean;
+    function Remove(
+      aId: TID
+      ): boolean;
   end;
 
   TFailingComment = class(TInterfacedObject, IComment)
-    function GetByPost(aPostId: TID): RawJson;
+    function GetByPost(
+      aPostId: TID
+      ): RawJson;
     function GetPending: RawJson;
-    function Add(aPostId: TID; const aData: RawJson): TID;
-    function Approve(aId, aModeratedBy: TID): boolean;
-    function Reject(aId, aModeratedBy: TID): boolean;
-    function Remove(aId: TID): boolean;
+    function Add(
+      aPostId: TID;
+      const aData: RawJson
+      ): TID;
+    function Approve(
+      aId, aModeratedBy: TID
+      ): boolean;
+    function Reject(
+      aId, aModeratedBy: TID
+      ): boolean;
+    function Remove(
+      aId: TID
+      ): boolean;
   end;
 
-function TFailingUser.Get(aId: TID): RawJson;
-begin raise Exception.Create('ms.users unavailable'); end;
+function TFailingUser.Get(
+  aId: TID
+  ): RawJson;
+begin
+  raise Exception.Create('ms.users unavailable');
+end;
+
 function TFailingUser.GetAll: RawJson;
-begin raise Exception.Create('ms.users unavailable'); end;
-function TFailingUser.Add(const aData: RawJson): TID;
-begin raise Exception.Create('ms.users unavailable'); end;
-function TFailingUser.Update(aId: TID; const aData: RawJson): boolean;
-begin raise Exception.Create('ms.users unavailable'); end;
-function TFailingUser.Remove(aId: TID): boolean;
-begin raise Exception.Create('ms.users unavailable'); end;
+begin
+  raise Exception.Create('ms.users unavailable');
+end;
 
-function TFailingTag.Get(aId: TID): RawJson;
-begin raise Exception.Create('ms.tags unavailable'); end;
+function TFailingUser.Add(
+  const aData: RawJson
+  ): TID;
+begin
+  raise Exception.Create('ms.users unavailable');
+end;
+
+function TFailingUser.Update(
+  aId: TID;
+  const aData: RawJson
+  ): boolean;
+begin
+  raise Exception.Create('ms.users unavailable');
+end;
+
+function TFailingUser.Remove(
+  aId: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.users unavailable');
+end;
+
+function TFailingPost.Get(
+  aId: TID
+  ): RawJson;
+begin
+  raise Exception.Create('ms.posts unavailable');
+end;
+
+function TFailingPost.GetBySlug(
+  const aSlug: RawUtf8
+  ): RawJson;
+begin
+  raise Exception.Create('ms.posts unavailable');
+end;
+
+function TFailingPost.GetList(
+  aPage, aLimit, aStatus: integer;
+  aAuthorId: TID
+  ): RawJson;
+begin
+  raise Exception.Create('ms.posts unavailable');
+end;
+
+function TFailingPost.Add(
+  const aData: RawJson
+  ): TID;
+begin
+  raise Exception.Create('ms.posts unavailable');
+end;
+
+function TFailingPost.Update(
+  aId: TID;
+  const aData: RawJson
+  ): boolean;
+begin
+  raise Exception.Create('ms.posts unavailable');
+end;
+
+function TFailingPost.Remove(
+  aId: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.posts unavailable');
+end;
+
+function TFailingTag.Get(
+  aId: TID
+  ): RawJson;
+begin
+  raise Exception.Create('ms.tags unavailable');
+end;
+
 function TFailingTag.GetAll: RawJson;
-begin raise Exception.Create('ms.tags unavailable'); end;
-function TFailingTag.GetByPost(aPostId: TID): RawJson;
-begin raise Exception.Create('ms.tags unavailable'); end;
-function TFailingTag.GetPostIds(aTagId: TID): RawJson;
-begin raise Exception.Create('ms.tags unavailable'); end;
-function TFailingTag.SetPostTags(aPostId: TID; const aTagIds: RawJson): boolean;
-begin raise Exception.Create('ms.tags unavailable'); end;
-function TFailingTag.Add(const aData: RawJson): TID;
-begin raise Exception.Create('ms.tags unavailable'); end;
-function TFailingTag.Update(aId: TID; const aData: RawJson): boolean;
-begin raise Exception.Create('ms.tags unavailable'); end;
-function TFailingTag.Remove(aId: TID): boolean;
-begin raise Exception.Create('ms.tags unavailable'); end;
+begin
+  raise Exception.Create('ms.tags unavailable');
+end;
 
-function TFailingComment.GetByPost(aPostId: TID): RawJson;
-begin raise Exception.Create('ms.comments unavailable'); end;
+function TFailingTag.GetByPost(
+  aPostId: TID
+  ): RawJson;
+begin
+  raise Exception.Create('ms.tags unavailable');
+end;
+
+function TFailingTag.GetPostIds(
+  aTagId: TID
+  ): RawJson;
+begin
+  raise Exception.Create('ms.tags unavailable');
+end;
+
+function TFailingTag.SetPostTags(
+  aPostId: TID;
+  const aTagIds: RawJson
+  ): boolean;
+begin
+  raise Exception.Create('ms.tags unavailable');
+end;
+
+function TFailingTag.Add(
+  const aData: RawJson
+  ): TID;
+begin
+  raise Exception.Create('ms.tags unavailable');
+end;
+
+function TFailingTag.Update(
+  aId: TID;
+  const aData: RawJson
+  ): boolean;
+begin
+  raise Exception.Create('ms.tags unavailable');
+end;
+
+function TFailingTag.Remove(
+  aId: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.tags unavailable');
+end;
+
+function TFailingComment.GetByPost(
+  aPostId: TID
+  ): RawJson;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
 function TFailingComment.GetPending: RawJson;
-begin raise Exception.Create('ms.comments unavailable'); end;
-function TFailingComment.Add(aPostId: TID; const aData: RawJson): TID;
-begin raise Exception.Create('ms.comments unavailable'); end;
-function TFailingComment.Approve(aId, aModeratedBy: TID): boolean;
-begin raise Exception.Create('ms.comments unavailable'); end;
-function TFailingComment.Reject(aId, aModeratedBy: TID): boolean;
-begin raise Exception.Create('ms.comments unavailable'); end;
-function TFailingComment.Remove(aId: TID): boolean;
-begin raise Exception.Create('ms.comments unavailable'); end;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
+function TFailingComment.Add(
+  aPostId: TID;
+  const aData: RawJson
+  ): TID;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
+function TFailingComment.Approve(
+  aId, aModeratedBy: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
+function TFailingComment.Reject(
+  aId, aModeratedBy: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
+function TFailingComment.Remove(
+  aId: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
 
 { TTestBlogResilience }
 
@@ -1357,6 +1576,223 @@ begin
   end;
 end;
 
+{ TTestAnalyticsService }
+
+procedure TTestAnalyticsService.GetOverview;
+var
+  Doc: TDocVariantData;
+begin
+  Doc.InitJson(Context.Analytics.GetOverview, JSON_FAST_FLOAT);
+  Check(Doc.I['posts'] > 0, 'should have posts');
+  Check(Doc.I['authors'] > 0, 'should have authors');
+  Check(Doc.I['tags'] > 0, 'should have tags');
+  Check(Doc.GetValueIndex('pendingComments') >= 0,
+    'should have pendingComments');
+end;
+
+procedure TTestAnalyticsService.GetAuthorStats;
+var
+  AuthorStatsArray: TDocVariantData;
+  FirstAuthor: PDocVariantData;
+begin
+  AuthorStatsArray.InitJson(
+    Context.Analytics.GetAuthorStats, JSON_FAST_FLOAT);
+  Check(AuthorStatsArray.Kind = dvArray, 'should be array');
+  Check(AuthorStatsArray.Count > 0, 'should have at least one author');
+  FirstAuthor := _Safe(AuthorStatsArray.Values[0]);
+  Check(FirstAuthor^.GetValueIndex('authorId') >= 0, 'should have authorId');
+  Check(FirstAuthor^.U['displayName'] <> '', 'should have displayName');
+  Check(FirstAuthor^.GetValueIndex('postCount') >= 0, 'should have postCount');
+end;
+
+procedure TTestAnalyticsService.GetTagCloud;
+var
+  TagCloudArray: TDocVariantData;
+  FirstTag: PDocVariantData;
+begin
+  TagCloudArray.InitJson(
+    Context.Analytics.GetTagCloud, JSON_FAST_FLOAT);
+  Check(TagCloudArray.Kind = dvArray, 'should be array');
+  Check(TagCloudArray.Count > 0, 'should have at least one tag');
+  FirstTag := _Safe(TagCloudArray.Values[0]);
+  Check(FirstTag^.GetValueIndex('tagId') >= 0, 'should have tagId');
+  Check(FirstTag^.U['name'] <> '', 'should have name');
+  Check(FirstTag^.GetValueIndex('postCount') >= 0, 'should have postCount');
+end;
+
+procedure TTestAnalyticsService.GetCommentActivity;
+var
+  Doc: TDocVariantData;
+begin
+  Doc.InitJson(Context.Analytics.GetCommentActivity, JSON_FAST_FLOAT);
+  Check(Doc.GetValueIndex('pendingCount') >= 0, 'should have pendingCount');
+  Check(Doc.GetValueIndex('topCommentedPosts') >= 0,
+    'should have topCommentedPosts');
+end;
+
+procedure TTestAnalyticsService.GetRecentPostsFull;
+var
+  PostsArray: TDocVariantData;
+  FirstPost: PDocVariantData;
+begin
+  PostsArray.InitJson(
+    Context.Analytics.GetRecentPostsFull(5), JSON_FAST_FLOAT);
+  Check(PostsArray.Kind = dvArray, 'should be array');
+  Check(PostsArray.Count > 0, 'should have at least one post');
+  FirstPost := _Safe(PostsArray.Values[0]);
+  Check(FirstPost^.U['Title'] <> '', 'should have Title');
+  Check(FirstPost^.GetValueIndex('Author') >= 0, 'should have Author');
+  Check(FirstPost^.GetValueIndex('Tags') >= 0, 'should have Tags');
+  Check(FirstPost^.GetValueIndex('Comments') >= 0, 'should have Comments');
+end;
+
+procedure TTestAnalyticsService.GetRecentPostsFullEmpty;
+begin
+  CheckEqual(Context.Analytics.GetRecentPostsFull(0), '[]',
+    'limit 0 should return empty array');
+end;
+
+{ TTestAnalyticsResilience }
+
+procedure TTestAnalyticsResilience.GetOverviewWithoutPosts;
+var
+  AnalyticsSvc: TAnalyticsService;
+  Doc: TDocVariantData;
+begin
+  AnalyticsSvc := TAnalyticsService.Create(
+    TFailingPost.Create, TFailingUser.Create,
+    TFailingTag.Create, TFailingComment.Create);
+  try
+    Doc.InitJson(AnalyticsSvc.GetOverview, JSON_FAST_FLOAT);
+    Check(Doc.B['postsUnavailable'], 'postsUnavailable flag');
+    Check(Doc.B['authorsUnavailable'], 'authorsUnavailable flag');
+    Check(Doc.B['tagsUnavailable'], 'tagsUnavailable flag');
+    Check(Doc.B['commentsUnavailable'], 'commentsUnavailable flag');
+  finally
+    AnalyticsSvc.Free;
+  end;
+end;
+
+procedure TTestAnalyticsResilience.GetOverviewWithoutUsers;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  TagImpl: TTagService;
+  CommentImpl: TCommentService;
+  AnalyticsSvc: TAnalyticsService;
+  Doc: TDocVariantData;
+begin
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
+    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    TagImpl := TTagService.Create(Server.Orm);
+    CommentImpl := TCommentService.Create(Server.Orm);
+    PostImpl.Add(
+      '{"Title":"Test","Body":"x","AuthorId":1,"Status":1}');
+    AnalyticsSvc := TAnalyticsService.Create(
+      PostImpl, TFailingUser.Create, TagImpl, CommentImpl);
+    try
+      Doc.InitJson(AnalyticsSvc.GetOverview, JSON_FAST_FLOAT);
+      Check(Doc.I['posts'] > 0, 'posts should be counted');
+      Check(Doc.B['authorsUnavailable'], 'authorsUnavailable flag');
+    finally
+      AnalyticsSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestAnalyticsResilience.GetRecentPostsFullWithoutComments;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  UserImpl: TUserService;
+  TagImpl: TTagService;
+  AnalyticsSvc: TAnalyticsService;
+  PostsArray: TDocVariantData;
+  FirstPost: PDocVariantData;
+begin
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
+    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    UserImpl := TUserService.Create(Server.Orm);
+    TagImpl := TTagService.Create(Server.Orm);
+    UserImpl.Add('{"DisplayName":"Author"}');
+    PostImpl.Add(
+      '{"Title":"Test Post","Body":"x","AuthorId":1,"Status":1}');
+    AnalyticsSvc := TAnalyticsService.Create(
+      PostImpl, UserImpl, TagImpl, TFailingComment.Create);
+    try
+      PostsArray.InitJson(
+        AnalyticsSvc.GetRecentPostsFull(5), JSON_FAST_FLOAT);
+      Check(PostsArray.Count > 0, 'should have posts');
+      FirstPost := _Safe(PostsArray.Values[0]);
+      Check(FirstPost^.U['Title'] = 'Test Post', 'title intact');
+      Check(FirstPost^.B['CommentsUnavailable'],
+        'CommentsUnavailable flag');
+    finally
+      AnalyticsSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestAnalyticsResilience.GetRecentPostsFullWithoutTags;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  UserImpl: TUserService;
+  CommentImpl: TCommentService;
+  AnalyticsSvc: TAnalyticsService;
+  PostsArray: TDocVariantData;
+  FirstPost: PDocVariantData;
+begin
+  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor,
+    TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    UserImpl := TUserService.Create(Server.Orm);
+    CommentImpl := TCommentService.Create(Server.Orm);
+    UserImpl.Add('{"DisplayName":"Author"}');
+    PostImpl.Add(
+      '{"Title":"Test Post","Body":"x","AuthorId":1,"Status":1}');
+    AnalyticsSvc := TAnalyticsService.Create(
+      PostImpl, UserImpl, TFailingTag.Create, CommentImpl);
+    try
+      PostsArray.InitJson(
+        AnalyticsSvc.GetRecentPostsFull(5), JSON_FAST_FLOAT);
+      Check(PostsArray.Count > 0, 'should have posts');
+      FirstPost := _Safe(PostsArray.Values[0]);
+      Check(FirstPost^.U['Title'] = 'Test Post', 'title intact');
+      Check(FirstPost^.B['TagsUnavailable'],
+        'TagsUnavailable flag');
+    finally
+      AnalyticsSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
 { TTestConfigService }
 
 const
@@ -1480,6 +1916,8 @@ begin
   AddCase(TTestMediaService);
   AddCase(TTestBlogAggregation);
   AddCase(TTestBlogResilience);
+  AddCase(TTestAnalyticsService);
+  AddCase(TTestAnalyticsResilience);
   AddCase(TTestConfigService);
   AddCase(TTestFullWorkflow);
 end;

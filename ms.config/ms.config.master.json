@@ -79,5 +79,14 @@
     "HttpBind": "+",
     "CorsOrigin": "*",
     "JwtSecret": "blog-microservices-change-me-in-production"
+  },
+  "ms.analytics": {
+    "Host": "localhost",
+    "Port": "8088",
+    "LogLevel": "debug",
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+"
   }
 }
