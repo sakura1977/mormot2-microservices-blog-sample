@@ -128,7 +128,7 @@ var
   Doc: TDocVariantData;
   Tag: TOrmBlogTag;
   TagId: TID;
-  i: PtrInt;
+  RowIdx: PtrInt;
 begin
   Table := FOrm.MultiFieldValues(TOrmPostTag, 'TagId',
     FormatUtf8('PostId=%', [aPostId]));
@@ -136,9 +136,9 @@ begin
     if (Table = nil) or (Table.RowCount = 0) then
       Exit('[]');
     Doc.InitArray([], JSON_FAST);
-    for i := 1 to Table.RowCount do
+    for RowIdx := 1 to Table.RowCount do
     begin
-      TagId := Table.GetAsInt64(i, 0);
+      TagId := Table.GetAsInt64(RowIdx, 0);
       Tag := TOrmBlogTag.Create;
       try
         if FOrm.Retrieve(TagId, Tag) then
@@ -161,7 +161,7 @@ var
   TagId: TID;
   CountValue: Int64;
   PostTag: TOrmPostTag;
-  i: PtrInt;
+  TagIdx: PtrInt;
 begin
   Result := False;
   Arr.InitJson(aTagIds, JSON_FAST_FLOAT);
@@ -171,9 +171,9 @@ begin
   FOrm.Delete(TOrmPostTag,
     FormatUtf8('PostId=%', [aPostId]));
   // Create new associations
-  for i := 0 to Arr.Count - 1 do
+  for TagIdx := 0 to Arr.Count - 1 do
   begin
-    TagId := Arr.Values[i];
+    TagId := Arr.Values[TagIdx];
     // Avoid duplicates
     CountValue := 0;
     FOrm.OneFieldValue(TOrmPostTag, 'count(*)',

@@ -5,7 +5,10 @@
 /// </summary>
 unit ms.shared.service;
 
+{$SCOPEDENUMS ON}
 {$I mormot.defines.inc}
+{$WARN SYMBOL_PLATFORM OFF}
+{$WARN UNIT_PLATFORM OFF}
 
 interface
 

@@ -4,7 +4,10 @@
 /// </summary>
 unit ms.gateway.server;
 
+{$SCOPEDENUMS ON}
 {$I mormot.defines.inc}
+{$WARN SYMBOL_PLATFORM OFF}
+{$WARN UNIT_PLATFORM OFF}
 
 interface
 
@@ -17,6 +20,7 @@ uses
   mormot.core.json,
   mormot.core.log,
   mormot.core.os,
+  mormot.core.rtti,
   mormot.core.text,
   mormot.core.unicode,
   mormot.core.variants,
@@ -25,7 +29,6 @@ uses
   mormot.net.server,
   mormot.orm.base,
   mormot.orm.core,
-  mormot.core.rtti,
   mormot.rest.core,
   mormot.rest.server,
   mormot.rest.sqlite3,
@@ -152,7 +155,7 @@ function TGatewayServer.ConnectToBackend(const aHost, aPort: RawUtf8;
   const aInterfaces: array of PRttiInfo): TRestHttpClient;
 var
   ClientModel: TOrmModel;
-  i: PtrInt;
+  IntfIdx: PtrInt;
 begin
   ClientModel := TOrmModel.Create([], MODEL_ROOT);
   Result := TRestHttpClient.Create(aHost, aPort, ClientModel);
@@ -160,8 +163,8 @@ begin
   Result.ServiceRegister(aInterfaces, sicShared);
   // Backend services use ResultAsJsonObjectWithoutResult format --
   // the client factories must match to parse responses correctly
-  for i := 0 to High(aInterfaces) do
-    TServiceFactoryClient(Result.Services.Info(aInterfaces[i]))
+  for IntfIdx := 0 to High(aInterfaces) do
+    TServiceFactoryClient(Result.Services.Info(aInterfaces[IntfIdx]))
       .ResultAsJsonObjectWithoutResult := True;
 end;
 

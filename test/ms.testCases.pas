@@ -3,7 +3,10 @@
 /// no HTTP, no ports, no processes.
 unit ms.testCases;
 
+{$SCOPEDENUMS ON}
 {$I mormot.defines.inc}
+{$WARN SYMBOL_PLATFORM OFF}
+{$WARN UNIT_PLATFORM OFF}
 
 interface
 
