@@ -9,6 +9,9 @@
         <Projects Include="ms.config\ms.config.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="ms.logs\ms.logs.dproj">
+            <Dependencies/>
+        </Projects>
         <Projects Include="ms.controller\ms.controller.dproj">
             <Dependencies/>
         </Projects>
@@ -64,6 +67,15 @@
     </Target>
     <Target Name="ms_config:Make">
         <MSBuild Projects="ms.config\ms.config.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ms_logs">
+        <MSBuild Projects="ms.logs\ms.logs.dproj"/>
+    </Target>
+    <Target Name="ms_logs:Clean">
+        <MSBuild Projects="ms.logs\ms.logs.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ms_logs:Make">
+        <MSBuild Projects="ms.logs\ms.logs.dproj" Targets="Make"/>
     </Target>
     <Target Name="ms_controller">
         <MSBuild Projects="ms.controller\ms.controller.dproj"/>
@@ -156,13 +168,13 @@
         <MSBuild Projects="test\ms.tests.dproj" Targets="Make"/>
     </Target>
     <Target Name="Build">
-        <CallTarget Targets="ms_template;ms_config;ms_controller;ms_auth;ms_comments;ms_gateway;ms_media;ms_posts;ms_tags;ms_users;ms_analytics;ms_tests"/>
+        <CallTarget Targets="ms_template;ms_config;ms_logs;ms_controller;ms_auth;ms_comments;ms_gateway;ms_media;ms_posts;ms_tags;ms_users;ms_analytics;ms_tests"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="ms_template:Clean;ms_config:Clean;ms_controller:Clean;ms_auth:Clean;ms_comments:Clean;ms_gateway:Clean;ms_media:Clean;ms_posts:Clean;ms_tags:Clean;ms_users:Clean;ms_analytics:Clean;ms_tests:Clean"/>
+        <CallTarget Targets="ms_template:Clean;ms_config:Clean;ms_logs:Clean;ms_controller:Clean;ms_auth:Clean;ms_comments:Clean;ms_gateway:Clean;ms_media:Clean;ms_posts:Clean;ms_tags:Clean;ms_users:Clean;ms_analytics:Clean;ms_tests:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="ms_template:Make;ms_config:Make;ms_controller:Make;ms_auth:Make;ms_comments:Make;ms_gateway:Make;ms_media:Make;ms_posts:Make;ms_tags:Make;ms_users:Make;ms_analytics:Make;ms_tests:Make"/>
+        <CallTarget Targets="ms_template:Make;ms_config:Make;ms_logs:Make;ms_controller:Make;ms_auth:Make;ms_comments:Make;ms_gateway:Make;ms_media:Make;ms_posts:Make;ms_tags:Make;ms_users:Make;ms_analytics:Make;ms_tests:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

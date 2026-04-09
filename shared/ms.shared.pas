@@ -74,6 +74,11 @@ const
   PORT_ANALYTICS = '8088';
 
   /// <summary>
+  ///   HTTP port for the central logging service.
+  /// </summary>
+  PORT_LOGS      = '8089';
+
+  /// <summary>
   ///   Internal service name for the gateway.
   /// </summary>
   SERVICE_GATEWAY  = 'ms.gateway';
@@ -117,6 +122,11 @@ const
   ///   Internal service name for the analytics service.
   /// </summary>
   SERVICE_ANALYTICS = 'ms.analytics';
+
+  /// <summary>
+  ///   Internal service name for the central logging service.
+  /// </summary>
+  SERVICE_LOGS      = 'ms.logs';
 
   /// <summary>
   ///   Default HMAC-SHA256 secret for JWT signing. IMPORTANT: override this via the JwtSecret field in the service's

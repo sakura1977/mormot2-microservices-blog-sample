@@ -714,6 +714,180 @@ async function loadRecentPostsFullView() {
   app.innerHTML = html;
 }
 
+// === Logs Viewer ===
+const LOG_LEVEL_NAMES = {
+  0: '', 1: 'NONE', 2: 'INFO', 3: 'DEBUG', 4: 'TRACE', 5: 'WARN',
+  6: 'ERROR', 7: 'OSERR', 8: 'EXC', 9: 'EXCOS', 10: 'MEM', 11: 'STACK',
+  12: 'FAIL', 13: 'SQL', 14: 'CACHE', 15: 'RES', 16: 'DB', 17: 'HTTP',
+  18: 'CLI', 19: 'SVR', 20: 'SVCCALL', 21: 'SVCRET', 22: 'USER',
+  23: 'CUSTOM1', 24: 'CUSTOM2', 25: 'CUSTOM3', 26: 'CUSTOM4', 27: 'NEW',
+  28: 'DDD', 29: 'MON'
+};
+
+function logLevelClass(level) {
+  if (level >= 6 && level <= 9) return 'log-error';
+  if (level === 5) return 'log-warn';
+  if (level === 2) return 'log-info';
+  return 'log-other';
+}
+
+function formatTimestamp(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleString('en') + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+async function loadLogs() {
+  app.innerHTML = '<div class="loading">Loading logs...</div>';
+  // Render the static page chrome (filters + results placeholder), then fire the initial query.
+  app.innerHTML = `
+    <h2>Central Logs</h2>
+    <p style="color:var(--text-light)">
+      Every log line from every service, shipped here in real time. Click any correlation ID to see the full
+      cross-service trace for that request.
+    </p>
+    <div class="logs-filters">
+      <input type="text" id="logs-search" placeholder="Full-text search (FTS5)..." style="flex:2">
+      <select id="logs-service" style="flex:1">
+        <option value="">All services</option>
+        <option value="ms.gateway">ms.gateway</option>
+        <option value="ms.auth">ms.auth</option>
+        <option value="ms.users">ms.users</option>
+        <option value="ms.posts">ms.posts</option>
+        <option value="ms.tags">ms.tags</option>
+        <option value="ms.comments">ms.comments</option>
+        <option value="ms.media">ms.media</option>
+        <option value="ms.analytics">ms.analytics</option>
+        <option value="ms.config">ms.config</option>
+        <option value="ms.logs">ms.logs</option>
+      </select>
+      <select id="logs-level" style="flex:1">
+        <option value="0">All levels</option>
+        <option value="2">Info+</option>
+        <option value="5">Warn+</option>
+        <option value="6">Error only</option>
+      </select>
+      <button onclick="refreshLogs()">Refresh</button>
+    </div>
+    <div id="logs-stats" class="logs-stats"></div>
+    <div id="logs-results"><div class="loading">Loading...</div></div>
+  `;
+  $('#logs-search').addEventListener('keydown', e => {
+    if (e.key === 'Enter') refreshLogs();
+  });
+  await loadLogsStats();
+  await refreshLogs();
+}
+
+async function loadLogsStats() {
+  const r = await API.logsStats();
+  const div = $('#logs-stats');
+  if (!div) return;
+  if (!r.ok || !r.data) {
+    div.innerHTML = '<span class="error">Stats unavailable</span>';
+    return;
+  }
+  const d = r.data;
+  let html = `<strong>${d.TotalEntries ?? 0}</strong> total entries`;
+  if (d.Services && d.Services.length > 0) {
+    html += ' &mdash; ';
+    html += d.Services.map(s => {
+      let txt = `${esc(s.ServiceName)}: ${s.TotalCount}`;
+      if (s.ErrorCount > 0) txt += ` <span class="log-error">(${s.ErrorCount} err)</span>`;
+      else if (s.WarningCount > 0) txt += ` <span class="log-warn">(${s.WarningCount} wrn)</span>`;
+      return txt;
+    }).join(' &middot; ');
+  }
+  div.innerHTML = html;
+}
+
+async function refreshLogs() {
+  const div = $('#logs-results');
+  if (!div) return;
+  div.innerHTML = '<div class="loading">Querying...</div>';
+  const searchText = $('#logs-search').value.trim();
+  const serviceName = $('#logs-service').value;
+  const minLevel = parseInt($('#logs-level').value) || 0;
+  let r;
+  if (searchText) {
+    r = await API.logsSearch(searchText, 200);
+  } else {
+    r = await API.logsRecent({
+      ServiceName: serviceName,
+      MinLevel: minLevel,
+      Since: 0,
+      UntilTime: 0,
+      Limit: 200
+    });
+  }
+  if (!r.ok) {
+    div.innerHTML = '<p class="error">Failed to load logs.</p>';
+    return;
+  }
+  const entries = Array.isArray(r.data) ? r.data : [];
+  // Apply client-side service filter for FTS search results since the server-side filter only applies to Recent.
+  const filtered = (searchText && serviceName)
+    ? entries.filter(e => e.ServiceName === serviceName)
+    : entries;
+  renderLogEntries(filtered);
+}
+
+function renderLogEntries(entries) {
+  const div = $('#logs-results');
+  if (!div) return;
+  if (entries.length === 0) {
+    div.innerHTML = '<p style="color:var(--text-light)">No matching log entries.</p>';
+    return;
+  }
+  let html = '<table class="logs-table"><thead><tr><th>Time</th><th>Service</th><th>Level</th><th>Correlation</th><th>Message</th></tr></thead><tbody>';
+  for (const e of entries) {
+    const lvl = LOG_LEVEL_NAMES[e.Level] || String(e.Level);
+    const cls = logLevelClass(e.Level);
+    const corrLink = e.CorrelationId
+      ? `<a href="#" class="log-corr" onclick="loadLogsByCorrelation('${esc(e.CorrelationId)}'); return false;">${esc(e.CorrelationId).substring(0, 8)}...</a>`
+      : '';
+    html += `<tr class="${cls}">
+      <td class="log-ts">${formatTimestamp(e.Timestamp)}</td>
+      <td>${esc(e.ServiceName)}</td>
+      <td><span class="log-level">${lvl}</span></td>
+      <td>${corrLink}</td>
+      <td class="log-msg">${esc(e.Message)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  div.innerHTML = html;
+}
+
+async function loadLogsByCorrelation(corrId) {
+  app.innerHTML = '<div class="loading">Loading correlation trace...</div>';
+  const r = await API.logsByCorrelationId(corrId);
+  if (!r.ok) {
+    app.innerHTML = '<p class="error">Failed to load trace.</p>';
+    return;
+  }
+  const entries = Array.isArray(r.data) ? r.data : [];
+  let html = `<h2>Correlation Trace</h2>
+    <p>All entries with correlation ID <code>${esc(corrId)}</code> (${entries.length} entries)</p>`;
+  if (entries.length === 0) {
+    html += '<p>No entries found.</p>';
+  } else {
+    html += '<table class="logs-table"><thead><tr><th>Time</th><th>Service</th><th>Level</th><th>Message</th></tr></thead><tbody>';
+    for (const e of entries) {
+      const lvl = LOG_LEVEL_NAMES[e.Level] || String(e.Level);
+      const cls = logLevelClass(e.Level);
+      html += `<tr class="${cls}">
+        <td class="log-ts">${formatTimestamp(e.Timestamp)}</td>
+        <td>${esc(e.ServiceName)}</td>
+        <td><span class="log-level">${lvl}</span></td>
+        <td class="log-msg">${esc(e.Message)}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  html += '<p style="margin-top:1rem"><a href="#" onclick="loadLogs(); return false;">&laquo; Back to logs</a></p>';
+  app.innerHTML = html;
+}
+
 // === Utility Functions ===
 function esc(str) {
   if (!str) return '';

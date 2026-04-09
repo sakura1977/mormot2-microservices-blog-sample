@@ -62,6 +62,7 @@ uses
   mormot.soa.server,
   ms.shared,
   ms.shared.api,
+  ms.shared.correlation,
   ms.shared.jwt,
   ms.shared.service,
   ms.auth.model,
@@ -78,6 +79,8 @@ uses
   ms.media.server,
   ms.config.server,
   ms.analytics.server,
+  ms.logs.model,
+  ms.logs.server,
   ms.gateway.server;
 
 type
@@ -146,6 +149,16 @@ type
     ///   Analytics service implementation instance.
     /// </summary>
     FAnalyticsImpl: TAnalyticsService;
+
+    /// <summary>
+    ///   Log ingestion service implementation instance.
+    /// </summary>
+    FLogIngestionImpl: TLogIngestionService;
+
+    /// <summary>
+    ///   Log query service implementation instance.
+    /// </summary>
+    FLogQueryImpl: TLogQueryService;
   public
     /// <summary>
     ///   Auth service interface for test access.
@@ -186,6 +199,16 @@ type
     ///   Analytics service interface for test access.
     /// </summary>
     Analytics: IAnalytics;
+
+    /// <summary>
+    ///   Central log ingestion interface for test access.
+    /// </summary>
+    LogIngestion: ILogIngestion;
+
+    /// <summary>
+    ///   Central log query interface for test access.
+    /// </summary>
+    LogQuery: ILogQuery;
 
     /// <summary>
     ///   Creates all service implementations with a shared in-memory database.
@@ -712,6 +735,111 @@ type
   end;
 
   /// <summary>
+  ///   Tests for the correlation-ID infrastructure in <c>ms.shared.correlation</c>: generation, threadvar
+  ///   storage, header extraction, and the message-text parser used by the central log service.
+  /// </summary>
+  TTestCorrelationIds = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   Verifies that <c>GenerateCorrelationId</c> produces unique values for successive calls.
+    /// </summary>
+    procedure GenerateUnique;
+
+    /// <summary>
+    ///   Verifies that the generated ID is a 36-character lowercase UUID without surrounding braces.
+    /// </summary>
+    procedure GenerateValidFormat;
+
+    /// <summary>
+    ///   Verifies that <c>SetCurrentCorrelationId</c> + <c>GetCurrentCorrelationId</c> round-trip correctly.
+    /// </summary>
+    procedure SetGetRoundTrip;
+
+    /// <summary>
+    ///   Verifies that <c>ClearCurrentCorrelationId</c> resets the threadvar to empty.
+    /// </summary>
+    procedure ClearResetsValue;
+
+    /// <summary>
+    ///   Verifies that <c>ExtractCorrelationIdFromHeaders</c> finds the header in a typical HTTP block.
+    /// </summary>
+    procedure ExtractFromHeadersWhenPresent;
+
+    /// <summary>
+    ///   Verifies that <c>ExtractCorrelationIdFromHeaders</c> returns empty when the header is absent.
+    /// </summary>
+    procedure ExtractFromHeadersWhenAbsent;
+
+    /// <summary>
+    ///   Verifies that header extraction is case-insensitive (mORMot2's <c>FindNameValue</c> contract).
+    /// </summary>
+    procedure ExtractFromHeadersCaseInsensitive;
+
+    /// <summary>
+    ///   Verifies that <c>EnsureCorrelationIdFromHeaders</c> uses the existing header value.
+    /// </summary>
+    procedure EnsureUsesExistingHeader;
+
+    /// <summary>
+    ///   Verifies that <c>EnsureCorrelationIdFromHeaders</c> generates a new ID when none was supplied.
+    /// </summary>
+    procedure EnsureGeneratesWhenAbsent;
+
+    /// <summary>
+    ///   Verifies that the message parser in <c>ms.logs.server</c> finds a UUID prefix.
+    /// </summary>
+    procedure ParseFromMessagePrefix;
+
+    /// <summary>
+    ///   Verifies that the message parser returns empty for plain text without a UUID.
+    /// </summary>
+    procedure ParseFromMessageWithoutUuid;
+
+    /// <summary>
+    ///   Verifies that the message parser ignores bracketed strings that look like UUIDs but are not.
+    /// </summary>
+    procedure ParseFromMessageInvalidBrackets;
+  end;
+
+  /// <summary>
+  ///   Tests for the central logging service (<c>ms.logs</c>): ingestion, retrieval by correlation ID,
+  ///   recent filter, full-text search, and stats. The tests use the in-process REST server with the
+  ///   <c>TOrmLogEntry</c> tables wired into <c>TBlogTestContext</c>.
+  /// </summary>
+  TTestLogService = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   Verifies that an empty correlation-ID query returns an empty array (no exception).
+    /// </summary>
+    procedure ByCorrelationIdEmpty;
+
+    /// <summary>
+    ///   Verifies that ingested entries can be retrieved by their correlation ID.
+    /// </summary>
+    procedure IngestAndQueryByCorrelation;
+
+    /// <summary>
+    ///   Verifies that the parser correctly extracts the correlation ID at ingestion time.
+    /// </summary>
+    procedure IngestParsesCorrelationFromText;
+
+    /// <summary>
+    ///   Verifies that the <c>Recent</c> query honors the service-name filter.
+    /// </summary>
+    procedure RecentFiltersByService;
+
+    /// <summary>
+    ///   Verifies that the <c>Recent</c> query honors the minimum-level filter.
+    /// </summary>
+    procedure RecentFiltersByMinLevel;
+
+    /// <summary>
+    ///   Verifies that <c>Stats</c> returns a non-zero total entries count and per-service breakdown.
+    /// </summary>
+    procedure StatsReportsTotals;
+  end;
+
+  /// <summary>
   ///   Top-level test suite that creates the shared context and registers all test cases.
   /// </summary>
   TBlogTests = class(TSynTests)
@@ -773,7 +901,9 @@ begin
     TOrmBlogTag,
     TOrmPostTag,
     TOrmBlogComment,
-    TOrmMediaFile
+    TOrmMediaFile,
+    TOrmLogEntry,
+    TOrmLogEntryFts
   ], MODEL_ROOT);
   // In-memory database
   FRestServer := TRestServerDB.Create(FModel, SQLITE_MEMORY_DATABASE_NAME);
@@ -793,6 +923,8 @@ begin
   FMediaImpl := TMediaService.Create(FRestServer.Orm, FMediaPath);
   FBlogImpl := TBlogService.Create(FPostImpl, FUserImpl, FTagImpl, FCommentImpl);
   FAnalyticsImpl := TAnalyticsService.Create(FPostImpl, FUserImpl, FTagImpl, FCommentImpl);
+  FLogIngestionImpl := TLogIngestionService.Create(FRestServer.Orm);
+  FLogQueryImpl := TLogQueryService.Create(FRestServer.Orm);
   // Keep interface references
   Auth := FAuthImpl;
   User := FUserImpl;
@@ -802,6 +934,8 @@ begin
   Media := FMediaImpl;
   Blog := FBlogImpl;
   Analytics := FAnalyticsImpl;
+  LogIngestion := FLogIngestionImpl;
+  LogQuery := FLogQueryImpl;
   // Register on REST server
   RegisterService(FAuthImpl, TypeInfo(IAuth));
   RegisterService(FUserImpl, TypeInfo(IUser));
@@ -811,6 +945,8 @@ begin
   RegisterService(FMediaImpl, TypeInfo(IMedia));
   RegisterService(FBlogImpl, TypeInfo(IBlog));
   RegisterService(FAnalyticsImpl, TypeInfo(IAnalytics));
+  RegisterService(FLogIngestionImpl, TypeInfo(ILogIngestion));
+  RegisterService(FLogQueryImpl, TypeInfo(ILogQuery));
 end;
 
 destructor TBlogTestContext.Destroy;
@@ -824,6 +960,8 @@ begin
   Media := nil;
   Blog := nil;
   Analytics := nil;
+  LogIngestion := nil;
+  LogQuery := nil;
   FreeAndNil(FRestServer);
   FreeAndNil(FModel);
   FreeAndNil(FJwt);
@@ -2413,6 +2551,279 @@ begin
   end;
 end;
 
+procedure TTestCorrelationIds.GenerateUnique;
+var
+  IdA, IdB: RawUtf8;
+begin
+  IdA := GenerateCorrelationId;
+  IdB := GenerateCorrelationId;
+  Check(IdA <> '', 'GenerateCorrelationId must not return empty');
+  Check(IdB <> '', 'GenerateCorrelationId must not return empty');
+  Check(IdA <> IdB, 'two successive IDs must differ');
+end;
+
+procedure TTestCorrelationIds.GenerateValidFormat;
+var
+  Id: RawUtf8;
+  CharIdx: PtrInt;
+  Hyphens: integer;
+  CharValue: AnsiChar;
+begin
+  Id := GenerateCorrelationId;
+  CheckEqual(Length(Id), 36, 'UUID length must be 36 chars');
+  Check(Id[1] <> '{', 'UUID must not start with brace');
+  Check(Id[Length(Id)] <> '}', 'UUID must not end with brace');
+  Hyphens := 0;
+  for CharIdx := 1 to Length(Id) do
+  begin
+    CharValue := Id[CharIdx];
+    if CharValue = '-' then
+      Inc(Hyphens)
+    else
+      Check(CharValue in ['0'..'9', 'a'..'f'], 'UUID chars must be lowercase hex');
+  end;
+  CheckEqual(Hyphens, 4, 'UUID must contain exactly 4 hyphens');
+end;
+
+procedure TTestCorrelationIds.SetGetRoundTrip;
+begin
+  ClearCurrentCorrelationId;
+  CheckEqual(GetCurrentCorrelationId, '', 'should start empty');
+  SetCurrentCorrelationId('abc-123');
+  CheckEqual(GetCurrentCorrelationId, 'abc-123', 'set+get should round-trip');
+  ClearCurrentCorrelationId;
+end;
+
+procedure TTestCorrelationIds.ClearResetsValue;
+begin
+  SetCurrentCorrelationId('to-be-cleared');
+  CheckEqual(GetCurrentCorrelationId, 'to-be-cleared');
+  ClearCurrentCorrelationId;
+  CheckEqual(GetCurrentCorrelationId, '', 'after clear must be empty');
+end;
+
+procedure TTestCorrelationIds.ExtractFromHeadersWhenPresent;
+const
+  HEADERS = 'Content-Type: application/json'#13#10 +
+            'X-Correlation-Id: a8f3c1e9-7d24-4b5f-9e1c-2a3b4c5d6e7f'#13#10 +
+            'Authorization: Bearer xyz';
+begin
+  CheckEqual(ExtractCorrelationIdFromHeaders(HEADERS),
+    'a8f3c1e9-7d24-4b5f-9e1c-2a3b4c5d6e7f',
+    'should extract the value verbatim');
+end;
+
+procedure TTestCorrelationIds.ExtractFromHeadersWhenAbsent;
+const
+  HEADERS = 'Content-Type: application/json'#13#10 +
+            'Authorization: Bearer xyz';
+begin
+  CheckEqual(ExtractCorrelationIdFromHeaders(HEADERS), '',
+    'absent header must yield empty string');
+end;
+
+procedure TTestCorrelationIds.ExtractFromHeadersCaseInsensitive;
+const
+  HEADERS_LOWER = 'x-correlation-id: lowercase-value-123'#13#10;
+begin
+  CheckEqual(ExtractCorrelationIdFromHeaders(HEADERS_LOWER),
+    'lowercase-value-123',
+    'lookup must be case-insensitive');
+end;
+
+procedure TTestCorrelationIds.EnsureUsesExistingHeader;
+const
+  HEADERS = 'X-Correlation-Id: client-supplied-id-42'#13#10;
+var
+  Effective: RawUtf8;
+begin
+  ClearCurrentCorrelationId;
+  Effective := EnsureCorrelationIdFromHeaders(HEADERS);
+  CheckEqual(Effective, 'client-supplied-id-42', 'must use existing header');
+  CheckEqual(GetCurrentCorrelationId, 'client-supplied-id-42',
+    'threadvar must be set to the same value');
+  ClearCurrentCorrelationId;
+end;
+
+procedure TTestCorrelationIds.EnsureGeneratesWhenAbsent;
+var
+  Effective: RawUtf8;
+begin
+  ClearCurrentCorrelationId;
+  Effective := EnsureCorrelationIdFromHeaders('Content-Type: application/json');
+  Check(Effective <> '', 'must generate a fresh ID');
+  CheckEqual(Length(Effective), 36, 'generated ID must be a 36-char UUID');
+  CheckEqual(GetCurrentCorrelationId, Effective,
+    'threadvar must hold the generated ID');
+  ClearCurrentCorrelationId;
+end;
+
+procedure TTestCorrelationIds.ParseFromMessagePrefix;
+const
+  MSG = '[a8f3c1e9-7d24-4b5f-9e1c-2a3b4c5d6e7f] ms.posts REQ POST /api/Post/Get';
+begin
+  CheckEqual(ExtractCorrelationIdFromMessage(MSG),
+    'a8f3c1e9-7d24-4b5f-9e1c-2a3b4c5d6e7f',
+    'must find the UUID prefix');
+end;
+
+procedure TTestCorrelationIds.ParseFromMessageWithoutUuid;
+begin
+  CheckEqual(ExtractCorrelationIdFromMessage(
+    'ms.gateway starting on port 8080...'), '',
+    'plain text must yield empty');
+  CheckEqual(ExtractCorrelationIdFromMessage(''), '',
+    'empty input must yield empty');
+end;
+
+procedure TTestCorrelationIds.ParseFromMessageInvalidBrackets;
+begin
+  CheckEqual(ExtractCorrelationIdFromMessage('[not-a-uuid] message'), '',
+    'too short to be a UUID');
+  CheckEqual(ExtractCorrelationIdFromMessage(
+    '[zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz] message'), '',
+    'non-hex chars must not match');
+  CheckEqual(ExtractCorrelationIdFromMessage(
+    '[a8f3c1e9-7d24-4b5f-9e1c-2a3b4c5d6e7f extra]'), '',
+    '37 chars between brackets must not match');
+end;
+
+procedure TTestLogService.ByCorrelationIdEmpty;
+var
+  Entries: TLogEntryDtoArray;
+begin
+  Entries := Context.LogQuery.ByCorrelationId('');
+  CheckEqual(Length(Entries), 0, 'empty correlation ID returns empty array');
+  Entries := Context.LogQuery.ByCorrelationId('does-not-exist-id-9999');
+  CheckEqual(Length(Entries), 0, 'unknown correlation ID returns empty array');
+end;
+
+procedure TTestLogService.IngestAndQueryByCorrelation;
+const
+  CORR_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+var
+  Batch: TLogEntryIngestDtoArray;
+  Entries: TLogEntryDtoArray;
+begin
+  SetLength(Batch, 2);
+  Batch[0].ServiceName := 'ms.gateway';
+  Batch[0].Timestamp := NowUtc;
+  Batch[0].Level := 1;
+  Batch[0].Message := '[' + CORR_ID + '] ms.gateway REQ POST /api/Post/Get';
+  Batch[1].ServiceName := 'ms.posts';
+  Batch[1].Timestamp := NowUtc;
+  Batch[1].Level := 1;
+  Batch[1].Message := '[' + CORR_ID + '] ms.posts REQ POST /api/Post/Get';
+  Context.LogIngestion.AppendBatch(Batch);
+  Entries := Context.LogQuery.ByCorrelationId(CORR_ID);
+  CheckEqual(Length(Entries), 2, 'should retrieve both ingested entries');
+  Check((Entries[0].ServiceName = 'ms.gateway') or (Entries[1].ServiceName = 'ms.gateway'),
+    'one entry must come from ms.gateway');
+  Check((Entries[0].ServiceName = 'ms.posts') or (Entries[1].ServiceName = 'ms.posts'),
+    'one entry must come from ms.posts');
+end;
+
+procedure TTestLogService.IngestParsesCorrelationFromText;
+const
+  CORR_ID = '11111111-2222-3333-4444-555555555555';
+var
+  Batch: TLogEntryIngestDtoArray;
+  Entries: TLogEntryDtoArray;
+begin
+  SetLength(Batch, 1);
+  Batch[0].ServiceName := 'ms.users';
+  Batch[0].Timestamp := NowUtc;
+  Batch[0].Level := 1;
+  Batch[0].Message := '[' + CORR_ID + '] some message body here';
+  Context.LogIngestion.AppendBatch(Batch);
+  Entries := Context.LogQuery.ByCorrelationId(CORR_ID);
+  CheckEqual(Length(Entries), 1, 'should find the ingested entry');
+  CheckEqual(Entries[0].CorrelationId, CORR_ID,
+    'parser must populate the indexed CorrelationId column');
+end;
+
+procedure TTestLogService.RecentFiltersByService;
+const
+  CORR_ID = '99999999-8888-7777-6666-555555555555';
+var
+  Batch: TLogEntryIngestDtoArray;
+  Filter: TLogQueryFilter;
+  Entries: TLogEntryDtoArray;
+  EntryIdx: PtrInt;
+begin
+  SetLength(Batch, 2);
+  Batch[0].ServiceName := 'ms.tags';
+  Batch[0].Timestamp := NowUtc;
+  Batch[0].Level := 1;
+  Batch[0].Message := '[' + CORR_ID + '] ms.tags entry';
+  Batch[1].ServiceName := 'ms.comments';
+  Batch[1].Timestamp := NowUtc;
+  Batch[1].Level := 1;
+  Batch[1].Message := '[' + CORR_ID + '] ms.comments entry';
+  Context.LogIngestion.AppendBatch(Batch);
+  FillCharFast(Filter, SizeOf(Filter), 0);
+  Filter.ServiceName := 'ms.tags';
+  Filter.Limit := 50;
+  Entries := Context.LogQuery.Recent(Filter);
+  Check(Length(Entries) > 0, 'should find at least the ingested ms.tags entry');
+  for EntryIdx := 0 to High(Entries) do
+    CheckEqual(Entries[EntryIdx].ServiceName, 'ms.tags',
+      'filter must exclude other services');
+end;
+
+procedure TTestLogService.RecentFiltersByMinLevel;
+var
+  Batch: TLogEntryIngestDtoArray;
+  Filter: TLogQueryFilter;
+  Entries: TLogEntryDtoArray;
+  EntryIdx: PtrInt;
+begin
+  SetLength(Batch, 3);
+  Batch[0].ServiceName := 'ms.media';
+  Batch[0].Timestamp := NowUtc;
+  Batch[0].Level := 1; // info
+  Batch[0].Message := 'ms.media info entry';
+  Batch[1].ServiceName := 'ms.media';
+  Batch[1].Timestamp := NowUtc;
+  Batch[1].Level := 4; // warning
+  Batch[1].Message := 'ms.media warning entry';
+  Batch[2].ServiceName := 'ms.media';
+  Batch[2].Timestamp := NowUtc;
+  Batch[2].Level := 5; // error
+  Batch[2].Message := 'ms.media error entry';
+  Context.LogIngestion.AppendBatch(Batch);
+  FillCharFast(Filter, SizeOf(Filter), 0);
+  Filter.ServiceName := 'ms.media';
+  Filter.MinLevel := 4;
+  Filter.Limit := 50;
+  Entries := Context.LogQuery.Recent(Filter);
+  Check(Length(Entries) >= 2, 'should find at least the warning and error entries');
+  for EntryIdx := 0 to High(Entries) do
+    Check(Entries[EntryIdx].Level >= 4,
+      'MinLevel filter must exclude lower-level entries');
+end;
+
+procedure TTestLogService.StatsReportsTotals;
+var
+  Batch: TLogEntryIngestDtoArray;
+  Stats: TLogStatsDto;
+begin
+  // Make sure there is at least one entry so the stats are non-trivial.
+  SetLength(Batch, 1);
+  Batch[0].ServiceName := 'ms.analytics';
+  Batch[0].Timestamp := NowUtc;
+  Batch[0].Level := 1;
+  Batch[0].Message := 'ms.analytics smoke test entry';
+  Context.LogIngestion.AppendBatch(Batch);
+  Stats := Context.LogQuery.Stats;
+  Check(Stats.TotalEntries > 0, 'TotalEntries must be > 0 after ingestion');
+  Check(Length(Stats.Services) > 0, 'Services array must contain at least one entry');
+  Check(Stats.NewestEntry > 0, 'NewestEntry must be set');
+  Check(Stats.OldestEntry > 0, 'OldestEntry must be set');
+  Check(Stats.OldestEntry <= Stats.NewestEntry,
+    'OldestEntry must be <= NewestEntry');
+end;
+
 constructor TBlogTests.Create(
   const Ident: string
   );
@@ -2442,6 +2853,8 @@ begin
   AddCase(TTestAnalyticsService);
   AddCase(TTestAnalyticsResilience);
   AddCase(TTestConfigService);
+  AddCase(TTestCorrelationIds);
+  AddCase(TTestLogService);
   AddCase(TTestFullWorkflow);
 end;
 

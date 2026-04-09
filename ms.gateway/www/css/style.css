@@ -225,6 +225,26 @@ button.btn-outline:hover { background: var(--primary); color: #fff; }
 .enriched-comments em { color: var(--text-light); font-size: .85rem; }
 .enriched-comments .comment { margin-bottom: .5rem; padding: .5rem .75rem; }
 
+/* === Logs Viewer === */
+.logs-filters { display: flex; gap: .5rem; margin: 1rem 0; flex-wrap: wrap; }
+.logs-filters input, .logs-filters select { padding: .4rem .6rem; }
+.logs-filters button { margin-top: 0; }
+.logs-stats { font-size: .85rem; color: var(--text-light); margin-bottom: 1rem; padding: .5rem; background: var(--bg); border-radius: var(--radius); }
+.logs-table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .8rem; font-family: 'Consolas', 'Monaco', monospace; }
+.logs-table th, .logs-table td { padding: .3rem .5rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+.logs-table th { font-size: .75rem; color: var(--text-light); font-weight: 600; text-transform: uppercase; }
+.logs-table tr.log-error { background: #fee2e2; }
+.logs-table tr.log-warn { background: #fef3c7; }
+.logs-table tr.log-info { background: var(--surface); }
+.logs-table tr.log-other { background: var(--bg); }
+.logs-table tr:hover { filter: brightness(0.96); }
+.log-ts { white-space: nowrap; color: var(--text-light); }
+.log-level { display: inline-block; padding: .05rem .35rem; border-radius: 3px; background: rgba(0,0,0,.08); font-size: .7rem; font-weight: 600; }
+.log-corr { font-family: monospace; font-size: .75rem; }
+.log-msg { word-break: break-word; max-width: 600px; }
+.log-error .log-level { background: var(--danger); color: #fff; }
+.log-warn .log-level { background: #f59e0b; color: #fff; }
+
 /* === Pagination === */
 .pagination { display: flex; justify-content: center; gap: .5rem; margin-top: 2rem; }
 .pagination button { margin-top: 0; }

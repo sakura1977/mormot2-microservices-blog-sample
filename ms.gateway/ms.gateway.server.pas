@@ -183,6 +183,11 @@ type
     FAnalyticsClient: TRestHttpClient;
 
     /// <summary>
+    ///   REST HTTP client connected to the central logging backend service.
+    /// </summary>
+    FLogsClient: TRestHttpClient;
+
+    /// <summary>
     ///   Service registry loaded from the configuration service, mapping service names to host/port.
     /// </summary>
     FServiceRegistry: TDocVariantData;
@@ -231,6 +236,11 @@ type
     ///   Resolved remote interface for the Analytics backend service.
     /// </summary>
     FAnalytics: IAnalytics;
+
+    /// <summary>
+    ///   Resolved remote interface for the central log query backend service.
+    /// </summary>
+    FLogQuery: ILogQuery;
 
     /// <summary>
     ///   Creates a REST HTTP client connected to a backend service and registers the given interfaces.
@@ -645,6 +655,11 @@ begin
     RegistryLookup(SERVICE_ANALYTICS, 'Port', PORT_ANALYTICS),
     [TypeInfo(IAnalytics)]);
   FAnalyticsClient.Services.Resolve(IAnalytics, FAnalytics);
+  FLogsClient := ConnectToBackend(
+    RegistryLookup(SERVICE_LOGS, 'Host', 'localhost'),
+    RegistryLookup(SERVICE_LOGS, 'Port', PORT_LOGS),
+    [TypeInfo(ILogQuery)]);
+  FLogsClient.Services.Resolve(ILogQuery, FLogQuery);
   // Register resolved client interfaces directly as server services.
   // The client-resolved interfaces are TInterfacedObjectFake instances
   // that already implement the interface -- no manual proxy classes needed.
@@ -655,6 +670,7 @@ begin
   RegisterService(ObjectFromInterface(FComments) as TInterfacedObject, TypeInfo(IComment));
   RegisterService(ObjectFromInterface(FMedia) as TInterfacedObject, TypeInfo(IMedia));
   RegisterService(ObjectFromInterface(FAnalytics) as TInterfacedObject, TypeInfo(IAnalytics));
+  RegisterService(ObjectFromInterface(FLogQuery) as TInterfacedObject, TypeInfo(ILogQuery));
   // Aggregation service -- actual business logic, not a proxy
   RegisterService(TBlogService.Create(FPosts, FUsers, FTags, FComments), TypeInfo(IBlog));
 end;
@@ -678,6 +694,8 @@ begin
   FComments := nil;
   FMedia := nil;
   FAnalytics := nil;
+  FLogQuery := nil;
+  FreeAndNil(FLogsClient);
   FreeAndNil(FAnalyticsClient);
   FreeAndNil(FMediaClient);
   FreeAndNil(FCommentsClient);

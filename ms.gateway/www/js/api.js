@@ -363,5 +363,31 @@ const API = {
     if (r.ok) r.data = typeof r.data.Result === 'string'
       ? JSON.parse(r.data.Result) : r.data.Result;
     return r;
+  },
+
+  // --- Logs (central logging service via gateway proxy) ---
+  async logsByCorrelationId(id) {
+    const r = await soaCall('LogQuery', 'ByCorrelationId', [id]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async logsRecent(filter = {}) {
+    const r = await soaCall('LogQuery', 'Recent', [filter]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async logsSearch(text, limit = 100) {
+    const r = await soaCall('LogQuery', 'Search', [text, limit]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async logsStats() {
+    const r = await soaCall('LogQuery', 'Stats', []);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
   }
 };

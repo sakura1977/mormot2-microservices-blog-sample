@@ -88,5 +88,15 @@
     "HttpThreads": 4,
     "HttpSecurity": "secNone",
     "HttpBind": "+"
+  },
+  "ms.logs": {
+    "Host": "localhost",
+    "Port": "8089",
+    "Database": "ms.logs.db",
+    "LogLevel": "info",
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+"
   }
 }

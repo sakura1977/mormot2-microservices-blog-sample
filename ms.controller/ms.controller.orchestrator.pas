@@ -639,16 +639,18 @@ begin
   WriteLn('=== ms.controller ===');
   WriteLn('Registering services...');
 
-  // Register all blog services (order matters for startup)
-  RegisterService(SERVICE_CONFIG,   PORT_CONFIG);
-  RegisterService(SERVICE_MEDIA,    PORT_MEDIA);
-  RegisterService(SERVICE_USERS,    PORT_USERS);
-  RegisterService(SERVICE_AUTH,     PORT_AUTH);
-  RegisterService(SERVICE_POSTS,    PORT_POSTS);
-  RegisterService(SERVICE_TAGS,     PORT_TAGS);
-  RegisterService(SERVICE_COMMENTS, PORT_COMMENTS);
+  // Register all blog services (order matters for startup).
+  // ms.logs starts right after ms.config so the rest can ship their startup logs to it.
+  RegisterService(SERVICE_CONFIG,    PORT_CONFIG);
+  RegisterService(SERVICE_LOGS,      PORT_LOGS);
+  RegisterService(SERVICE_MEDIA,     PORT_MEDIA);
+  RegisterService(SERVICE_USERS,     PORT_USERS);
+  RegisterService(SERVICE_AUTH,      PORT_AUTH);
+  RegisterService(SERVICE_POSTS,     PORT_POSTS);
+  RegisterService(SERVICE_TAGS,      PORT_TAGS);
+  RegisterService(SERVICE_COMMENTS,  PORT_COMMENTS);
   RegisterService(SERVICE_ANALYTICS, PORT_ANALYTICS);
-  RegisterService(SERVICE_GATEWAY,  PORT_GATEWAY);
+  RegisterService(SERVICE_GATEWAY,   PORT_GATEWAY);
 
   WriteLn(Length(FServices), ' services registered.');
   WriteLn('');

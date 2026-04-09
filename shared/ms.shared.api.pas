@@ -822,6 +822,174 @@ type
   end;
 
   // -----------------------------------------------------------------------
+  //  Central Logging DTOs (ms.logs)
+  // -----------------------------------------------------------------------
+
+  /// <summary>
+  ///   Single log entry as shipped from a producing service to <c>ms.logs</c>. The correlation ID is intentionally
+  ///   not a separate field -- it is parsed out of <c>Message</c> on the server side, since the existing
+  ///   <c>LogWithCorrelation</c> helper already prepends it.
+  /// </summary>
+  TLogEntryIngestDto = packed record
+  public
+    /// <summary>
+    ///   The producing service identifier (e.g. <c>ms.posts</c>).
+    /// </summary>
+    ServiceName: RawUtf8;
+
+    /// <summary>
+    ///   When the log line was emitted (UTC).
+    /// </summary>
+    Timestamp: TDateTime;
+
+    /// <summary>
+    ///   <c>TSynLogLevel</c> ordinal -- 0=none, 1=info, ..., see mormot.core.log.
+    /// </summary>
+    Level: integer;
+
+    /// <summary>
+    ///   The full log line text. May contain a leading <c>[correlation-id]</c> prefix added by
+    ///   <c>LogWithCorrelation</c>.
+    /// </summary>
+    Message: RawUtf8;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TLogEntryIngestDto</c> records used for batched ingestion.
+  /// </summary>
+  TLogEntryIngestDtoArray = array of TLogEntryIngestDto;
+
+  /// <summary>
+  ///   Single log entry as returned to query clients (browser, gateway). Carries the parsed correlation ID
+  ///   and the persistent record ID.
+  /// </summary>
+  TLogEntryDto = packed record
+  public
+    /// <summary>
+    ///   Persistent record identifier.
+    /// </summary>
+    ID: TID;
+
+    /// <summary>
+    ///   Producing service name.
+    /// </summary>
+    ServiceName: RawUtf8;
+
+    /// <summary>
+    ///   Timestamp when the entry was logged (UTC).
+    /// </summary>
+    Timestamp: TDateTime;
+
+    /// <summary>
+    ///   <c>TSynLogLevel</c> ordinal.
+    /// </summary>
+    Level: integer;
+
+    /// <summary>
+    ///   Correlation ID extracted from the message text, or empty if none was present.
+    /// </summary>
+    CorrelationId: RawUtf8;
+
+    /// <summary>
+    ///   The full log line text.
+    /// </summary>
+    Message: RawUtf8;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TLogEntryDto</c> records returned by query methods.
+  /// </summary>
+  TLogEntryDtoArray = array of TLogEntryDto;
+
+  /// <summary>
+  ///   Filter parameters for the <c>Recent</c> query. Empty/zero fields disable the corresponding filter.
+  /// </summary>
+  TLogQueryFilter = packed record
+  public
+    /// <summary>
+    ///   Optional service name filter (exact match). Empty = all services.
+    /// </summary>
+    ServiceName: RawUtf8;
+
+    /// <summary>
+    ///   Optional minimum level (inclusive). 0 = no level filter.
+    /// </summary>
+    MinLevel: integer;
+
+    /// <summary>
+    ///   Optional lower bound on timestamp (UTC). 0 = no lower bound.
+    /// </summary>
+    Since: TDateTime;
+
+    /// <summary>
+    ///   Optional upper bound on timestamp (UTC). 0 = no upper bound.
+    /// </summary>
+    UntilTime: TDateTime;
+
+    /// <summary>
+    ///   Maximum rows to return. Clamped to 1..1000 server-side. 0 falls back to the default of 100.
+    /// </summary>
+    Limit: integer;
+  end;
+
+  /// <summary>
+  ///   Aggregate counts grouped by service and severity, used by the dashboard tile.
+  /// </summary>
+  TLogServiceStatDto = packed record
+  public
+    /// <summary>
+    ///   The producing service.
+    /// </summary>
+    ServiceName: RawUtf8;
+
+    /// <summary>
+    ///   Total entries from this service.
+    /// </summary>
+    TotalCount: integer;
+
+    /// <summary>
+    ///   Number of warning entries.
+    /// </summary>
+    WarningCount: integer;
+
+    /// <summary>
+    ///   Number of error entries.
+    /// </summary>
+    ErrorCount: integer;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TLogServiceStatDto</c>.
+  /// </summary>
+  TLogServiceStatDtoArray = array of TLogServiceStatDto;
+
+  /// <summary>
+  ///   Snapshot of the central log store: total entries, oldest/newest timestamps, per-service breakdown.
+  /// </summary>
+  TLogStatsDto = packed record
+  public
+    /// <summary>
+    ///   Total number of stored log entries.
+    /// </summary>
+    TotalEntries: integer;
+
+    /// <summary>
+    ///   Timestamp of the oldest entry in the store, or 0 if empty.
+    /// </summary>
+    OldestEntry: TDateTime;
+
+    /// <summary>
+    ///   Timestamp of the most recent entry, or 0 if empty.
+    /// </summary>
+    NewestEntry: TDateTime;
+
+    /// <summary>
+    ///   Per-service breakdown.
+    /// </summary>
+    Services: TLogServiceStatDtoArray;
+  end;
+
+  // -----------------------------------------------------------------------
   //  Service Interfaces
   // -----------------------------------------------------------------------
 
@@ -1518,6 +1686,83 @@ type
       ): TPostFullDtoArray;
   end;
 
+  /// <summary>
+  ///   Write-side of the central logging service. Producing services ship batches of log entries here from a
+  ///   background thread to keep the calling thread non-blocking.
+  /// </summary>
+  ILogIngestion = interface(IInvokable)
+    ['{C2D3E4F5-A6B7-8C9D-0E1F-2A3B4C5D6E7F}']
+
+    /// <summary>
+    ///   Appends a batch of log entries from a single producing service.
+    /// </summary>
+    /// <param name="aEntries">
+    ///   The entries to persist. Each one carries its own service name, timestamp, level and message text.
+    /// </param>
+    procedure AppendBatch(
+      const aEntries: TLogEntryIngestDtoArray
+      );
+  end;
+
+  /// <summary>
+  ///   Read-side of the central logging service. Used by the gateway/browser to retrieve and search log entries
+  ///   across all microservices.
+  /// </summary>
+  ILogQuery = interface(IInvokable)
+    ['{D3E4F5A6-B7C8-9D0E-1F2A-3B4C5D6E7F8A}']
+
+    /// <summary>
+    ///   Returns every log entry that belongs to one user request, identified by its correlation ID.
+    /// </summary>
+    /// <param name="aId">
+    ///   The correlation ID to look up.
+    /// </param>
+    /// <returns>
+    ///   Matching entries sorted by timestamp ascending. Empty array if none found.
+    /// </returns>
+    function ByCorrelationId(
+      const aId: RawUtf8
+      ): TLogEntryDtoArray;
+
+    /// <summary>
+    ///   Returns recent log entries matching the supplied filter.
+    /// </summary>
+    /// <param name="aFilter">
+    ///   Filter parameters. Empty/zero fields disable the corresponding filter.
+    /// </param>
+    /// <returns>
+    ///   Matching entries sorted by timestamp descending.
+    /// </returns>
+    function Recent(
+      const aFilter: TLogQueryFilter
+      ): TLogEntryDtoArray;
+
+    /// <summary>
+    ///   Full-text search across the message column using SQLite FTS5.
+    /// </summary>
+    /// <param name="aText">
+    ///   The FTS5 match expression (typically just words).
+    /// </param>
+    /// <param name="aLimit">
+    ///   Maximum rows to return (clamped to 1..1000).
+    /// </param>
+    /// <returns>
+    ///   Matching entries sorted by timestamp descending.
+    /// </returns>
+    function Search(
+      const aText: RawUtf8;
+      aLimit: integer
+      ): TLogEntryDtoArray;
+
+    /// <summary>
+    ///   Returns aggregate counts for the dashboard tile: total entries, time range, per-service breakdown.
+    /// </summary>
+    /// <returns>
+    ///   The current statistics snapshot.
+    /// </returns>
+    function Stats: TLogStatsDto;
+  end;
+
 implementation
 
 initialization
@@ -1550,5 +1795,13 @@ initialization
   Rtti.RegisterType(TypeInfo(TTopCommentedPostDto));
   Rtti.RegisterType(TypeInfo(TTopCommentedPostDtoArray));
   Rtti.RegisterType(TypeInfo(TCommentActivityDto));
+  Rtti.RegisterType(TypeInfo(TLogEntryIngestDto));
+  Rtti.RegisterType(TypeInfo(TLogEntryIngestDtoArray));
+  Rtti.RegisterType(TypeInfo(TLogEntryDto));
+  Rtti.RegisterType(TypeInfo(TLogEntryDtoArray));
+  Rtti.RegisterType(TypeInfo(TLogQueryFilter));
+  Rtti.RegisterType(TypeInfo(TLogServiceStatDto));
+  Rtti.RegisterType(TypeInfo(TLogServiceStatDtoArray));
+  Rtti.RegisterType(TypeInfo(TLogStatsDto));
 
 end.

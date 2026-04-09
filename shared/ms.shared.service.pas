@@ -48,7 +48,8 @@ uses
   mormot.soa.server,
   ms.shared,
   ms.shared.api,
-  ms.shared.correlation;
+  ms.shared.correlation,
+  ms.shared.logclient;
 
 type
 
@@ -81,6 +82,13 @@ type
     ///   <c>HandleRequestWithCorrelation</c> delegates to this after extracting/setting the request's correlation ID.
     /// </summary>
     FInnerHttpHandler: TOnHttpServerRequest;
+
+    /// <summary>
+    ///   Background log shipper that forwards every log line of this service to the central <c>ms.logs</c> service.
+    ///   Created in <c>InitLogging</c>, attached at the start of <c>Run</c>, detached during shutdown. May be
+    ///   <c>nil</c> for the <c>ms.logs</c> service itself to avoid a circular dependency.
+    /// </summary>
+    FLogShipper: TLogShipper;
 
     /// <summary>
     ///   Configures <c>TSynLog</c> with file rotation, per-service log files, and console echo. Log level is read from
@@ -399,6 +407,9 @@ end;
 
 destructor TMicroService.Destroy;
 begin
+  if FLogShipper <> nil then
+    FLogShipper.Detach;
+  FreeAndNil(FLogShipper);
   FreeAndNil(FHttpServer);
   FreeAndNil(FRestServer);
   FreeAndNil(FModel);
@@ -495,6 +506,10 @@ begin
     FLogFamily.Level := LOG_VERBOSE - [sllTrace];
   // Echo log entries to the console (useful for development)
   FLogFamily.EchoToConsole := FLogFamily.Level;
+  // Create the central-log shipper for every service except ms.logs itself (which would otherwise loop
+  // its own log entries back into its own ingestion endpoint).
+  if FServiceName <> SERVICE_LOGS then
+    FLogShipper := TLogShipper.Create(FServiceName, 'localhost', PORT_LOGS);
 end;
 
 function TMicroService.RegisterService(
@@ -525,6 +540,9 @@ var
   DatabasePath: TFileName;
 begin
   FStartTime := NowUtc;
+  // Attach the central-log shipper before any logging happens, so even startup messages reach ms.logs.
+  if FLogShipper <> nil then
+    FLogShipper.Attach;
   LogWithCorrelation(sllInfo, '% starting on port %...', [FServiceName, FPort], self);
   try
     // --- Phase 1: Create ORM model and database ---
@@ -596,11 +614,17 @@ begin
     FreeAndNil(FRestServer);
     FreeAndNil(FModel);
     LogWithCorrelation(sllInfo, '% stopped.', [FServiceName], self);
+    // Detach the shipper so its background thread stops cleanly before the process exits. Done here rather
+    // than in Destroy so that final shutdown log lines still get a chance to flush.
+    if FLogShipper <> nil then
+      FLogShipper.Detach;
   except
     on E: Exception do
     begin
       LogWithCorrelation(sllError, 'ERROR in %: %', [FServiceName, E.Message], self);
       WriteLn('ERROR: ', E.Message);
+      if FLogShipper <> nil then
+        FLogShipper.Detach;
     end;
   end;
 end;
