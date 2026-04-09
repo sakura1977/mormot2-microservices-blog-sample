@@ -516,9 +516,9 @@ var
   AuthorIdKey: RawUtf8;
   CachedAuthorIdx: PtrInt;
 begin
-  // Clamp limit
+  // Zero or negative limit returns empty
   if aLimit < 1 then
-    aLimit := 5;
+    Exit('[]');
   if aLimit > 50 then
     aLimit := 50;
   // Step 1: fetch recent published posts
