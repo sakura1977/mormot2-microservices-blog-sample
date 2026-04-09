@@ -144,14 +144,34 @@ const SCRAM = {
 // ============================================================
 
 /**
+ * Generates a UUID v4 (random) for use as a correlation ID.
+ * Uses crypto.randomUUID() when available, falls back to a manual implementation.
+ */
+function newCorrelationId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  // RFC 4122 v4 fallback
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+/**
  * Calls a mORMot2 interface-based service method.
  * @param {string} service  - Interface name (e.g. 'Auth', 'Post')
  * @param {string} method   - Method name (e.g. 'Challenge', 'GetList')
  * @param {Array}  params   - Positional input parameters as JSON array
- * @returns {object} { ok, status, data } where data is the parsed result object
+ * @returns {object} { ok, status, data, correlationId } where data is the parsed result object
  */
 async function soaCall(service, method, params = []) {
-  const headers = { 'Content-Type': 'application/json' };
+  const correlationId = newCorrelationId();
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Correlation-Id': correlationId
+  };
   if (API.token) headers['Authorization'] = 'Bearer ' + API.token;
   const resp = await fetch(`/api/${service}/${method}`, {
     method: 'POST',
@@ -161,7 +181,11 @@ async function soaCall(service, method, params = []) {
   const text = await resp.text();
   let data = null;
   try { data = JSON.parse(text); } catch { data = text; }
-  return { status: resp.status, ok: resp.ok, data };
+  // Server may echo a different ID if the gateway generated one (shouldn't happen since we always send one)
+  const serverCorrelationId = resp.headers.get('X-Correlation-Id') || correlationId;
+  // Trace per-call in the browser console -- handy when grep'ing the server logs
+  console.debug(`[${serverCorrelationId}] ${service}.${method} -> ${resp.status}`);
+  return { status: resp.status, ok: resp.ok, data, correlationId: serverCorrelationId };
 }
 
 // ============================================================

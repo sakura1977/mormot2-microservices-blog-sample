@@ -48,6 +48,7 @@ uses
   mormot.net.server,
   mormot.orm.base,
   mormot.orm.core,
+  mormot.rest.client,
   mormot.rest.core,
   mormot.rest.server,
   mormot.rest.sqlite3,
@@ -58,6 +59,7 @@ uses
   mormot.soa.server,
   ms.shared,
   ms.shared.api,
+  ms.shared.correlation,
   ms.shared.jwt,
   ms.shared.service;
 
@@ -250,6 +252,25 @@ type
       const aPort: RawUtf8;
       const aInterfaces: array of PRttiInfo
       ): TRestHttpClient;
+
+    /// <summary>
+    ///   Per-call hook installed on every backend <c>TRestHttpClient</c>. Reads the current request's correlation ID
+    ///   from the threadvar and appends it to the outgoing HTTP headers, ensuring backend services receive the same
+    ///   ID and can include it in their own logs.
+    /// </summary>
+    /// <param name="aSender">
+    ///   The REST client making the call (provided by mORMot2, unused here).
+    /// </param>
+    /// <param name="aCall">
+    ///   The REST call parameters; <c>InHead</c> is mutated to include the correlation header.
+    /// </param>
+    /// <returns>
+    ///   Always <c>True</c> to allow the call to proceed.
+    /// </returns>
+    function ForwardCorrelationId(
+      aSender: TRestClientUri;
+      var aCall: TRestUriParams
+      ): boolean;
 
     /// <summary>
     ///   Looks up a field value for a service in the registry, falling back to a default.
@@ -496,6 +517,23 @@ begin
   // the client factories must match to parse responses correctly
   for IntfIdx := 0 to High(aInterfaces) do
     TServiceFactoryClient(Result.Services.Info(aInterfaces[IntfIdx])).ResultAsJsonObjectWithoutResult := True;
+  // Inject the current request's correlation ID into every outgoing call.
+  // OnBeforeCall fires per-call, on the calling thread, so it correctly picks up the threadvar
+  // set by HandleRequest at the gateway entry point.
+  Result.OnBeforeCall := ForwardCorrelationId;
+end;
+
+function TGatewayServer.ForwardCorrelationId(
+  aSender: TRestClientUri;
+  var aCall: TRestUriParams
+  ): boolean;
+var
+  CorrId: RawUtf8;
+begin
+  CorrId := GetCurrentCorrelationId;
+  if CorrId <> '' then
+    AppendLine(aCall.InHead, [CORRELATION_HEADER + ': ', CorrId]);
+  Result := True;
 end;
 
 function TGatewayServer.CreateModel: TOrmModel;
@@ -652,24 +690,39 @@ end;
 function TGatewayServer.HandleRequest(
   aCtxt: THttpServerRequestAbstract
   ): cardinal;
+var
+  CorrId: RawUtf8;
 begin
-  // Add CORS headers for all responses
+  // Establish the correlation ID for this request before any other gateway logic.
+  // The base TMicroService wrapper would also do this for /api/* calls (it sits in the chain
+  // captured by FOriginalHandler), but we set it here too so static-file requests and CORS
+  // preflights are also tagged. EnsureCorrelationIdFromHeaders is idempotent: if the wrapper
+  // is invoked again later it will read the value we just set.
+  CorrId := EnsureCorrelationIdFromHeaders(aCtxt.InHeaders);
+  // Add CORS headers and mirror the correlation ID back to the caller in one shot.
   aCtxt.OutCustomHeaders :=
     'Access-Control-Allow-Origin: *'#13#10 +
     'Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS'#13#10 +
-    'Access-Control-Allow-Headers: Content-Type, Authorization';
-  // Handle CORS preflight
-  if aCtxt.Method = 'OPTIONS' then
-  begin
-    aCtxt.OutContent := '';
-    Exit(HTTP_NOCONTENT);
+    'Access-Control-Allow-Headers: Content-Type, Authorization, ' + CORRELATION_HEADER + #13#10 +
+    'Access-Control-Expose-Headers: ' + CORRELATION_HEADER + #13#10 +
+    CORRELATION_HEADER + ': ' + CorrId;
+  try
+    // Handle CORS preflight
+    if aCtxt.Method = 'OPTIONS' then
+    begin
+      aCtxt.OutContent := '';
+      Exit(HTTP_NOCONTENT);
+    end;
+    // API calls go to the REST server (interface-based services)
+    if IdemPChar(pointer(aCtxt.Url), '/API/') or IdemPChar(pointer(aCtxt.Url), '/API') then
+      Result := FOriginalHandler(aCtxt)
+    else
+      // Non-API calls serve static files (SPA frontend)
+      Result := HandleStaticFile(aCtxt);
+  finally
+    // Clear the correlation ID so the next request on this thread starts clean.
+    ClearCurrentCorrelationId;
   end;
-  // API calls go to the REST server (interface-based services)
-  if IdemPChar(pointer(aCtxt.Url), '/API/') or IdemPChar(pointer(aCtxt.Url), '/API') then
-    Result := FOriginalHandler(aCtxt)
-  else
-    // Non-API calls serve static files (SPA frontend)
-    Result := HandleStaticFile(aCtxt);
 end;
 
 function TGatewayServer.HandleStaticFile(

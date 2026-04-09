@@ -35,6 +35,7 @@ uses
   mormot.core.text,
   mormot.core.unicode,
   mormot.db.raw.sqlite3,
+  mormot.net.http,
   mormot.orm.base,
   mormot.orm.core,
   mormot.rest.core,
@@ -46,7 +47,8 @@ uses
   mormot.soa.core,
   mormot.soa.server,
   ms.shared,
-  ms.shared.api;
+  ms.shared.api,
+  ms.shared.correlation;
 
 type
 
@@ -75,10 +77,32 @@ type
     FStartTime: TDateTime;
 
     /// <summary>
+    ///   The original mORMot2 HTTP request handler captured before correlation-ID wrapping.
+    ///   <c>HandleRequestWithCorrelation</c> delegates to this after extracting/setting the request's correlation ID.
+    /// </summary>
+    FInnerHttpHandler: TOnHttpServerRequest;
+
+    /// <summary>
     ///   Configures <c>TSynLog</c> with file rotation, per-service log files, and console echo. Log level is read from
     ///   the JSON config file (trace/debug/info/error).
     /// </summary>
     procedure InitLogging;
+
+    /// <summary>
+    ///   HTTP request handler wrapper that extracts (or generates) the correlation ID from the incoming request,
+    ///   stores it in a thread-local variable for the duration of the request, mirrors it to the response headers,
+    ///   and delegates to the inner mORMot2 handler. Cleans the threadvar after the request to prevent leakage
+    ///   between pooled requests.
+    /// </summary>
+    /// <param name="aCtxt">
+    ///   The HTTP request context provided by the async HTTP server.
+    /// </param>
+    /// <returns>
+    ///   The HTTP status code returned by the inner handler.
+    /// </returns>
+    function HandleRequestWithCorrelation(
+      aCtxt: THttpServerRequestAbstract
+      ): cardinal;
 
     /// <summary>
     ///   Method-based service handler for GET /api/health. Returns a JSON object with service name, port, version,
@@ -391,6 +415,27 @@ begin
   // Override in subclasses for post-startup initialization
 end;
 
+function TMicroService.HandleRequestWithCorrelation(
+  aCtxt: THttpServerRequestAbstract
+  ): cardinal;
+var
+  CorrId: RawUtf8;
+begin
+  // Extract correlation ID from incoming headers, or generate a new one if absent.
+  // The result is stored in the threadvar so that any code on this request thread can read it
+  // (logging, outgoing HTTP forwards, etc.).
+  CorrId := EnsureCorrelationIdFromHeaders(aCtxt.InHeaders);
+  // Mirror the correlation ID to the response so the caller can correlate request and response.
+  aCtxt.OutCustomHeaders := aCtxt.OutCustomHeaders + #13#10 + CORRELATION_HEADER + ': ' + CorrId;
+  try
+    Result := FInnerHttpHandler(aCtxt);
+  finally
+    // The HTTP server reuses threads from a pool. Clear the threadvar so the next request
+    // on this thread does not inherit the previous correlation ID.
+    ClearCurrentCorrelationId;
+  end;
+end;
+
 procedure TMicroService.HandleHealth(
   Ctxt: TRestServerUriContext
   );
@@ -517,8 +562,13 @@ begin
       FPort, FRestServer, FConfig.HttpBind, useHttpAsync, nil,
       FConfig.HttpThreads, SecurityFromString(FConfig.HttpSecurity));
     FHttpServer.AccessControlAllowOrigin := FConfig.CorsOrigin;
+    // Wrap the HTTP handler to extract/propagate correlation IDs for every request.
+    // Subclasses (e.g. TGatewayServer) may add additional wraps in DoInitialize -- they then capture
+    // this wrap as their inner handler, so the chain remains correct.
+    FInnerHttpHandler := FHttpServer.HttpServer.OnRequest;
+    FHttpServer.HttpServer.OnRequest := HandleRequestWithCorrelation;
     DoInitialize;
-    TSynLog.Add.Log(sllInfo, '% running on port %.', [FServiceName, FPort], self);
+    LogWithCorrelation(sllInfo, '% running on port %.', [FServiceName, FPort], self);
     WriteLn(FServiceName, ' running on port ', FPort, '.');
     WriteLn('Press Enter to stop.');
 
