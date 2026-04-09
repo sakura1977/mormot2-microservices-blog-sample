@@ -3,15 +3,12 @@
 ///
 ///   This unit implements the core microservice skeleton using mORMot2:
 ///   - <c>TMicroService</c>: template-method base class that wires up
-///     ORM model, REST server, HTTP transport, logging, health check,
-///     and graceful shutdown -- subclasses only override
+///     ORM model, REST server, HTTP transport, logging, health check, and graceful shutdown -- subclasses only override
 ///     <c>CreateModel</c> and <c>SetupServices</c>.
-///   - <c>OrmGetById</c> / <c>OrmGetAll</c>: reusable helpers for
-///     the most common ORM read patterns.
+///   - <c>OrmGetById</c> / <c>OrmGetAll</c>: reusable helpers for the most common ORM read patterns.
 ///
 ///   mORMot2 components used:
-///   - <c>TRestServerDB</c>: combines a REST server with an embedded
-///     SQLite database via the mORMot2 ORM.
+///   - <c>TRestServerDB</c>: combines a REST server with an embedded SQLite database via the mORMot2 ORM.
 ///   - <c>TRestHttpServer</c>: exposes the REST server over HTTP
 ///     using the high-performance async I/O engine (IOCP on Windows).
 ///   - <c>TSynLog</c>: structured logging with automatic rotation.
@@ -28,7 +25,7 @@ unit ms.shared.service;
 interface
 
 uses
-  SysUtils,
+  System.SysUtils,
   mormot.core.base,
   mormot.core.datetime,
   mormot.core.json,
@@ -57,14 +54,11 @@ type
   ///   Abstract base class for all blog microservices.
   ///   Implements the Template Method pattern: subclasses override
   ///   <c>CreateModel</c> (define ORM tables) and <c>SetupServices</c>
-  ///   (register SOA interfaces), while the base class handles the
-  ///   full server lifecycle in <c>Run</c>.
+  ///   (register SOA interfaces), while the base class handles the full server lifecycle in <c>Run</c>.
   ///
   ///   Each microservice instance owns:
-  ///   - A <c>TOrmModel</c> defining which TOrm classes (tables)
-  ///     this service manages.
-  ///   - A <c>TRestServerDB</c> providing ORM persistence via SQLite
-  ///     and hosting the SOA interface implementations.
+  ///   - A <c>TOrmModel</c> defining which TOrm classes (tables) this service manages.
+  ///   - A <c>TRestServerDB</c> providing ORM persistence via SQLite and hosting the SOA interface implementations.
   ///   - A <c>TRestHttpServer</c> exposing everything over HTTP.
   ///
   ///   Management endpoints registered automatically:
@@ -72,7 +66,7 @@ type
   ///   - POST /api/shutdown -- triggers graceful shutdown.
   /// </summary>
   TMicroService = class
-  private
+  strict private
     FConfig: TMicroServiceConfig;
     FLogFamily: TSynLogFamily;
     FPort: RawUtf8;
@@ -81,18 +75,15 @@ type
     FStartTime: TDateTime;
 
     /// <summary>
-    ///   Configures <c>TSynLog</c> with file rotation, per-service
-    ///   log files, and console echo. Log level is read from the
-    ///   JSON config file (trace/debug/info/error).
+    ///   Configures <c>TSynLog</c> with file rotation, per-service log files, and console echo. Log level is read from
+    ///   the JSON config file (trace/debug/info/error).
     /// </summary>
     procedure InitLogging;
 
     /// <summary>
-    ///   Method-based service handler for GET /api/health.
-    ///   Returns a JSON object with service name, port, version,
-    ///   and uptime. Registered via <c>ServiceMethodRegister</c>,
-    ///   which is mORMot2's mechanism for custom REST endpoints
-    ///   outside the SOA interface system.
+    ///   Method-based service handler for GET /api/health. Returns a JSON object with service name, port, version,
+    ///   and uptime. Registered via <c>ServiceMethodRegister</c>, which is mORMot2's mechanism for custom REST
+    ///   endpoints outside the SOA interface system.
     /// </summary>
     /// <param name="Ctxt">
     ///   The REST request context provided by mORMot2.
@@ -102,8 +93,7 @@ type
       );
 
     /// <summary>
-    ///   Method-based service handler for POST /api/shutdown.
-    ///   Sets the shutdown flag to break the main loop in <c>Run</c>.
+    ///   Method-based service handler for POST /api/shutdown. Sets the shutdown flag to break the main loop in <c>Run</c>.
     /// </summary>
     /// <param name="Ctxt">
     ///   The REST request context provided by mORMot2.
@@ -119,66 +109,54 @@ type
     FModel: TOrmModel;
 
     /// <summary>
-    ///   The REST server combining ORM persistence (SQLite) with
-    ///   SOA interface hosting. This is the central mORMot2 component
-    ///   that every microservice builds upon.
+    ///   The REST server combining ORM persistence (SQLite) with SOA interface hosting. This is the central mORMot2
+    ///   component that every microservice builds upon.
     /// </summary>
     FRestServer: TRestServerDB;
 
     /// <summary>
     ///   The HTTP server exposing <c>FRestServer</c> over the network.
-    ///   Uses <c>useHttpAsync</c> for high-performance async I/O
-    ///   with IOCP (Windows) or epoll (Linux).
+    ///   Uses <c>useHttpAsync</c> for high-performance async I/O with IOCP (Windows) or epoll (Linux).
     /// </summary>
     FHttpServer: TRestHttpServer;
 
     /// <summary>
-    ///   Creates the ORM model with the service's table classes.
-    ///   Subclasses must pass <c>MODEL_ROOT</c> as the model root
-    ///   to ensure consistent URL routing: /api/{Service}/{Method}.
+    ///   Creates the ORM model with the service's table classes. Subclasses must pass <c>MODEL_ROOT</c> as the model
+    ///   root to ensure consistent URL routing: /api/{Service}/{Method}.
     /// </summary>
     /// <returns>
-    ///   A new <c>TOrmModel</c> instance (ownership transfers to
-    ///   this <c>TMicroService</c>).
+    ///   A new <c>TOrmModel</c> instance (ownership transfers to this <c>TMicroService</c>).
     /// </returns>
     function CreateModel: TOrmModel; virtual; abstract;
 
     /// <summary>
-    ///   Registers interface-based (SOA) services on the REST server.
-    ///   Use <c>RegisterService</c> to register each implementation
-    ///   with standard settings.
+    ///   Registers interface-based (SOA) services on the REST server. Use <c>RegisterService</c> to register each
+    ///   implementation with standard settings.
     /// </summary>
     procedure SetupServices; virtual; abstract;
 
     /// <summary>
-    ///   Hook called after all services are registered and the HTTP
-    ///   server is running. Override for post-startup initialization
-    ///   (e.g., the gateway intercepts the HTTP handler here).
+    ///   Hook called after all services are registered and the HTTP server is running. Override for post-startup
+    ///   initialization (e.g., the gateway intercepts the HTTP handler here).
     /// </summary>
     procedure DoInitialize; virtual;
 
     /// <summary>
-    ///   Hook called before the server shuts down. Override for
-    ///   cleanup (e.g., releasing client connections).
+    ///   Hook called before the server shuts down. Override for cleanup (e.g., releasing client connections).
     /// </summary>
     procedure DoFinalize; virtual;
 
     /// <summary>
-    ///   Registers a SOA service implementation on the REST server
-    ///   with the standard settings used by all blog services:
-    ///   - <c>ByPassAuthentication</c>: disables mORMot2's built-in
-    ///     REST authentication (we use our own SCRAM-MCF/JWT).
-    ///   - <c>ResultAsJsonObjectWithoutResult</c>: returns output
-    ///     parameters as named JSON keys instead of a positional
+    ///   Registers a SOA service implementation on the REST server with the standard settings used by all blog services:
+    ///   - <c>ByPassAuthentication</c>: disables mORMot2's built-in REST authentication (we use our own SCRAM-MCF/JWT).
+    ///   - <c>ResultAsJsonObjectWithoutResult</c>: returns output parameters as named JSON keys instead of a positional
     ///     array, which is easier to consume from JavaScript.
     /// </summary>
     /// <param name="aImpl">
-    ///   The service implementation object (must implement the
-    ///   interface specified by <c>aInterface</c>).
+    ///   The service implementation object (must implement the interface specified by <c>aInterface</c>).
     /// </param>
     /// <param name="aInterface">
-    ///   RTTI pointer to the service interface, obtained via
-    ///   <c>TypeInfo(IMyService)</c>.
+    ///   RTTI pointer to the service interface, obtained via <c>TypeInfo(IMyService)</c>.
     /// </param>
     /// <returns>
     ///   The service factory, for further configuration if needed.
@@ -189,13 +167,11 @@ type
       ): TServiceFactoryServerAbstract;
   public
     /// <summary>
-    ///   Creates the microservice instance. Loads configuration
-    ///   from a JSON file ({serviceName}.config.json) and sets up
-    ///   logging. Does NOT start the server yet -- call <c>Run</c>.
+    ///   Creates the microservice instance. Loads configuration from a JSON file ({serviceName}.config.json) and sets
+    ///   up logging. Does NOT start the server yet -- call <c>Run</c>.
     /// </summary>
     /// <param name="aServiceName">
-    ///   Identifier used for logging, config file name, and
-    ///   database file name (e.g., 'ms.posts').
+    ///   Identifier used for logging, config file name, and database file name (e.g., 'ms.posts').
     /// </param>
     /// <param name="aDefaultPort">
     ///   HTTP port to use if not specified in the config file.
@@ -210,16 +186,13 @@ type
     destructor Destroy; override;
 
     /// <summary>
-    ///   Signals the service to shut down. Can be called from
-    ///   any thread (e.g., from the shutdown HTTP handler).
+    ///   Signals the service to shut down. Can be called from any thread (e.g., from the shutdown HTTP handler).
     /// </summary>
     procedure RequestShutdown;
 
     /// <summary>
-    ///   Main entry point. Creates the database, registers services,
-    ///   starts the HTTP server, and enters the main loop.
-    ///   Blocks until Enter is pressed or <c>RequestShutdown</c>
-    ///   is called (e.g., via POST /api/shutdown).
+    ///   Main entry point. Creates the database, registers services, starts the HTTP server, and enters the main loop.
+    ///   Blocks until Enter is pressed or <c>RequestShutdown</c> is called (e.g., via POST /api/shutdown).
     /// </summary>
     procedure Run;
 
@@ -234,8 +207,7 @@ type
     property Port: RawUtf8 read FPort;
 
     /// <summary>
-    ///   The underlying mORMot2 REST server. Exposed for testing
-    ///   and advanced configuration.
+    ///   The underlying mORMot2 REST server. Exposed for testing and advanced configuration.
     /// </summary>
     property RestServer: TRestServerDB read FRestServer;
 
@@ -252,22 +224,18 @@ const
   SERVICE_VERSION = '0.2.0';
 
   /// <summary>
-  ///   Model root for all services. Determines the URL prefix:
-  ///   all SOA endpoints become /api/{InterfaceName}/{MethodName}.
-  ///   Every <c>CreateModel</c> override must pass this value to
-  ///   <c>TOrmModel.Create</c>.
+  ///   Model root for all services. Determines the URL prefix: all SOA endpoints become /api/{InterfaceName}/{MethodName}.
+  ///   Every <c>CreateModel</c> override must pass this value to <c>TOrmModel.Create</c>.
   /// </summary>
   MODEL_ROOT = 'api';
 
 /// <summary>
 ///   Retrieves a single ORM record by its ID and returns it as JSON.
 ///   This is the standard "get by ID" pattern used across all services.
-///   Uses <c>IRestOrm.Retrieve</c> for the lookup and
-///   <c>TOrm.GetJsonValues</c> for serialization.
+///   Uses <c>IRestOrm.Retrieve</c> for the lookup and <c>TOrm.GetJsonValues</c> for serialization.
 /// </summary>
 /// <param name="aOrm">
-///   The ORM interface (typically <c>FRestServer.Orm</c> or injected
-///   via constructor for testability).
+///   The ORM interface (typically <c>FRestServer.Orm</c> or injected via constructor for testability).
 /// </param>
 /// <param name="aClass">
 ///   The TOrm descendant class to instantiate and retrieve.
@@ -285,10 +253,8 @@ function OrmGetById(
   ): RawJson;
 
 /// <summary>
-///   Retrieves all ORM records of a given class, optionally filtered
-///   by a WHERE clause, and returns them as a JSON array.
-///   Uses <c>IRestOrm.MultiFieldValues</c> which returns a
-///   <c>TOrmTable</c> (an in-memory result set).
+///   Retrieves all ORM records of a given class, optionally filtered by a WHERE clause, and returns them as a JSON array.
+///   Uses <c>IRestOrm.MultiFieldValues</c> which returns a <c>TOrmTable</c> (an in-memory result set).
 /// </summary>
 /// <param name="aOrm">
 ///   The ORM interface.
@@ -297,8 +263,7 @@ function OrmGetById(
 ///   The TOrm descendant class to query.
 /// </param>
 /// <param name="aWhere">
-///   Optional SQL WHERE clause (without the WHERE keyword).
-///   Pass empty string to retrieve all records.
+///   Optional SQL WHERE clause (without the WHERE keyword). Pass empty string to retrieve all records.
 /// </param>
 /// <returns>
 ///   JSON array of objects, or '[]' if no records match.
@@ -310,8 +275,7 @@ function OrmGetAll(
   ): RawJson;
 
 /// <summary>
-///   Fetches the configuration for a service from the central
-///   <c>ms.config</c> service via a temporary HTTP connection.
+///   Fetches the configuration for a service from the central <c>ms.config</c> service via a temporary HTTP connection.
 /// </summary>
 /// <param name="aConfigUrl">
 ///   URL of the config service (e.g. 'http://localhost:8087').
@@ -323,8 +287,7 @@ function OrmGetAll(
 ///   Output: the parsed configuration record.
 /// </param>
 /// <returns>
-///   True if the config was fetched and parsed successfully,
-///   False on any network or parsing error.
+///   True if the config was fetched and parsed successfully, False on any network or parsing error.
 /// </returns>
 function FetchRemoteConfig(
   const aConfigUrl: RawUtf8;
@@ -333,9 +296,8 @@ function FetchRemoteConfig(
   ): boolean;
 
 /// <summary>
-///   Merges two configuration records. For each field, the remote
-///   value wins if it is non-empty/non-zero; otherwise the local
-///   value is kept.
+///   Merges two configuration records. For each field, the remote value wins if it is non-empty/non-zero; otherwise
+///   the local value is kept.
 /// </summary>
 /// <param name="aLocal">
 ///   The local baseline configuration (from .config.json).
@@ -365,8 +327,6 @@ function SecurityFromString(
 
 implementation
 
-{ TMicroService }
-
 constructor TMicroService.Create(
   const aServiceName, aDefaultPort: RawUtf8
   );
@@ -380,10 +340,7 @@ begin
   FServiceName := aServiceName;
   FShutdownRequested := False;
   // Step 1: Load local config (fallback baseline)
-  FConfig := LoadServiceConfig(
-    Executable.ProgramFilePath +
-      Utf8ToString(aServiceName) + '.config.json',
-    aDefaultPort);
+  FConfig := LoadServiceConfig(Executable.ProgramFilePath + Utf8ToString(aServiceName) + '.config.json', aDefaultPort);
   // Step 2: Try remote config from ms.config (skip for ms.config itself)
   if aServiceName <> SERVICE_CONFIG then
   begin
@@ -394,24 +351,19 @@ begin
       begin
         FConfig := MergeServiceConfig(FConfig, RemoteConfig);
         // Cache for offline fallback
-        CachePath := Executable.ProgramFilePath +
-          Utf8ToString(aServiceName) + '.config.cached.json';
-        FileFromString(
-          RecordSaveJson(RemoteConfig, TypeInfo(TMicroServiceConfig)),
-          CachePath);
+        CachePath := Executable.ProgramFilePath + Utf8ToString(aServiceName) + '.config.cached.json';
+        FileFromString(RecordSaveJson(RemoteConfig, TypeInfo(TMicroServiceConfig)), CachePath);
       end
       else
       begin
         // Try cached config from previous successful fetch
-        CachePath := Executable.ProgramFilePath +
-          Utf8ToString(aServiceName) + '.config.cached.json';
+        CachePath := Executable.ProgramFilePath + Utf8ToString(aServiceName) + '.config.cached.json';
         if FileExists(CachePath) then
         begin
           CacheJson := StringFromFile(CachePath);
           Finalize(RemoteConfig);
           FillCharFast(RemoteConfig, SizeOf(RemoteConfig), 0);
-          RecordLoadJson(RemoteConfig, CacheJson,
-            TypeInfo(TMicroServiceConfig));
+          RecordLoadJson(RemoteConfig, CacheJson, TypeInfo(TMicroServiceConfig));
           FConfig := MergeServiceConfig(FConfig, RemoteConfig);
         end;
       end;
@@ -487,11 +439,9 @@ begin
   else if FConfig.LogLevel = 'debug' then
     FLogFamily.Level := LOG_VERBOSE - [sllTrace]
   else if FConfig.LogLevel = 'info' then
-    FLogFamily.Level := [sllInfo, sllWarning, sllError,
-      sllLastError, sllException, sllExceptionOS]
+    FLogFamily.Level := [sllInfo, sllWarning, sllError, sllLastError, sllException, sllExceptionOS]
   else if FConfig.LogLevel = 'error' then
-    FLogFamily.Level := [sllError, sllLastError,
-      sllException, sllExceptionOS]
+    FLogFamily.Level := [sllError, sllLastError, sllException, sllExceptionOS]
   else
     FLogFamily.Level := LOG_VERBOSE - [sllTrace];
   // Echo log entries to the console (useful for development)
@@ -526,15 +476,13 @@ var
   DatabasePath: TFileName;
 begin
   FStartTime := NowUtc;
-  TSynLog.Add.Log(sllInfo, '% starting on port %...',
-    [FServiceName, FPort], self);
+  TSynLog.Add.Log(sllInfo, '% starting on port %...', [FServiceName, FPort], self);
   try
     // --- Phase 1: Create ORM model and database ---
     // Each service has its own SQLite file ({serviceName}.db).
     // TRestServerDB combines TRestServer (REST/SOA) with TSqlDataBase
     // (SQLite access) -- it's the central mORMot2 component.
-    DatabasePath := Executable.ProgramFilePath +
-      Utf8ToString(FServiceName) + '.db';
+    DatabasePath := Executable.ProgramFilePath + Utf8ToString(FServiceName) + '.db';
     FModel := CreateModel;
     FRestServer := TRestServerDB.Create(FModel, DatabasePath);
     // smNormal: SQLite syncs at critical moments (good balance
@@ -570,8 +518,7 @@ begin
       FConfig.HttpThreads, SecurityFromString(FConfig.HttpSecurity));
     FHttpServer.AccessControlAllowOrigin := FConfig.CorsOrigin;
     DoInitialize;
-    TSynLog.Add.Log(sllInfo, '% running on port %.',
-      [FServiceName, FPort], self);
+    TSynLog.Add.Log(sllInfo, '% running on port %.', [FServiceName, FPort], self);
     WriteLn(FServiceName, ' running on port ', FPort, '.');
     WriteLn('Press Enter to stop.');
 
@@ -589,8 +536,7 @@ begin
     end;
 
     // --- Phase 6: Graceful shutdown ---
-    TSynLog.Add.Log(sllInfo, '% shutting down...',
-      [FServiceName], self);
+    TSynLog.Add.Log(sllInfo, '% shutting down...', [FServiceName], self);
     DoFinalize;
     FreeAndNil(FHttpServer);
     FreeAndNil(FRestServer);
@@ -599,14 +545,11 @@ begin
   except
     on E: Exception do
     begin
-      TSynLog.Add.Log(sllError, 'ERROR in %: %',
-        [FServiceName, E.Message], self);
+      TSynLog.Add.Log(sllError, 'ERROR in %: %', [FServiceName, E.Message], self);
       WriteLn('ERROR: ', E.Message);
     end;
   end;
 end;
-
-{ ORM helpers }
 
 function OrmGetById(
   const aOrm: IRestOrm;
@@ -683,21 +626,17 @@ begin
   end;
   try
     ConfigClientModel := TOrmModel.Create([], MODEL_ROOT);
-    ConfigClient := TRestHttpClient.Create(
-      ConfigHost, ConfigPort, ConfigClientModel);
+    ConfigClient := TRestHttpClient.Create(ConfigHost, ConfigPort, ConfigClientModel);
     try
       ConfigClient.Model.Owner := ConfigClient;
       ConfigClient.ServiceRegister([TypeInfo(IConfig)], sicShared);
-      TServiceFactoryClient(
-        ConfigClient.Services.Info(TypeInfo(IConfig)))
-        .ResultAsJsonObjectWithoutResult := True;
+      TServiceFactoryClient(ConfigClient.Services.Info(TypeInfo(IConfig))).ResultAsJsonObjectWithoutResult := True;
       if not ConfigClient.Services.Resolve(IConfig, ConfigIntf) then
         Exit;
       ConfigJson := ConfigIntf.GetServiceConfig(aServiceName);
       if (ConfigJson = '') or (ConfigJson = '{}') then
         Exit;
-      RecordLoadJson(aConfig, ConfigJson,
-        TypeInfo(TMicroServiceConfig));
+      RecordLoadJson(aConfig, ConfigJson, TypeInfo(TMicroServiceConfig));
       Result := True;
     finally
       ConfigIntf := nil;

@@ -1,23 +1,17 @@
 /// <summary>
-///   SOA interface definitions for all blog microservices.
-///   These interfaces define the service contracts used by both
+///   SOA interface definitions for all blog microservices. These interfaces define the service contracts used by both
 ///   server implementations and client proxies (gateway).
 ///
-///   In mORMot2, interface-based services (SOA) are declared as
-///   <c>IInvokable</c> descendants with a unique GUID. The framework
-///   automatically generates JSON serialization for all method
-///   parameters, enabling transparent HTTP-based remote calls.
+///   In mORMot2, interface-based services (SOA) are declared as <c>IInvokable</c> descendants with a unique GUID.
+///   The framework automatically generates JSON serialization for all method parameters, enabling transparent
+///   HTTP-based remote calls.
 ///
 ///   Key mORMot2 SOA concepts used here:
-///   - <c>IInvokable</c>: base interface enabling RTTI-based
-///     method invocation and JSON marshalling.
-///   - <c>RawJson</c>: a type alias for raw JSON content that
-///     mORMot2 passes through without re-encoding. Ideal for
+///   - <c>IInvokable</c>: base interface enabling RTTI-based method invocation and JSON marshalling.
+///   - <c>RawJson</c>: a type alias for raw JSON content that mORMot2 passes through without re-encoding. Ideal for
 ///     flexible, schema-less data exchange between services.
-///   - <c>TID</c>: mORMot2's standard 64-bit integer type for
-///     ORM record identifiers (maps to SQLite RowID).
-///   - <c>RawUtf8</c>: mORMot2's preferred string type for all
-///     UTF-8 text. More efficient than Delphi's UnicodeString
+///   - <c>TID</c>: mORMot2's standard 64-bit integer type for ORM record identifiers (maps to SQLite RowID).
+///   - <c>RawUtf8</c>: mORMot2's preferred string type for all UTF-8 text. More efficient than Delphi's UnicodeString
 ///     for JSON and HTTP operations.
 ///
 ///   URL format: POST /api/{InterfaceName}/{MethodName}
@@ -40,19 +34,15 @@ uses
 type
 
   /// <summary>
-  ///   Authentication service contract using SCRAM-MCF protocol.
-  ///   Implements a two-phase challenge/authenticate flow where
-  ///   the client computes PBKDF2 locally -- the plaintext password
-  ///   is never transmitted over the wire.
+  ///   Authentication service contract using SCRAM-MCF protocol. Implements a two-phase challenge/authenticate flow
+  ///   where the client computes PBKDF2 locally -- the plaintext password is never transmitted over the wire.
   /// </summary>
   IAuth = interface(IInvokable)
     ['{F1D2E3C4-5A6B-7C8D-9E0F-1A2B3C4D5E6F}']
 
     /// <summary>
-    ///   Phase 1 of SCRAM-MCF login. Returns the MCF format info
-    ///   (algorithm, rounds, salt) and a one-time server nonce.
-    ///   For unknown emails, returns fake MCF info to prevent
-    ///   user enumeration attacks.
+    ///   Phase 1 of SCRAM-MCF login. Returns the MCF format info (algorithm, rounds, salt) and a one-time server nonce.
+    ///   For unknown emails, returns fake MCF info to prevent user enumeration attacks.
     /// </summary>
     /// <param name="aEmail">
     ///   The user's email address (login identifier).
@@ -69,9 +59,8 @@ type
       );
 
     /// <summary>
-    ///   Phase 2 of SCRAM-MCF login. Verifies the client's
-    ///   cryptographic proof and returns a JWT token on success,
-    ///   plus a server proof for mutual authentication.
+    ///   Phase 2 of SCRAM-MCF login. Verifies the client's cryptographic proof and returns a JWT token on success, plus
+    ///   a server proof for mutual authentication.
     /// </summary>
     /// <param name="aEmail">
     ///   The user's email address (must match the Challenge call).
@@ -102,8 +91,7 @@ type
       ): boolean;
 
     /// <summary>
-    ///   Creates a new authentication account. Stores the email
-    ///   together with the PBKDF2-derived credentials (MCF hash
+    ///   Creates a new authentication account. Stores the email together with the PBKDF2-derived credentials (MCF hash
     ///   and persisted SCRAM key).
     /// </summary>
     /// <param name="aEmail">
@@ -116,8 +104,7 @@ type
     ///   Foreign key to the author profile in ms.users.
     /// </param>
     /// <returns>
-    ///   The UserId on success, 0 if the email is already taken
-    ///   or input is invalid.
+    ///   The UserId on success, 0 if the email is already taken or input is invalid.
     /// </returns>
     function Register(
       const aEmail, aPassword: RawUtf8;
@@ -163,10 +150,8 @@ type
   end;
 
   /// <summary>
-  ///   User/author profile service. Provides CRUD operations for
-  ///   author profiles (display name, bio, website).
-  ///   Uses <c>RawJson</c> for flexible input/output -- the JSON
-  ///   structure is parsed and validated in the implementation.
+  ///   User/author profile service. Provides CRUD operations for author profiles (display name, bio, website).
+  ///   Uses <c>RawJson</c> for flexible input/output -- the JSON structure is parsed and validated in the implementation.
   /// </summary>
   IUser = interface(IInvokable)
     ['{A2B3C4D5-6E7F-8A9B-0C1D-2E3F4A5B6C7D}']
@@ -206,8 +191,7 @@ type
       ): TID;
 
     /// <summary>
-    ///   Partially updates an existing author profile.
-    ///   Only fields present in the JSON are modified.
+    ///   Partially updates an existing author profile. Only fields present in the JSON are modified.
     /// </summary>
     /// <param name="aId">
     ///   The author's record ID.
@@ -238,8 +222,7 @@ type
   end;
 
   /// <summary>
-  ///   Blog post service. Provides CRUD with pagination, filtering
-  ///   by status and author, and URL slug-based lookup.
+  ///   Blog post service. Provides CRUD with pagination, filtering by status and author, and URL slug-based lookup.
   /// </summary>
   IPost = interface(IInvokable)
     ['{B3C4D5E6-7F8A-9B0C-1D2E-3F4A5B6C7D8E}']
@@ -280,8 +263,7 @@ type
     ///   Items per page (clamped to 1..100).
     /// </param>
     /// <param name="aStatus">
-    ///   Filter by status (0=draft, 1=published, 2=archived).
-    ///   Pass 0 to include all statuses.
+    ///   Filter by status (0=draft, 1=published, 2=archived). Pass 0 to include all statuses.
     /// </param>
     /// <param name="aAuthorId">
     ///   Filter by author. Pass 0 to include all authors.
@@ -295,8 +277,7 @@ type
       ): RawJson;
 
     /// <summary>
-    ///   Creates a new blog post. The slug is auto-generated
-    ///   from the title via <c>TextToSlug</c>.
+    ///   Creates a new blog post. The slug is auto-generated from the title via <c>TextToSlug</c>.
     /// </summary>
     /// <param name="aData">
     ///   JSON object with at least <c>Title</c> (required).
@@ -309,8 +290,7 @@ type
       ): TID;
 
     /// <summary>
-    ///   Partially updates an existing post. If the title changes,
-    ///   the slug is regenerated automatically.
+    ///   Partially updates an existing post. If the title changes, the slug is regenerated automatically.
     /// </summary>
     /// <param name="aId">
     ///   The post's record ID.
@@ -341,8 +321,7 @@ type
   end;
 
   /// <summary>
-  ///   Tag service. Manages tags and many-to-many post-tag
-  ///   associations via a junction table (TOrmPostTag).
+  ///   Tag service. Manages tags and many-to-many post-tag associations via a junction table (TOrmPostTag).
   /// </summary>
   ITag = interface(IInvokable)
     ['{C4D5E6F7-8A9B-0C1D-2E3F-4A5B6C7D8E9F}']
@@ -395,15 +374,14 @@ type
       ): RawJson;
 
     /// <summary>
-    ///   Replaces all tag assignments for a post. Deletes existing
-    ///   associations and creates new ones from the provided tag IDs.
+    ///   Replaces all tag assignments for a post. Deletes existing associations and creates new ones from the provided
+    ///   tag IDs.
     /// </summary>
     /// <param name="aPostId">
     ///   The post to assign tags to.
     /// </param>
     /// <param name="aTagIds">
-    ///   JSON array of tag IDs, e.g. '[1,3,5]'.
-    ///   Passed as <c>RawJson</c> so mORMot2 does not re-encode it.
+    ///   JSON array of tag IDs, e.g. '[1,3,5]'. Passed as <c>RawJson</c> so mORMot2 does not re-encode it.
     /// </param>
     /// <returns>
     ///   True if the input was valid and assignments were updated.
@@ -420,16 +398,14 @@ type
     ///   JSON object with at least <c>Name</c> (required, unique).
     /// </param>
     /// <returns>
-    ///   The new record ID, or 0 if validation or UNIQUE
-    ///   constraint failed.
+    ///   The new record ID, or 0 if validation or UNIQUE constraint failed.
     /// </returns>
     function Add(
       const aData: RawJson
       ): TID;
 
     /// <summary>
-    ///   Partially updates an existing tag. If the name changes,
-    ///   the slug is regenerated automatically.
+    ///   Partially updates an existing tag. If the name changes, the slug is regenerated automatically.
     /// </summary>
     /// <param name="aId">
     ///   The tag's record ID.
@@ -460,9 +436,8 @@ type
   end;
 
   /// <summary>
-  ///   Comment service with moderation workflow. Comments start
-  ///   as pending, and must be approved or rejected by an author
-  ///   before they appear publicly.
+  ///   Comment service with moderation workflow. Comments start as pending, and must be approved or rejected by an
+  ///   author before they appear publicly.
   /// </summary>
   IComment = interface(IInvokable)
     ['{D5E6F7A8-9B0C-1D2E-3F4A-5B6C7D8E9FA0}']
@@ -489,8 +464,7 @@ type
     function GetPending: RawJson;
 
     /// <summary>
-    ///   Adds a new comment to a post (status: pending).
-    ///   Visitors can comment without authentication.
+    ///   Adds a new comment to a post (status: pending). Visitors can comment without authentication.
     /// </summary>
     /// <param name="aPostId">
     ///   The post to comment on (must be > 0).
@@ -553,16 +527,14 @@ type
   end;
 
   /// <summary>
-  ///   Media service for file uploads. Files are uploaded as
-  ///   Base64-encoded strings, stored on the file system, with
+  ///   Media service for file uploads. Files are uploaded as Base64-encoded strings, stored on the file system, with
   ///   metadata tracked in the database.
   /// </summary>
   IMedia = interface(IInvokable)
     ['{E6F7A8B9-0C1D-2E3F-4A5B-6C7D8E9FA0B1}']
 
     /// <summary>
-    ///   Uploads a media file. The file data is Base64-encoded
-    ///   and decoded server-side. Maximum size: 3 MB after decoding.
+    ///   Uploads a media file. The file data is Base64-encoded and decoded server-side. Maximum size: 3 MB after decoding.
     /// </summary>
     /// <param name="aFileName">
     ///   Original file name (required, used for MIME type detection).
@@ -577,8 +549,7 @@ type
     ///   The author who uploaded the file.
     /// </param>
     /// <returns>
-    ///   The new media record ID, or 0 if validation failed
-    ///   or the file exceeds the size limit.
+    ///   The new media record ID, or 0 if validation failed or the file exceeds the size limit.
     /// </returns>
     function Upload(
       const aFileName, aFileData, aAltText: RawUtf8;
@@ -586,8 +557,7 @@ type
       ): TID;
 
     /// <summary>
-    ///   Retrieves metadata for a media file (name, MIME type,
-    ///   size, alt text) without the file content.
+    ///   Retrieves metadata for a media file (name, MIME type, size, alt text) without the file content.
     /// </summary>
     /// <param name="aId">
     ///   The media record ID.
@@ -617,8 +587,7 @@ type
       ): RawByteString;
 
     /// <summary>
-    ///   Deletes a media file from both the database and the
-    ///   file system.
+    ///   Deletes a media file from both the database and the file system.
     /// </summary>
     /// <param name="aId">
     ///   The media record ID.
@@ -632,18 +601,15 @@ type
   end;
 
   /// <summary>
-  ///   Gateway aggregation service. Enriches a single post with
-  ///   data from multiple backend services (author profile, tags,
-  ///   approved comments) into one combined JSON response.
-  ///   This is the only service with actual business logic in
-  ///   the gateway -- all other interfaces are proxied directly.
+  ///   Gateway aggregation service. Enriches a single post with data from multiple backend services (author profile,
+  ///   tags, approved comments) into one combined JSON response. This is the only service with actual business logic
+  ///   in the gateway -- all other interfaces are proxied directly.
   /// </summary>
   IBlog = interface(IInvokable)
     ['{F7A8B9C0-1D2E-3F4A-5B6C-7D8E9FA0B1C2}']
 
     /// <summary>
-    ///   Returns a fully enriched blog post: post data plus
-    ///   nested Author object, Tags array, and Comments array.
+    ///   Returns a fully enriched blog post: post data plus nested Author object, Tags array, and Comments array.
     /// </summary>
     /// <param name="aId">
     ///   The post's record ID.
@@ -656,21 +622,22 @@ type
       ): RawJson;
 
     /// <summary>
-    ///   Returns a list of posts that have a specific tag assigned,
-    ///   enriched with author information.
+    ///   Returns a list of posts that have a specific tag assigned, enriched with author information.
     /// </summary>
     /// <param name="aTagId">
     ///   The tag's record ID to filter by.
     /// </param>
     /// <returns>
-    ///   JSON object with tag info and posts array, or '{}' if
-    ///   the tag was not found.
+    ///   JSON object with tag info and posts array, or '{}' if the tag was not found.
     /// </returns>
     function GetPostsByTag(
       aTagId: TID
       ): RawJson;
   end;
 
+  /// <summary>
+  ///   Configuration service providing centralized setup options for all other microservices.
+  /// </summary>
   IConfig = interface(IInvokable)
     ['{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}']
 
@@ -696,8 +663,7 @@ type
     function GetAllConfigs: RawJson;
 
     /// <summary>
-    ///   Returns the service registry (Host + Port only).
-    ///   Does not include secrets or database paths.
+    ///   Returns the service registry (Host + Port only). Does not include secrets or database paths.
     /// </summary>
     /// <returns>
     ///   JSON object keyed by service name, each with Host and Port.
@@ -706,64 +672,53 @@ type
   end;
 
   /// <summary>
-  ///   Analytics service for cross-service data aggregation.
-  ///   Demonstrates how to combine data from multiple microservices
-  ///   -- the equivalent of SQL JOINs across service boundaries.
+  ///   Analytics service for cross-service data aggregation. Demonstrates how to combine data from multiple
+  ///   microservices -- the equivalent of SQL JOINs across service boundaries.
   /// </summary>
   IAnalytics = interface(IInvokable)
     ['{B1C2D3E4-F5A6-7B8C-9D0E-1F2A3B4C5D6E}']
 
     /// <summary>
-    ///   Returns aggregate counts from all services: total posts,
-    ///   authors, tags, and pending comments.
+    ///   Returns aggregate counts from all services: total posts, authors, tags, and pending comments.
     /// </summary>
     /// <returns>
-    ///   JSON object with count fields and optional
-    ///   <c>*Unavailable</c> flags for unreachable services.
+    ///   JSON object with count fields and optional <c>*Unavailable</c> flags for unreachable services.
     /// </returns>
     function GetOverview: RawJson;
 
     /// <summary>
-    ///   Returns per-author statistics: post count and total
-    ///   comment count on their posts.
+    ///   Returns per-author statistics: post count and total comment count on their posts.
     /// </summary>
     /// <returns>
-    ///   JSON array of author stat objects, or '[]' if the
-    ///   users service is unavailable.
+    ///   JSON array of author stat objects, or '[]' if the users service is unavailable.
     /// </returns>
     function GetAuthorStats: RawJson;
 
     /// <summary>
-    ///   Returns all tags ranked by the number of posts that
-    ///   use them. Demonstrates grouped counting across services.
+    ///   Returns all tags ranked by the number of posts that use them. Demonstrates grouped counting across services.
     /// </summary>
     /// <returns>
-    ///   JSON array of tag objects with <c>postCount</c> field,
-    ///   sorted descending by usage.
+    ///   JSON array of tag objects with <c>postCount</c> field, sorted descending by usage.
     /// </returns>
     function GetTagCloud: RawJson;
 
     /// <summary>
-    ///   Returns comment activity: pending count and the top
-    ///   commented posts.
+    ///   Returns comment activity: pending count and the top commented posts.
     /// </summary>
     /// <returns>
-    ///   JSON object with <c>pendingCount</c> and
-    ///   <c>topCommentedPosts</c> array.
+    ///   JSON object with <c>pendingCount</c> and <c>topCommentedPosts</c> array.
     /// </returns>
     function GetCommentActivity: RawJson;
 
     /// <summary>
-    ///   Returns the most recent published posts, each enriched
-    ///   with author, tags, and up to 10 comments. This is the
+    ///   Returns the most recent published posts, each enriched with author, tags, and up to 10 comments. This is the
     ///   cross-service JOIN equivalent -- the key teaching method.
     /// </summary>
     /// <param name="aLimit">
     ///   Maximum number of posts to return (clamped to 1..50).
     /// </param>
     /// <returns>
-    ///   JSON array of enriched post objects, or '[]' if the
-    ///   posts service is unavailable.
+    ///   JSON array of enriched post objects, or '[]' if the posts service is unavailable.
     /// </returns>
     function GetRecentPostsFull(
       aLimit: integer

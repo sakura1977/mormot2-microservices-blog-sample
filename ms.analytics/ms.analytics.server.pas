@@ -1,16 +1,12 @@
 /// <summary>
-///   Analytics microservice implementation.
-///   Demonstrates cross-service data aggregation -- the equivalent
-///   of SQL JOINs across microservice boundaries. Connects directly
-///   to backend services and combines their data at runtime.
+///   Analytics microservice implementation. Demonstrates cross-service data aggregation -- the equivalent of SQL
+///   JOINs across microservice boundaries. Connects directly to backend services and combines their data at runtime.
 ///
 ///   Two aggregation patterns are shown:
-///   1. <em>Statistics</em>: counting and grouping data from multiple
-///      services (GetOverview, GetAuthorStats, GetTagCloud,
-///      GetCommentActivity).
-///   2. <em>Cross-Service JOINs</em>: enriching a list of records
-///      with related data from other services, including an author
-///      cache to avoid duplicate lookups (GetRecentPostsFull).
+///   1. <em>Statistics</em>: counting and grouping data from multiple services (GetOverview, GetAuthorStats,
+///      GetTagCloud, GetCommentActivity).
+///   2. <em>Cross-Service JOINs</em>: enriching a list of records with related data from other services, including
+///      an author cache to avoid duplicate lookups (GetRecentPostsFull).
 /// </summary>
 unit ms.analytics.server;
 
@@ -22,7 +18,7 @@ unit ms.analytics.server;
 interface
 
 uses
-  SysUtils,
+  System.SysUtils,
   mormot.core.base,
   mormot.core.json,
   mormot.core.log,
@@ -34,9 +30,9 @@ uses
   mormot.orm.core,
   mormot.rest.core,
   mormot.rest.http.client,
+  mormot.rest.http.server,
   mormot.rest.server,
   mormot.rest.sqlite3,
-  mormot.rest.http.server,
   mormot.soa.client,
   mormot.soa.core,
   mormot.soa.server,
@@ -47,12 +43,11 @@ uses
 type
 
   /// <summary>
-  ///   Implements <c>IAnalytics</c> by querying backend services
-  ///   and aggregating their responses. Each method demonstrates
-  ///   a different cross-service data combination pattern.
+  ///   Implements <c>IAnalytics</c> by querying backend services and aggregating their responses. Each method
+  ///   demonstrates a different cross-service data combination pattern.
   /// </summary>
   TAnalyticsService = class(TInterfacedObject, IAnalytics)
-  private
+  strict private
 
     /// <summary>
     ///   Interface to the posts backend service.
@@ -76,8 +71,7 @@ type
   public
 
     /// <summary>
-    ///   Creates the analytics service with injected backend
-    ///   service interfaces for testability.
+    ///   Creates the analytics service with injected backend service interfaces for testability.
     /// </summary>
     /// <param name="aPosts">
     ///   Posts service interface.
@@ -102,8 +96,7 @@ type
     ///   Returns aggregate counts from all services.
     /// </summary>
     /// <returns>
-    ///   JSON object with count fields and optional
-    ///   <c>*Unavailable</c> flags.
+    ///   JSON object with count fields and optional <c>*Unavailable</c> flags.
     /// </returns>
     function GetOverview: RawJson;
 
@@ -119,14 +112,12 @@ type
     ///   Returns comment activity: pending count and top commented posts.
     /// </summary>
     /// <returns>
-    ///   JSON object with <c>pendingCount</c> and
-    ///   <c>topCommentedPosts</c> array.
+    ///   JSON object with <c>pendingCount</c> and <c>topCommentedPosts</c> array.
     /// </returns>
     function GetCommentActivity: RawJson;
 
     /// <summary>
-    ///   Returns the most recent published posts enriched with
-    ///   author, tags, and up to 10 comments per post.
+    ///   Returns the most recent published posts enriched with author, tags, and up to 10 comments per post.
     /// </summary>
     /// <param name="aLimit">
     ///   Maximum number of posts (clamped to 1..50).
@@ -148,12 +139,11 @@ type
   end;
 
   /// <summary>
-  ///   Microservice server hosting the <c>IAnalytics</c> service.
-  ///   Connects to backend services using the same pattern as the
-  ///   gateway (TRestHttpClient + Services.Resolve).
+  ///   Microservice server hosting the <c>IAnalytics</c> service. Connects to backend services using the same
+  ///   pattern as the gateway (TRestHttpClient + Services.Resolve).
   /// </summary>
   TAnalyticsServer = class(TMicroService)
-  private
+  strict private
 
     /// <summary>
     ///   HTTP client for the posts backend service.
@@ -206,8 +196,7 @@ type
     FAnalyticsImpl: TAnalyticsService;
 
     /// <summary>
-    ///   Creates an HTTP client connected to a backend service
-    ///   and registers the given SOA interfaces on it.
+    ///   Creates an HTTP client connected to a backend service and registers the given SOA interfaces on it.
     /// </summary>
     /// <param name="aHost">
     ///   Backend hostname.
@@ -227,8 +216,7 @@ type
       ): TRestHttpClient;
 
     /// <summary>
-    ///   Looks up a field value in the service registry, falling
-    ///   back to the provided default if not found.
+    ///   Looks up a field value in the service registry, falling back to the provided default if not found.
     /// </summary>
     /// <param name="aServiceName">
     ///   Service identifier to look up.
@@ -261,15 +249,12 @@ type
     procedure DoFinalize; override;
 
     /// <summary>
-    ///   Connects to backend services, resolves interfaces, and
-    ///   registers the <c>IAnalytics</c> service.
+    ///   Connects to backend services, resolves interfaces, and registers the <c>IAnalytics</c> service.
     /// </summary>
     procedure SetupServices; override;
   end;
 
 implementation
-
-{ TAnalyticsService }
 
 constructor TAnalyticsService.Create(
   const aPosts: IPost;
@@ -312,7 +297,6 @@ begin
     if AuthorId = 0 then
       AuthorId := AuthorDoc.I['ID'];
     // Count posts for this author
-    PostCount := 0;
     CommentTotal := 0;
     try
       PostsJson := FPosts.GetList(1, 100, 0, AuthorId);
@@ -451,7 +435,6 @@ var
 begin
   ResultDoc.InitObject([], JSON_FAST);
   // Posts count -- GetList returns {"total":N} without loading all items
-  PostTotal := 0;
   try
     PostsJson := FPosts.GetList(1, 1, 0, 0);
     PostsResponse.InitJson(PostsJson, JSON_FAST_FLOAT);
@@ -673,8 +656,6 @@ begin
   Result := ResultArray.ToJson;
 end;
 
-{ TAnalyticsServer }
-
 function TAnalyticsServer.ConnectToBackend(
   const aHost, aPort: RawUtf8;
   const aInterfaces: array of PRttiInfo
@@ -689,9 +670,7 @@ begin
   Result.ServiceRegister(aInterfaces, sicShared);
   for InterfaceIdx := 0 to High(aInterfaces) do
   begin
-    TServiceFactoryClient(
-      Result.Services.Info(aInterfaces[InterfaceIdx]))
-      .ResultAsJsonObjectWithoutResult := True;
+    TServiceFactoryClient(Result.Services.Info(aInterfaces[InterfaceIdx])).ResultAsJsonObjectWithoutResult := True;
   end;
 end;
 
@@ -752,14 +731,11 @@ procedure TAnalyticsServer.SetupServices;
     end;
     try
       ConfigClientModel := TOrmModel.Create([], MODEL_ROOT);
-      ConfigClient := TRestHttpClient.Create(
-        ConfigHost, ConfigPort, ConfigClientModel);
+      ConfigClient := TRestHttpClient.Create(ConfigHost, ConfigPort, ConfigClientModel);
       try
         ConfigClient.Model.Owner := ConfigClient;
         ConfigClient.ServiceRegister([TypeInfo(IConfig)], sicShared);
-        TServiceFactoryClient(
-          ConfigClient.Services.Info(TypeInfo(IConfig)))
-          .ResultAsJsonObjectWithoutResult := True;
+        TServiceFactoryClient(ConfigClient.Services.Info(TypeInfo(IConfig))).ResultAsJsonObjectWithoutResult := True;
         if ConfigClient.Services.Resolve(IConfig, ConfigIntf) then
         begin
           RegistryJson := ConfigIntf.GetServiceRegistry;
@@ -799,8 +775,7 @@ begin
     [TypeInfo(IComment)]);
   FCommentsClient.Services.Resolve(IComment, FComments);
   // Create analytics service with injected interfaces
-  FAnalyticsImpl := TAnalyticsService.Create(
-    FPosts, FUsers, FTags, FComments);
+  FAnalyticsImpl := TAnalyticsService.Create(FPosts, FUsers, FTags, FComments);
   RegisterService(FAnalyticsImpl, TypeInfo(IAnalytics));
 end;
 

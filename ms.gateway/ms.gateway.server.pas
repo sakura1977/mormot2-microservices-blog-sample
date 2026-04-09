@@ -1,36 +1,25 @@
 /// <summary>
-///   API Gateway: routes browser requests to backend microservices
-///   and serves the SPA web frontend as static files.
+///   API Gateway: routes browser requests to backend microservices and serves the SPA web frontend as static files.
 ///
-///   This is the most architecturally interesting service in the
-///   project. It demonstrates several advanced mORMot2 patterns:
+///   This is the most architecturally interesting service in the project. It demonstrates several advanced mORMot2
+///   patterns:
 ///
-///   1. <em>Transparent SOA proxying</em>: The gateway resolves
-///      backend service interfaces via <c>TRestHttpClient</c> +
-///      <c>Services.Resolve</c>, which returns a
-///      <c>TInterfacedObjectFake</c> that transparently forwards
-///      method calls as HTTP requests. These fake client objects
-///      are then re-registered as server-side services on the
-///      gateway's own <c>TRestServerDB</c> via
-///      <c>RegisterService</c> -- no manual proxy classes needed.
-///      The gateway acts as a pure pass-through for 6 interfaces.
+///   1. <em>Transparent SOA proxying</em>: The gateway resolves backend service interfaces via
+///      <c>TRestHttpClient</c> + <c>Services.Resolve</c>, which returns a <c>TInterfacedObjectFake</c> that
+///      transparently forwards method calls as HTTP requests. These fake client objects are then re-registered as
+///      server-side services on the gateway's own <c>TRestServerDB</c> via <c>RegisterService</c> -- no manual
+///      proxy classes needed. The gateway acts as a pure pass-through for 6 interfaces.
 ///
-///   2. <em>Response aggregation</em> (<c>TBlogService</c>):
-///      The <c>IBlog.GetPostFull</c> method queries 4 backend
-///      services (posts, users, tags, comments) and merges their
-///      responses into one enriched JSON document using
+///   2. <em>Response aggregation</em> (<c>TBlogService</c>): The <c>IBlog.GetPostFull</c> method queries 4 backend
+///      services (posts, users, tags, comments) and merges their responses into one enriched JSON document using
 ///      <c>TDocVariantData</c>.
 ///
-///   3. <em>HTTP request interception</em>: The gateway intercepts
-///      the <c>THttpAsyncServer.OnRequest</c> handler to split
-///      traffic between API calls (/api/...) and static file
-///      serving (SPA frontend from www/ directory).
+///   3. <em>HTTP request interception</em>: The gateway intercepts the <c>THttpAsyncServer.OnRequest</c> handler to
+///      split traffic between API calls (/api/...) and static file serving (SPA frontend from www/ directory).
 ///
-///   4. <em>Client-side service format matching</em>: Backend
-///      services use <c>ResultAsJsonObjectWithoutResult</c>, so
-///      the gateway's client factories must also set this flag
-///      via <c>TServiceFactoryClient</c> to parse responses
-///      correctly.
+///   4. <em>Client-side service format matching</em>: Backend services use <c>ResultAsJsonObjectWithoutResult</c>,
+///      so the gateway's client factories must also set this flag via <c>TServiceFactoryClient</c> to parse
+///      responses correctly.
 /// </summary>
 unit ms.gateway.server;
 
@@ -42,7 +31,7 @@ unit ms.gateway.server;
 interface
 
 uses
-  SysUtils,
+  System.SysUtils,
   mormot.core.base,
   mormot.core.buffers,
   mormot.core.data,
@@ -79,64 +68,276 @@ type
   ///   The only gateway-specific service with actual business logic.
   /// </summary>
   TBlogService = class(TInterfacedObject, IBlog)
-  private
+  strict private
+    /// <summary>
+    ///   Client interface for the Posts backend service.
+    /// </summary>
     FPosts: IPost;
+
+    /// <summary>
+    ///   Client interface for the Users backend service.
+    /// </summary>
     FUsers: IUser;
+
+    /// <summary>
+    ///   Client interface for the Tags backend service.
+    /// </summary>
     FTags: ITag;
+
+    /// <summary>
+    ///   Client interface for the Comments backend service.
+    /// </summary>
     FComments: IComment;
   public
-    constructor Create(const aPosts: IPost; const aUsers: IUser;
-      const aTags: ITag; const aComments: IComment);
-    function GetPostFull(aId: TID): RawJson;
-    function GetPostsByTag(aTagId: TID): RawJson;
+    /// <summary>
+    ///   Creates a new blog aggregation service with the given backend interfaces.
+    /// </summary>
+    /// <param name="aPosts">
+    ///   The Posts service client interface.
+    /// </param>
+    /// <param name="aUsers">
+    ///   The Users service client interface.
+    /// </param>
+    /// <param name="aTags">
+    ///   The Tags service client interface.
+    /// </param>
+    /// <param name="aComments">
+    ///   The Comments service client interface.
+    /// </param>
+    constructor Create(
+      const aPosts: IPost;
+      const aUsers: IUser;
+      const aTags: ITag;
+      const aComments: IComment
+      );
+
+    /// <summary>
+    ///   Returns a fully enriched post with author, tags, and comments merged into one JSON document.
+    /// </summary>
+    /// <param name="aId">
+    ///   The post identifier.
+    /// </param>
+    /// <returns>
+    ///   A JSON object with the post data plus Author, Tags, and Comments fields.
+    /// </returns>
+    function GetPostFull(
+      aId: TID
+      ): RawJson;
+
+    /// <summary>
+    ///   Returns all published posts for a given tag, each enriched with author information.
+    /// </summary>
+    /// <param name="aTagId">
+    ///   The tag identifier.
+    /// </param>
+    /// <returns>
+    ///   A JSON object with the tag data and an array of enriched posts.
+    /// </returns>
+    function GetPostsByTag(
+      aTagId: TID
+      ): RawJson;
   end;
 
   /// <summary>
-  ///   Gateway microservice: hosts proxy services on a TRestServer
-  ///   and serves the static web frontend via THttpAsyncServer.
-  ///   API calls (/api/...) are delegated to a TRestServerDB hosting
-  ///   proxy services. Non-API calls serve static files from www/.
+  ///   Gateway microservice: hosts proxy services on a <c>TRestServer</c> and serves the static web frontend via
+  ///   <c>THttpAsyncServer</c>. API calls (/api/...) are delegated to a <c>TRestServerDB</c> hosting proxy services.
+  ///   Non-API calls serve static files from www/.
   /// </summary>
   TGatewayServer = class(TMicroService)
-  private
+  strict private
+    /// <summary>
+    ///   REST HTTP client connected to the Auth backend service.
+    /// </summary>
     FAuthClient: TRestHttpClient;
+
+    /// <summary>
+    ///   REST HTTP client connected to the Users backend service.
+    /// </summary>
     FUsersClient: TRestHttpClient;
+
+    /// <summary>
+    ///   REST HTTP client connected to the Posts backend service.
+    /// </summary>
     FPostsClient: TRestHttpClient;
+
+    /// <summary>
+    ///   REST HTTP client connected to the Tags backend service.
+    /// </summary>
     FTagsClient: TRestHttpClient;
+
+    /// <summary>
+    ///   REST HTTP client connected to the Comments backend service.
+    /// </summary>
     FCommentsClient: TRestHttpClient;
+
+    /// <summary>
+    ///   REST HTTP client connected to the Media backend service.
+    /// </summary>
     FMediaClient: TRestHttpClient;
+
+    /// <summary>
+    ///   Service registry loaded from the configuration service, mapping service names to host/port.
+    /// </summary>
     FServiceRegistry: TDocVariantData;
+
+    /// <summary>
+    ///   Filesystem path to the static web frontend directory.
+    /// </summary>
     FWwwPath: TFileName;
+
+    /// <summary>
+    ///   Original HTTP request handler from <c>TRestHttpServer</c>, used for API route delegation.
+    /// </summary>
     FOriginalHandler: TOnHttpServerRequest;
-    // Resolved remote interfaces
+
+    /// <summary>
+    ///   Resolved remote interface for the Auth backend service.
+    /// </summary>
     FAuth: IAuth;
+
+    /// <summary>
+    ///   Resolved remote interface for the Users backend service.
+    /// </summary>
     FUsers: IUser;
+
+    /// <summary>
+    ///   Resolved remote interface for the Posts backend service.
+    /// </summary>
     FPosts: IPost;
+
+    /// <summary>
+    ///   Resolved remote interface for the Tags backend service.
+    /// </summary>
     FTags: ITag;
+
+    /// <summary>
+    ///   Resolved remote interface for the Comments backend service.
+    /// </summary>
     FComments: IComment;
+
+    /// <summary>
+    ///   Resolved remote interface for the Media backend service.
+    /// </summary>
     FMedia: IMedia;
-    function ConnectToBackend(const aHost, aPort: RawUtf8;
-      const aInterfaces: array of PRttiInfo): TRestHttpClient;
-    function RegistryLookup(const aServiceName, aField,
-      aDefault: RawUtf8): RawUtf8;
-    function ServeStaticFile(const aFilePath: TFileName;
-      aCtxt: THttpServerRequestAbstract): cardinal;
-    function HandleRequest(aCtxt: THttpServerRequestAbstract): cardinal;
-    function HandleStaticFile(aCtxt: THttpServerRequestAbstract): cardinal;
+
+    /// <summary>
+    ///   Creates a REST HTTP client connected to a backend service and registers the given interfaces.
+    /// </summary>
+    /// <param name="aHost">
+    ///   The backend service hostname.
+    /// </param>
+    /// <param name="aPort">
+    ///   The backend service port.
+    /// </param>
+    /// <param name="aInterfaces">
+    ///   Array of interface RTTI pointers to register on the client.
+    /// </param>
+    /// <returns>
+    ///   A configured <c>TRestHttpClient</c> with interfaces registered and response format matched.
+    /// </returns>
+    function ConnectToBackend(
+      const aHost: RawUtf8;
+      const aPort: RawUtf8;
+      const aInterfaces: array of PRttiInfo
+      ): TRestHttpClient;
+
+    /// <summary>
+    ///   Looks up a field value for a service in the registry, falling back to a default.
+    /// </summary>
+    /// <param name="aServiceName">
+    ///   The service name key in the registry.
+    /// </param>
+    /// <param name="aField">
+    ///   The field name to retrieve (e.g. Host or Port).
+    /// </param>
+    /// <param name="aDefault">
+    ///   The default value if the field is not found.
+    /// </param>
+    /// <returns>
+    ///   The registry value or <c>aDefault</c>.
+    /// </returns>
+    function RegistryLookup(
+      const aServiceName: RawUtf8;
+      const aField: RawUtf8;
+      const aDefault: RawUtf8
+      ): RawUtf8;
+
+    /// <summary>
+    ///   Serves a static file from disk, setting the content type from the file extension.
+    /// </summary>
+    /// <param name="aFilePath">
+    ///   The absolute filesystem path to the file.
+    /// </param>
+    /// <param name="aCtxt">
+    ///   The HTTP request context to populate with the response.
+    /// </param>
+    /// <returns>
+    ///   <c>HTTP_SUCCESS</c> if the file exists, <c>HTTP_NOTFOUND</c> otherwise.
+    /// </returns>
+    function ServeStaticFile(
+      const aFilePath: TFileName;
+      aCtxt: THttpServerRequestAbstract
+      ): cardinal;
+
+    /// <summary>
+    ///   Main HTTP request handler: adds CORS headers, routes API calls to the REST server,
+    ///   and delegates non-API calls to static file serving.
+    /// </summary>
+    /// <param name="aCtxt">
+    ///   The HTTP request context.
+    /// </param>
+    /// <returns>
+    ///   The HTTP status code for the response.
+    /// </returns>
+    function HandleRequest(
+      aCtxt: THttpServerRequestAbstract
+      ): cardinal;
+
+    /// <summary>
+    ///   Handles non-API requests by serving static files from the www directory with SPA fallback.
+    /// </summary>
+    /// <param name="aCtxt">
+    ///   The HTTP request context.
+    /// </param>
+    /// <returns>
+    ///   The HTTP status code for the response.
+    /// </returns>
+    function HandleStaticFile(
+      aCtxt: THttpServerRequestAbstract
+      ): cardinal;
   protected
+    /// <summary>
+    ///   Creates the ORM model for the gateway REST server.
+    /// </summary>
+    /// <returns>
+    ///   An empty <c>TOrmModel</c> since the gateway has no ORM tables.
+    /// </returns>
     function CreateModel: TOrmModel; override;
+
+    /// <summary>
+    ///   Connects to all backend services and registers proxy interfaces on the gateway REST server.
+    /// </summary>
     procedure SetupServices; override;
+
+    /// <summary>
+    ///   Intercepts the HTTP handler to add static file serving for the SPA frontend.
+    /// </summary>
     procedure DoInitialize; override;
+
+    /// <summary>
+    ///   Releases all remote interfaces and frees backend HTTP clients.
+    /// </summary>
     procedure DoFinalize; override;
   end;
 
 implementation
 
-{ TBlogService }
-
-constructor TBlogService.Create(const aPosts: IPost;
-  const aUsers: IUser; const aTags: ITag;
-  const aComments: IComment);
+constructor TBlogService.Create(
+  const aPosts: IPost;
+  const aUsers: IUser;
+  const aTags: ITag;
+  const aComments: IComment
+  );
 begin
   inherited Create;
   FPosts := aPosts;
@@ -145,7 +346,9 @@ begin
   FComments := aComments;
 end;
 
-function TBlogService.GetPostFull(aId: TID): RawJson;
+function TBlogService.GetPostFull(
+  aId: TID
+  ): RawJson;
 var
   PostJson, AuthorJson, TagsJson, CommentsJson: RawJson;
   PostDoc: TDocVariantData;
@@ -198,7 +401,9 @@ begin
   Result := RawJson(PostDoc.ToJson);
 end;
 
-function TBlogService.GetPostsByTag(aTagId: TID): RawJson;
+function TBlogService.GetPostsByTag(
+  aTagId: TID
+  ): RawJson;
 var
   TagJson, PostIdsJson, PostJson, AuthorJson: RawJson;
   ResultDoc, PostDoc: TDocVariantData;
@@ -254,10 +459,11 @@ begin
   Result := RawJson(ResultDoc.ToJson);
 end;
 
-{ TGatewayServer }
-
-function TGatewayServer.ConnectToBackend(const aHost, aPort: RawUtf8;
-  const aInterfaces: array of PRttiInfo): TRestHttpClient;
+function TGatewayServer.ConnectToBackend(
+  const aHost: RawUtf8;
+  const aPort: RawUtf8;
+  const aInterfaces: array of PRttiInfo
+  ): TRestHttpClient;
 var
   ClientModel: TOrmModel;
   IntfIdx: PtrInt;
@@ -269,8 +475,7 @@ begin
   // Backend services use ResultAsJsonObjectWithoutResult format --
   // the client factories must match to parse responses correctly
   for IntfIdx := 0 to High(aInterfaces) do
-    TServiceFactoryClient(Result.Services.Info(aInterfaces[IntfIdx]))
-      .ResultAsJsonObjectWithoutResult := True;
+    TServiceFactoryClient(Result.Services.Info(aInterfaces[IntfIdx])).ResultAsJsonObjectWithoutResult := True;
 end;
 
 function TGatewayServer.CreateModel: TOrmModel;
@@ -279,7 +484,9 @@ begin
 end;
 
 function TGatewayServer.RegistryLookup(
-  const aServiceName, aField, aDefault: RawUtf8
+  const aServiceName: RawUtf8;
+  const aField: RawUtf8;
+  const aDefault: RawUtf8
   ): RawUtf8;
 var
   RegistryEntry: PDocVariantData;
@@ -318,14 +525,11 @@ procedure TGatewayServer.SetupServices;
     end;
     try
       ConfigClientModel := TOrmModel.Create([], MODEL_ROOT);
-      ConfigClient := TRestHttpClient.Create(
-        ConfigHost, ConfigPort, ConfigClientModel);
+      ConfigClient := TRestHttpClient.Create(ConfigHost, ConfigPort, ConfigClientModel);
       try
         ConfigClient.Model.Owner := ConfigClient;
         ConfigClient.ServiceRegister([TypeInfo(IConfig)], sicShared);
-        TServiceFactoryClient(
-          ConfigClient.Services.Info(TypeInfo(IConfig)))
-          .ResultAsJsonObjectWithoutResult := True;
+        TServiceFactoryClient(ConfigClient.Services.Info(TypeInfo(IConfig))).ResultAsJsonObjectWithoutResult := True;
         if ConfigClient.Services.Resolve(IConfig, ConfigIntf) then
         begin
           RegistryJson := ConfigIntf.GetServiceRegistry;
@@ -381,22 +585,14 @@ begin
   // Register resolved client interfaces directly as server services.
   // The client-resolved interfaces are TInterfacedObjectFake instances
   // that already implement the interface -- no manual proxy classes needed.
-  RegisterService(
-    ObjectFromInterface(FAuth) as TInterfacedObject, TypeInfo(IAuth));
-  RegisterService(
-    ObjectFromInterface(FUsers) as TInterfacedObject, TypeInfo(IUser));
-  RegisterService(
-    ObjectFromInterface(FPosts) as TInterfacedObject, TypeInfo(IPost));
-  RegisterService(
-    ObjectFromInterface(FTags) as TInterfacedObject, TypeInfo(ITag));
-  RegisterService(
-    ObjectFromInterface(FComments) as TInterfacedObject, TypeInfo(IComment));
-  RegisterService(
-    ObjectFromInterface(FMedia) as TInterfacedObject, TypeInfo(IMedia));
+  RegisterService(ObjectFromInterface(FAuth) as TInterfacedObject, TypeInfo(IAuth));
+  RegisterService(ObjectFromInterface(FUsers) as TInterfacedObject, TypeInfo(IUser));
+  RegisterService(ObjectFromInterface(FPosts) as TInterfacedObject, TypeInfo(IPost));
+  RegisterService(ObjectFromInterface(FTags) as TInterfacedObject, TypeInfo(ITag));
+  RegisterService(ObjectFromInterface(FComments) as TInterfacedObject, TypeInfo(IComment));
+  RegisterService(ObjectFromInterface(FMedia) as TInterfacedObject, TypeInfo(IMedia));
   // Aggregation service -- actual business logic, not a proxy
-  RegisterService(
-    TBlogService.Create(FPosts, FUsers, FTags, FComments),
-    TypeInfo(IBlog));
+  RegisterService(TBlogService.Create(FPosts, FUsers, FTags, FComments), TypeInfo(IBlog));
 end;
 
 procedure TGatewayServer.DoInitialize;
@@ -426,7 +622,8 @@ begin
 end;
 
 function TGatewayServer.HandleRequest(
-  aCtxt: THttpServerRequestAbstract): cardinal;
+  aCtxt: THttpServerRequestAbstract
+  ): cardinal;
 begin
   // Add CORS headers for all responses
   aCtxt.OutCustomHeaders :=
@@ -440,8 +637,7 @@ begin
     Exit(HTTP_NOCONTENT);
   end;
   // API calls go to the REST server (interface-based services)
-  if IdemPChar(pointer(aCtxt.Url), '/API/') or
-     IdemPChar(pointer(aCtxt.Url), '/API') then
+  if IdemPChar(pointer(aCtxt.Url), '/API/') or IdemPChar(pointer(aCtxt.Url), '/API') then
     Result := FOriginalHandler(aCtxt)
   else
     // Non-API calls serve static files (SPA frontend)
@@ -449,7 +645,8 @@ begin
 end;
 
 function TGatewayServer.HandleStaticFile(
-  aCtxt: THttpServerRequestAbstract): cardinal;
+  aCtxt: THttpServerRequestAbstract
+  ): cardinal;
 var
   Path: RawUtf8;
   FilePath: TFileName;
@@ -462,8 +659,7 @@ begin
     // Prevent path traversal
     if PosEx('..', Path) > 0 then
       Exit(HTTP_FORBIDDEN);
-    FilePath := FWwwPath + StringReplace(
-      Utf8ToString(Copy(Path, 2, MaxInt)), '/', PathDelim, [rfReplaceAll]);
+    FilePath := FWwwPath + StringReplace(Utf8ToString(Copy(Path, 2, MaxInt)), '/', PathDelim, [rfReplaceAll]);
   end;
   Result := ServeStaticFile(FilePath, aCtxt);
   // SPA fallback: unmatched routes serve index.html
@@ -473,7 +669,8 @@ end;
 
 function TGatewayServer.ServeStaticFile(
   const aFilePath: TFileName;
-  aCtxt: THttpServerRequestAbstract): cardinal;
+  aCtxt: THttpServerRequestAbstract
+  ): cardinal;
 begin
   if FileExists(aFilePath) then
   begin

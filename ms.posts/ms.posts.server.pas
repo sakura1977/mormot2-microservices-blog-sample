@@ -1,22 +1,18 @@
 /// <summary>
-///   Interface-based service implementation for the Posts microservice.
-///   Implements <c>IPost</c> with CRUD, pagination, and filtering.
+///   Interface-based service implementation for the Posts microservice. Implements <c>IPost</c> with CRUD,
+///   pagination, and filtering.
 ///
 ///   Demonstrates additional mORMot2 patterns beyond basic CRUD:
-///   - <c>IRestOrm.MultiFieldValues</c>: returns a <c>TOrmTable</c>
-///     (in-memory result set) for paginated queries with custom
-///     WHERE clauses, ORDER BY, LIMIT, and OFFSET.
-///   - <c>IRestOrm.OneFieldValueInt64</c>: efficient single-value
-///     query for aggregate functions like COUNT(*).
-///   - <c>FormatUtf8</c>: mORMot2's fast string formatting function,
-///     similar to Format but optimized for <c>RawUtf8</c> and safe
-///     against SQL injection when used with integer parameters.
-///   - Publication state machine: Status field transitions
-///     (draft -> published -> archived) with automatic PublishedAt
-///     timestamp on first publication.
+///   - <c>IRestOrm.MultiFieldValues</c>: returns a <c>TOrmTable</c> (in-memory result set) for paginated queries
+///     with custom WHERE clauses, ORDER BY, LIMIT, and OFFSET.
+///   - <c>IRestOrm.OneFieldValueInt64</c>: efficient single-value query for aggregate functions like COUNT(*).
+///   - <c>FormatUtf8</c>: mORMot2's fast string formatting function, similar to Format but optimized for
+///     <c>RawUtf8</c> and safe against SQL injection when used with integer parameters.
+///   - Publication state machine: Status field transitions (draft -> published -> archived) with automatic
+///     PublishedAt timestamp on first publication.
 ///
-///   See <c>ms.users.server.pas</c> for detailed explanations of
-///   the basic CRUD and JSON parsing patterns used here.
+///   See <c>ms.users.server.pas</c> for detailed explanations of the basic CRUD and JSON parsing patterns
+///   used here.
 /// </summary>
 unit ms.posts.server;
 
@@ -54,49 +50,137 @@ type
   ///   Implements the IPost service interface using ORM persistence.
   /// </summary>
   TPostService = class(TInterfacedObject, IPost)
-  private
+  strict private
+    /// <summary>
+    ///   ORM interface used for all database operations on blog posts.
+    /// </summary>
     FOrm: IRestOrm;
   public
-    constructor Create(const aOrm: IRestOrm);
+
+    /// <summary>
+    ///   Creates a new TPostService instance with the given ORM interface.
+    /// </summary>
+    /// <param name="aOrm">
+    ///   The ORM interface to use for persistence operations.
+    /// </param>
+    constructor Create(
+      const aOrm: IRestOrm
+      );
+
     /// <summary>
     ///   Retrieves a single post by its ID.
     /// </summary>
-    function Get(aId: TID): RawJson;
+    /// <param name="aId">
+    ///   The unique identifier of the post to retrieve.
+    /// </param>
+    /// <returns>
+    ///   JSON representation of the post, or empty JSON object if not found.
+    /// </returns>
+    function Get(
+      aId: TID
+      ): RawJson;
+
     /// <summary>
     ///   Retrieves a single post by its URL slug.
     /// </summary>
-    function GetBySlug(const aSlug: RawUtf8): RawJson;
+    /// <param name="aSlug">
+    ///   The URL-friendly slug identifying the post.
+    /// </param>
+    /// <returns>
+    ///   JSON representation of the post, or empty JSON object if not found.
+    /// </returns>
+    function GetBySlug(
+      const aSlug: RawUtf8
+      ): RawJson;
+
     /// <summary>
     ///   Retrieves a paginated, filtered list of posts.
     /// </summary>
-    function GetList(aPage, aLimit, aStatus: integer;
-      aAuthorId: TID): RawJson;
+    /// <param name="aPage">
+    ///   The page number (1-based). Values <= 0 default to 1.
+    /// </param>
+    /// <param name="aLimit">
+    ///   The number of posts per page. Clamped to 1..100, defaults to 10.
+    /// </param>
+    /// <param name="aStatus">
+    ///   Filter by publication status. Values <= 0 mean no filter.
+    /// </param>
+    /// <param name="aAuthorId">
+    ///   Filter by author ID. Values <= 0 mean no filter.
+    /// </param>
+    /// <returns>
+    ///   JSON object with items array, total count, and current page number.
+    /// </returns>
+    function GetList(
+      aPage: integer;
+      aLimit: integer;
+      aStatus: integer;
+      aAuthorId: TID
+      ): RawJson;
+
     /// <summary>
     ///   Creates a new post from JSON data. Returns the new ID.
     /// </summary>
-    function Add(const aData: RawJson): TID;
+    /// <param name="aData">
+    ///   JSON object containing the post fields (Title, Body, Excerpt, AuthorId, etc.).
+    /// </param>
+    /// <returns>
+    ///   The ID of the newly created post, or 0 if the Title was empty.
+    /// </returns>
+    function Add(
+      const aData: RawJson
+      ): TID;
+
     /// <summary>
     ///   Updates an existing post with partial JSON data.
     /// </summary>
-    function Update(aId: TID; const aData: RawJson): boolean;
+    /// <param name="aId">
+    ///   The unique identifier of the post to update.
+    /// </param>
+    /// <param name="aData">
+    ///   JSON object containing only the fields to update.
+    /// </param>
+    /// <returns>
+    ///   True if the post was found and updated successfully.
+    /// </returns>
+    function Update(
+      aId: TID;
+      const aData: RawJson
+      ): boolean;
+
     /// <summary>
     ///   Deletes a post by its ID.
     /// </summary>
-    function Remove(aId: TID): boolean;
+    /// <param name="aId">
+    ///   The unique identifier of the post to delete.
+    /// </param>
+    /// <returns>
+    ///   True if the post was deleted successfully.
+    /// </returns>
+    function Remove(
+      aId: TID
+      ): boolean;
   end;
 
   /// <summary>
-  ///   Microservice server for blog posts.
-  ///   Registers TPostService as an IPost SOA service.
+  ///   Microservice server for blog posts. Registers TPostService as an IPost SOA service.
   /// </summary>
   TPostsServer = class(TMicroService)
-  private
+  strict private
+    /// <summary>
+    ///   The TPostService instance registered as IPost service implementation.
+    /// </summary>
     FPostImpl: TPostService;
   protected
+
     /// <summary>
     ///   Creates the ORM model containing TOrmBlogPost.
     /// </summary>
+    /// <returns>
+    ///   A new TOrmModel configured with the TOrmBlogPost class.
+    /// </returns>
     function CreateModel: TOrmModel; override;
+
     /// <summary>
     ///   Registers the IPost service on the REST server.
     /// </summary>
@@ -105,20 +189,24 @@ type
 
 implementation
 
-{ TPostService }
-
-constructor TPostService.Create(const aOrm: IRestOrm);
+constructor TPostService.Create(
+  const aOrm: IRestOrm
+  );
 begin
   inherited Create;
   FOrm := aOrm;
 end;
 
-function TPostService.Get(aId: TID): RawJson;
+function TPostService.Get(
+  aId: TID
+  ): RawJson;
 begin
   Result := OrmGetById(FOrm, TOrmBlogPost, aId);
 end;
 
-function TPostService.GetBySlug(const aSlug: RawUtf8): RawJson;
+function TPostService.GetBySlug(
+  const aSlug: RawUtf8
+  ): RawJson;
 var
   PostRecord: TOrmBlogPost;
 begin
@@ -133,8 +221,12 @@ begin
   end;
 end;
 
-function TPostService.GetList(aPage, aLimit, aStatus: integer;
-  aAuthorId: TID): RawJson;
+function TPostService.GetList(
+  aPage: integer;
+  aLimit: integer;
+  aStatus: integer;
+  aAuthorId: TID
+  ): RawJson;
 var
   WhereClause: RawUtf8;
   Total: Int64;
@@ -161,8 +253,7 @@ begin
 
   // Calculate filtered total count
   if WhereClause <> '' then
-    Total := FOrm.OneFieldValueInt64(
-      TOrmBlogPost, 'Count(*)', WhereClause)
+    Total := FOrm.OneFieldValueInt64(TOrmBlogPost, 'Count(*)', WhereClause)
   else
     Total := FOrm.TableRowCount(TOrmBlogPost);
 
@@ -170,21 +261,20 @@ begin
   if WhereClause = '' then
     WhereClause := 'RowID>0';
   ResultTable := FOrm.MultiFieldValues(TOrmBlogPost, '*',
-    WhereClause + FormatUtf8(' ORDER BY RowID DESC LIMIT % OFFSET %',
-      [aLimit, (aPage - 1) * aLimit]));
+    WhereClause + FormatUtf8(' ORDER BY RowID DESC LIMIT % OFFSET %', [aLimit, (aPage - 1) * aLimit]));
   try
     if ResultTable = nil then
-      Result := FormatUtf8('{"items":[],"total":%,"page":%}',
-        [Total, aPage])
+      Result := FormatUtf8('{"items":[],"total":%,"page":%}', [Total, aPage])
     else
-      Result := FormatUtf8('{"items":%,"total":%,"page":%}',
-        [ResultTable.GetJsonValues(True), Total, aPage]);
+      Result := FormatUtf8('{"items":%,"total":%,"page":%}', [ResultTable.GetJsonValues(True), Total, aPage]);
   finally
     ResultTable.Free;
   end;
 end;
 
-function TPostService.Add(const aData: RawJson): TID;
+function TPostService.Add(
+  const aData: RawJson
+  ): TID;
 var
   JsonDoc: TDocVariantData;
   PostRecord: TOrmBlogPost;
@@ -214,7 +304,10 @@ begin
   end;
 end;
 
-function TPostService.Update(aId: TID; const aData: RawJson): boolean;
+function TPostService.Update(
+  aId: TID;
+  const aData: RawJson
+  ): boolean;
 var
   JsonDoc: TDocVariantData;
   PostRecord: TOrmBlogPost;
@@ -256,12 +349,12 @@ begin
   end;
 end;
 
-function TPostService.Remove(aId: TID): boolean;
+function TPostService.Remove(
+  aId: TID
+  ): boolean;
 begin
   Result := FOrm.Delete(TOrmBlogPost, aId);
 end;
-
-{ TPostsServer }
 
 function TPostsServer.CreateModel: TOrmModel;
 begin
