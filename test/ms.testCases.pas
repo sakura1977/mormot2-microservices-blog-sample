@@ -159,6 +159,11 @@ type
     ///   Log query service implementation instance.
     /// </summary>
     FLogQueryImpl: TLogQueryService;
+
+    /// <summary>
+    ///   Log stream service that broadcasts new entries to WebSocket subscribers.
+    /// </summary>
+    FLogStreamImpl: TLogStreamService;
   public
     /// <summary>
     ///   Auth service interface for test access.
@@ -209,6 +214,17 @@ type
     ///   Central log query interface for test access.
     /// </summary>
     LogQuery: ILogQuery;
+
+    /// <summary>
+    ///   Central log stream interface for test access.
+    /// </summary>
+    LogStream: ILogStream;
+
+    /// <summary>
+    ///   Direct access to the log stream service implementation. The tests use this to call
+    ///   <c>Broadcast</c> directly because it is not part of the public <c>ILogStream</c> contract.
+    /// </summary>
+    LogStreamSvc: TLogStreamService;
 
     /// <summary>
     ///   Creates all service implementations with a shared in-memory database.
@@ -802,6 +818,27 @@ type
   end;
 
   /// <summary>
+  ///   Minimal test subscriber that records every <c>NotifyEntry</c> call for assertions.
+  /// </summary>
+  TTestLogStreamRecorder = class(TInterfacedObject, ILogStreamCallback)
+  strict private
+    FReceived: TLogEntryDtoArray;
+    FRaiseOnNext: boolean;
+  public
+    constructor Create(
+      aRaiseOnNext: boolean = False
+      );
+    procedure NotifyEntry(
+      const aEntry: TLogEntryDto
+      );
+    function ReceivedCount: integer;
+    function ReceivedEntry(
+      aIdx: integer
+      ): TLogEntryDto;
+    procedure Reset;
+  end;
+
+  /// <summary>
   ///   Tests for the central logging service (<c>ms.logs</c>): ingestion, retrieval by correlation ID,
   ///   recent filter, full-text search, and stats. The tests use the in-process REST server with the
   ///   <c>TOrmLogEntry</c> tables wired into <c>TBlogTestContext</c>.
@@ -837,6 +874,40 @@ type
     ///   Verifies that <c>Stats</c> returns a non-zero total entries count and per-service breakdown.
     /// </summary>
     procedure StatsReportsTotals;
+  end;
+
+  /// <summary>
+  ///   Tests for <c>TLogStreamService</c>: the in-process pub/sub broadcaster used by the WebSocket-based
+  ///   live log tail. These tests bypass the WebSocket transport and exercise the service directly through
+  ///   the <c>ILogStream</c> interface, which is sufficient for the lifecycle and broadcast logic.
+  /// </summary>
+  TTestLogStream = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   Verifies that an entry passed to <c>Broadcast</c> reaches a single subscriber.
+    /// </summary>
+    procedure SingleSubscriberReceivesEntry;
+
+    /// <summary>
+    ///   Verifies that every active subscriber receives every broadcast entry.
+    /// </summary>
+    procedure MultipleSubscribersAllReceive;
+
+    /// <summary>
+    ///   Verifies that an unsubscribed callback receives no further entries.
+    /// </summary>
+    procedure UnsubscribedCallbackStopsReceiving;
+
+    /// <summary>
+    ///   Verifies that an ingested batch is automatically broadcast to subscribers (the integration path).
+    /// </summary>
+    procedure IngestionBroadcastsToSubscribers;
+
+    /// <summary>
+    ///   Verifies that a subscriber that raises during <c>NotifyEntry</c> is removed automatically so other
+    ///   subscribers continue to receive future broadcasts.
+    /// </summary>
+    procedure FailingSubscriberIsDropped;
   end;
 
   /// <summary>
@@ -923,7 +994,8 @@ begin
   FMediaImpl := TMediaService.Create(FRestServer.Orm, FMediaPath);
   FBlogImpl := TBlogService.Create(FPostImpl, FUserImpl, FTagImpl, FCommentImpl);
   FAnalyticsImpl := TAnalyticsService.Create(FPostImpl, FUserImpl, FTagImpl, FCommentImpl);
-  FLogIngestionImpl := TLogIngestionService.Create(FRestServer.Orm);
+  FLogStreamImpl := TLogStreamService.Create;
+  FLogIngestionImpl := TLogIngestionService.Create(FRestServer.Orm, FLogStreamImpl);
   FLogQueryImpl := TLogQueryService.Create(FRestServer.Orm);
   // Keep interface references
   Auth := FAuthImpl;
@@ -936,6 +1008,8 @@ begin
   Analytics := FAnalyticsImpl;
   LogIngestion := FLogIngestionImpl;
   LogQuery := FLogQueryImpl;
+  LogStream := FLogStreamImpl;
+  LogStreamSvc := FLogStreamImpl;
   // Register on REST server
   RegisterService(FAuthImpl, TypeInfo(IAuth));
   RegisterService(FUserImpl, TypeInfo(IUser));
@@ -947,6 +1021,7 @@ begin
   RegisterService(FAnalyticsImpl, TypeInfo(IAnalytics));
   RegisterService(FLogIngestionImpl, TypeInfo(ILogIngestion));
   RegisterService(FLogQueryImpl, TypeInfo(ILogQuery));
+  RegisterService(FLogStreamImpl, TypeInfo(ILogStream));
 end;
 
 destructor TBlogTestContext.Destroy;
@@ -962,6 +1037,8 @@ begin
   Analytics := nil;
   LogIngestion := nil;
   LogQuery := nil;
+  LogStream := nil;
+  LogStreamSvc := nil;
   FreeAndNil(FRestServer);
   FreeAndNil(FModel);
   FreeAndNil(FJwt);
@@ -2824,6 +2901,181 @@ begin
     'OldestEntry must be <= NewestEntry');
 end;
 
+constructor TTestLogStreamRecorder.Create(
+  aRaiseOnNext: boolean
+  );
+begin
+  inherited Create;
+  FRaiseOnNext := aRaiseOnNext;
+end;
+
+procedure TTestLogStreamRecorder.NotifyEntry(
+  const aEntry: TLogEntryDto
+  );
+begin
+  if FRaiseOnNext then
+    raise ESynException.Create('intentional test failure');
+  SetLength(FReceived, Length(FReceived) + 1);
+  FReceived[High(FReceived)] := aEntry;
+end;
+
+function TTestLogStreamRecorder.ReceivedCount: integer;
+begin
+  Result := Length(FReceived);
+end;
+
+function TTestLogStreamRecorder.ReceivedEntry(
+  aIdx: integer
+  ): TLogEntryDto;
+begin
+  Result := FReceived[aIdx];
+end;
+
+procedure TTestLogStreamRecorder.Reset;
+begin
+  FReceived := nil;
+end;
+
+procedure TTestLogStream.SingleSubscriberReceivesEntry;
+var
+  Recorder: TTestLogStreamRecorder;
+  RecorderIntf: ILogStreamCallback;
+  Entry: TLogEntryDto;
+begin
+  Recorder := TTestLogStreamRecorder.Create;
+  RecorderIntf := Recorder;
+  Context.LogStream.Subscribe(RecorderIntf);
+  try
+    Finalize(Entry);
+    FillCharFast(Entry, SizeOf(Entry), 0);
+    Entry.ID := 1;
+    Entry.ServiceName := 'ms.test';
+    Entry.Level := 1;
+    Entry.Message := 'hello stream';
+    Context.LogStreamSvc.Broadcast(Entry);
+    CheckEqual(Recorder.ReceivedCount, 1, 'subscriber must receive exactly one entry');
+    CheckEqual(Recorder.ReceivedEntry(0).Message, 'hello stream',
+      'received entry must equal broadcast entry');
+  finally
+    Context.LogStream.Unsubscribe(RecorderIntf);
+    RecorderIntf := nil;
+  end;
+end;
+
+procedure TTestLogStream.MultipleSubscribersAllReceive;
+var
+  RecA, RecB, RecC: TTestLogStreamRecorder;
+  IntfA, IntfB, IntfC: ILogStreamCallback;
+  Entry: TLogEntryDto;
+begin
+  RecA := TTestLogStreamRecorder.Create;
+  RecB := TTestLogStreamRecorder.Create;
+  RecC := TTestLogStreamRecorder.Create;
+  IntfA := RecA;
+  IntfB := RecB;
+  IntfC := RecC;
+  Context.LogStream.Subscribe(IntfA);
+  Context.LogStream.Subscribe(IntfB);
+  Context.LogStream.Subscribe(IntfC);
+  try
+    Finalize(Entry);
+    FillCharFast(Entry, SizeOf(Entry), 0);
+    Entry.ID := 42;
+    Entry.Message := 'fan-out';
+    Context.LogStreamSvc.Broadcast(Entry);
+    CheckEqual(RecA.ReceivedCount, 1, 'A must receive');
+    CheckEqual(RecB.ReceivedCount, 1, 'B must receive');
+    CheckEqual(RecC.ReceivedCount, 1, 'C must receive');
+  finally
+    Context.LogStream.Unsubscribe(IntfA);
+    Context.LogStream.Unsubscribe(IntfB);
+    Context.LogStream.Unsubscribe(IntfC);
+    IntfA := nil;
+    IntfB := nil;
+    IntfC := nil;
+  end;
+end;
+
+procedure TTestLogStream.UnsubscribedCallbackStopsReceiving;
+var
+  Recorder: TTestLogStreamRecorder;
+  RecorderIntf: ILogStreamCallback;
+  Entry: TLogEntryDto;
+begin
+  Recorder := TTestLogStreamRecorder.Create;
+  RecorderIntf := Recorder;
+  Context.LogStream.Subscribe(RecorderIntf);
+  Finalize(Entry);
+  FillCharFast(Entry, SizeOf(Entry), 0);
+  Entry.Message := 'first';
+  Context.LogStreamSvc.Broadcast(Entry);
+  CheckEqual(Recorder.ReceivedCount, 1, 'must receive while subscribed');
+  Context.LogStream.Unsubscribe(RecorderIntf);
+  Entry.Message := 'second';
+  Context.LogStreamSvc.Broadcast(Entry);
+  CheckEqual(Recorder.ReceivedCount, 1,
+    'must NOT receive after Unsubscribe');
+  RecorderIntf := nil;
+end;
+
+procedure TTestLogStream.IngestionBroadcastsToSubscribers;
+var
+  Recorder: TTestLogStreamRecorder;
+  RecorderIntf: ILogStreamCallback;
+  Batch: TLogEntryIngestDtoArray;
+begin
+  Recorder := TTestLogStreamRecorder.Create;
+  RecorderIntf := Recorder;
+  Context.LogStream.Subscribe(RecorderIntf);
+  try
+    SetLength(Batch, 2);
+    Batch[0].ServiceName := 'ms.test';
+    Batch[0].Timestamp := NowUtc;
+    Batch[0].Level := 1;
+    Batch[0].Message := 'ingest A';
+    Batch[1].ServiceName := 'ms.test';
+    Batch[1].Timestamp := NowUtc;
+    Batch[1].Level := 1;
+    Batch[1].Message := 'ingest B';
+    Context.LogIngestion.AppendBatch(Batch);
+    CheckEqual(Recorder.ReceivedCount, 2,
+      'AppendBatch must broadcast every newly persisted entry');
+  finally
+    Context.LogStream.Unsubscribe(RecorderIntf);
+    RecorderIntf := nil;
+  end;
+end;
+
+procedure TTestLogStream.FailingSubscriberIsDropped;
+var
+  Failing, Healthy: TTestLogStreamRecorder;
+  IntfFail, IntfHealthy: ILogStreamCallback;
+  Entry: TLogEntryDto;
+begin
+  Failing := TTestLogStreamRecorder.Create({aRaiseOnNext=}True);
+  Healthy := TTestLogStreamRecorder.Create;
+  IntfFail := Failing;
+  IntfHealthy := Healthy;
+  Context.LogStream.Subscribe(IntfFail);
+  Context.LogStream.Subscribe(IntfHealthy);
+  try
+    Finalize(Entry);
+    FillCharFast(Entry, SizeOf(Entry), 0);
+    Entry.Message := 'first broadcast';
+    Context.LogStreamSvc.Broadcast(Entry);
+    // Healthy received it; Failing raised and was dropped.
+    CheckEqual(Healthy.ReceivedCount, 1, 'healthy must receive');
+    Entry.Message := 'second broadcast';
+    Context.LogStreamSvc.Broadcast(Entry);
+    CheckEqual(Healthy.ReceivedCount, 2,
+      'healthy must continue to receive after failing was dropped');
+  finally
+    Context.LogStream.Unsubscribe(IntfHealthy);
+    IntfFail := nil;
+    IntfHealthy := nil;
+  end;
+end;
+
 constructor TBlogTests.Create(
   const Ident: string
   );
@@ -2855,6 +3107,7 @@ begin
   AddCase(TTestConfigService);
   AddCase(TTestCorrelationIds);
   AddCase(TTestLogService);
+  AddCase(TTestLogStream);
   AddCase(TTestFullWorkflow);
 end;
 

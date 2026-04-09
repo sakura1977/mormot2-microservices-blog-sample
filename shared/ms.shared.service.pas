@@ -574,16 +574,19 @@ begin
     FRestServer.ServiceMethodRegister('health', HandleHealth, True, [mGET]);
     FRestServer.ServiceMethodRegister('shutdown', HandleShutdown, True, [mPOST]);
 
-    // --- Phase 4: Start HTTP server ---
-    // TRestHttpServer wraps TRestServerDB in an HTTP layer.
-    // useHttpAsync uses the high-performance async I/O engine
-    // (IOCP on Windows, epoll on Linux). The '+' means bind to
-    // all network interfaces. 4 is the thread pool size.
-    // secNone means no HTTPS (suitable for localhost/development).
+    // --- Phase 4: Start HTTP server with WebSocket support ---
+    // TRestHttpServer wraps TRestServerDB in an HTTP layer. WEBSOCKETS_DEFAULT_MODE
+    // selects the async I/O engine that can also handle WebSocket frames on the same port,
+    // so HTTP REST traffic and persistent WebSocket connections share the configured port.
+    // '+' means bind to all interfaces; secNone disables HTTPS for localhost/dev.
     FHttpServer := TRestHttpServer.Create(
-      FPort, FRestServer, FConfig.HttpBind, useHttpAsync, nil,
+      FPort, FRestServer, FConfig.HttpBind, WEBSOCKETS_DEFAULT_MODE, nil,
       FConfig.HttpThreads, SecurityFromString(FConfig.HttpSecurity));
     FHttpServer.AccessControlAllowOrigin := FConfig.CorsOrigin;
+    // Enable both the binary protocol (service-to-service callbacks via TRestHttpClientWebsockets)
+    // and the JSON protocol (browser clients via the standard new WebSocket(url, 'synopsejson') API).
+    // WebSocketsEnable returns a TWebSocketProcessSettings pointer that we leave at defaults.
+    FHttpServer.WebSocketsEnable(FRestServer, WEBSOCKETS_KEY, {ajax=}True);
     // Wrap the HTTP handler to extract/propagate correlation IDs for every request.
     // Subclasses (e.g. TGatewayServer) may add additional wraps in DoInitialize -- they then capture
     // this wrap as their inner handler, so the chain remains correct.

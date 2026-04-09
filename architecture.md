@@ -339,6 +339,68 @@ sequenceDiagram
     GW-->>Browser: results (click a correlation ID<br/>to pivot across services)
 ```
 
+### Event-driven Live Log Stream (WebSocket Callbacks)
+
+Central logging is still ingested via the batched `ILogIngestion`
+path, but the `/logs` browser viewer additionally receives **live**
+entries as they are persisted. The mechanism is mORMot2's
+**interface-based callbacks over WebSockets**: the server calls a
+Pascal interface method on the client over a persistent WebSocket
+connection.
+
+Key points:
+
+- Every service now creates its `TRestHttpServer` with
+  `WEBSOCKETS_DEFAULT_MODE` and calls `WebSocketsEnable(..., ajax=True)`,
+  so each server speaks plain HTTP, the binary `synopsebin` WebSocket
+  protocol (service-to-service) and the JSON `synopsejson` protocol
+  (browser) on the **same** listen port.
+- `ILogStream` / `ILogStreamCallback` in `shared/ms.shared.api.pas`
+  define the pub/sub contract. `ILogStream` inherits
+  `IServiceWithCallbackReleased`, so mORMot2 notifies the server the
+  moment a subscriber's refcount drops to zero (typically when the
+  browser closes the tab).
+- `TLogStreamService` in ms.logs holds the subscriber list and is
+  broadcast from `TLogIngestionService.AppendBatch` after every
+  persisted entry.
+- The gateway hosts a **broker** (`TGatewayLogBrokerCallback` +
+  `TLogStreamBrokerService`) that subscribes to ms.logs once and
+  re-broadcasts every received entry to its own browser subscribers.
+  This keeps the rule "all browser traffic flows through the gateway"
+  intact.
+
+See [.claude/event-driven.md](.claude/event-driven.md) for the full
+design, the mORMot2 primitives (`TWebSocketProtocolBinary`,
+`TWebSocketProtocolJson`, `TInterfacedCallback`,
+`IServiceWithCallbackReleased`), and the subscriber-bookkeeping idiom.
+
+```mermaid
+sequenceDiagram
+    participant P as Producer<br/>(any service)
+    participant L as ms.logs :8089
+    participant G as ms.gateway :8080<br/>(broker)
+    participant B as Browser /logs
+
+    Note over P,L: WebSocket binary (synopsebin)
+    Note over L,G: WebSocket binary (synopsebin)
+    Note over G,B: WebSocket JSON (synopsejson)
+
+    B->>G: WebSocket upgrade + ILogStream.Subscribe
+    G->>L: ILogStream.Subscribe<br/>(first browser only)
+
+    P-->>L: ILogIngestion.AppendBatch(entries)
+    L->>L: persist + iterate subscribers
+    L-->>G: ILogStreamCallback.NotifyEntry(entry)
+    G->>G: iterate browser callbacks
+    G-->>B: ILogStreamCallback.NotifyEntry(entry)
+    B->>B: prepend row + fade-in highlight
+
+    Note over B,G: user closes tab
+    B-xG: WebSocket closed
+    G->>G: CallbackReleased -> drop browser subscriber
+    Note over G,L: last browser left -> gateway may Unsubscribe
+```
+
 ### Comment Moderation
 
 ```mermaid
@@ -456,6 +518,7 @@ The gateway combines three responsibilities:
 | IComment | ms.comments :8085 | GetByPost, GetPending, Add, Approve, Reject, Remove |
 | IMedia | ms.media :8086 | Upload, GetInfo, GetFile, Remove |
 | ILogQuery | ms.logs :8089 | ByCorrelationId, Recent, Search, Stats |
+| ILogStream | ms.logs :8089 (re-brokered) | Subscribe, Unsubscribe -- WebSocket pub/sub for live log tail |
 
 ### Configuration Service
 
@@ -586,6 +649,7 @@ erDiagram
 | Database | SQLite (one per service) |
 | Auth | SCRAM-MCF (RFC 5802) + JWT (HMAC-SHA256, 24h) |
 | Frontend | Vanilla JavaScript SPA |
-| IPC | REST/JSON over HTTP (SOA interface-based) |
+| IPC | REST/JSON over HTTP (SOA interface-based) + WebSocket callbacks (`TWebSocketProtocolBinary` for service-to-service, `TWebSocketProtocolJson` for browser) on the same port |
 | Tracing | `X-Correlation-Id` header propagated end-to-end (threadvar + `OnBeforeCall`) |
 | Logging | Local `TSynLog` file rotation + central `ms.logs` ingestion (`EchoCustom` + background thread + SQLite FTS5) |
+| Real-time events | Interface-based callbacks (`TInterfacedCallback`, `IServiceWithCallbackReleased`) over WebSockets -- see [.claude/event-driven.md](.claude/event-driven.md) |

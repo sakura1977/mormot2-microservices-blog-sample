@@ -8,8 +8,10 @@
 |---------|--------------|-------|
 | ORM / data model | `mormot.orm.core` | Define `TOrm` classes |
 | SQLite database | `mormot.orm.sqlite3` | `TRestServerDB` as DB backend |
-| REST HTTP server | `mormot.rest.http.server` | `TRestHttpServer` per service |
+| REST HTTP server | `mormot.rest.http.server` | `TRestHttpServer` per service, created with `WEBSOCKETS_DEFAULT_MODE` + `WebSocketsEnable(..., ajax=True)` so HTTP, `synopsebin` and `synopsejson` share the same port |
+| WebSocket server | `mormot.net.ws.core`, `mormot.net.ws.server` | `TWebSocketProtocolBinary` (Pascal clients, `synopsebin`) and `TWebSocketProtocolJson` (browsers, `synopsejson`) for interface-based callbacks |
 | SOA interfaces | `mormot.soa.core`, `mormot.soa.server` | Interface-based services |
+| SOA callbacks | `mormot.soa.core` | `TInterfacedCallback` + `IServiceWithCallbackReleased` for server-to-client method invocation with automatic refcount-based cleanup |
 | JSON processing | `mormot.core.json` | `TDocVariantData` for JSON parsing |
 | Logging | `mormot.core.log` | `TSynLog` for all services |
 | Base types | `mormot.core.base`, `mormot.core.text`, `mormot.core.unicode` | RawUtf8, helper functions |
@@ -42,7 +44,7 @@
 
 | Purpose | mORMot2 Unit | Usage |
 |---------|--------------|-------|
-| Log shipper | `mormot.core.log` + `mormot.rest.http.client` | `TLogShipper` (in `shared/ms.shared.logclient.pas`) installs an `EchoCustom` hook and ships entries via `TRestHttpClient` + `TServiceFactoryClient` on a background thread |
+| Log shipper | `mormot.core.log` + `mormot.rest.http.client` + `mormot.net.ws.client` | `TLogShipper` (in `shared/ms.shared.logclient.pas`) installs an `EchoCustom` hook and ships entries via a persistent `TRestHttpClientWebsockets` connection (upgraded with `WebSocketsUpgrade(WEBSOCKETS_KEY)`) on a background thread |
 
 ## Cross-Cutting Concerns
 
@@ -84,6 +86,37 @@ SQLite store with an FTS5 full-text index:
 See [central-logging.md](central-logging.md) for the full design,
 including the mORMot2 primitives considered and the per-line
 lifecycle diagram.
+
+### Real-time Events: Interface-based Callbacks over WebSockets
+
+Polling is the wrong answer to "tell me when X happens". mORMot2
+provides a clean primitive: **interface-based callbacks over
+WebSockets** -- a server-side method call on a Pascal interface is
+delivered over a persistent WebSocket connection to the client.
+
+Key mORMot2 building blocks:
+
+| Block | Class / Constant | Role |
+|-------|------------------|------|
+| Server hosting | `TRestHttpServer` with `WEBSOCKETS_DEFAULT_MODE` + `WebSocketsEnable` | Same port serves HTTP + WebSocket |
+| Binary protocol | `TWebSocketProtocolBinary` (`synopsebin`) | Service-to-service callbacks |
+| Browser protocol | `TWebSocketProtocolJson` (`synopsejson`) | Browser-compatible JSON frames (`aWebSocketsAjax := True`) |
+| Contract hook | `IServiceWithCallbackReleased` | Fired when a subscriber's refcount drops to zero |
+| Pascal client | `TRestHttpClientWebsockets` + `WebSocketsUpgrade(key)` | Persistent connection replacing `TRestHttpClient` |
+| Pascal callback | `TInterfacedCallback` | Refcount-managed server-to-client invocations |
+
+- `TMicroService` opts in once -- every service automatically gains
+  WebSocket capability on the same port as plain HTTP
+- `ILogStream` / `ILogStreamCallback` in `shared/ms.shared.api.pas`
+  are the first concrete use: live log tail into the `/logs` browser
+  viewer, with the gateway acting as a broker that subscribes to
+  ms.logs over the binary protocol and re-broadcasts to browsers
+  over the JSON protocol
+- `TLogShipper` uses the persistent WebSocket connection for the
+  log-ingestion path, replacing the per-batch HTTP handshake
+
+See [event-driven.md](event-driven.md) for the full design, the
+subscriber-bookkeeping idiom, the broker pattern and the trade-offs.
 
 ## Project Structure
 

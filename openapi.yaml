@@ -24,6 +24,63 @@ info:
     keeping the schema readable while preserving the contract.
 
     See [`.claude/correlation-ids.md`](.claude/correlation-ids.md) for the full design.
+
+    ## Real-time events: ILogStream over WebSocket (NOT in paths)
+
+    The gateway additionally exposes an `ILogStream` pub/sub interface that
+    broadcasts every new log entry to subscribers in real time. **This is not a
+    plain HTTP endpoint and therefore does not appear in the `paths:` section
+    below.** Instead, it rides mORMot2 **interface-based callbacks over
+    WebSockets**: the server invokes `ILogStreamCallback.NotifyEntry(entry)` on
+    the client, carried by a persistent WebSocket connection on the **same port
+    8080** as the REST API.
+
+    - Server hosting: every service creates its `TRestHttpServer` with
+      `WEBSOCKETS_DEFAULT_MODE` and calls `WebSocketsEnable(..., ajax=True)`
+      so HTTP, the binary `synopsebin` protocol (Pascal clients) and the JSON
+      `synopsejson` protocol (browsers) share one listen socket
+    - Sub-protocol: the browser must select `synopsejson` in the WebSocket
+      handshake (`Sec-WebSocket-Protocol: synopsejson`); mORMot2 handles the
+      SOA framing (method name, parameters, callback id) on top of JSON frames
+    - Broker: the gateway subscribes to ms.logs once over the binary protocol
+      and re-broadcasts every entry to its own browser-side subscribers over
+      the JSON protocol, preserving the "all browser traffic via the gateway"
+      rule
+    - Cleanup: `IServiceWithCallbackReleased` fires the instant a subscriber's
+      refcount drops to zero (e.g. tab closed), so dead subscribers are
+      removed without an explicit close protocol
+
+    ### Browser usage
+
+    ```javascript
+    // From ms.gateway/www/js/api.js
+    const url = (location.protocol === 'https:' ? 'wss' : 'ws')
+              + '://' + location.host + '/api';
+    const ws = new WebSocket(url, 'synopsejson');
+
+    ws.onopen = () => {
+      // Subscribe via the synopsejson REST-over-WebSocket framing
+      ws.send(JSON.stringify({
+        method: 'POST',
+        url: '/api/LogStream/Subscribe',
+        body: '[{"callback":1}]'  // mORMot2 callback id placeholder
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      const frame = JSON.parse(event.data);
+      if (frame && frame.method === 'NotifyEntry' && frame.params)
+        onEntry(frame.params[0]);  // TLogEntryDto, includes CorrelationId
+      };
+    ```
+
+    Note: the `synopsejson` framing is mORMot2-specific -- it is **not**
+    compatible with arbitrary WebSocket clients. See
+    [`.claude/event-driven.md`](.claude/event-driven.md) for the full design,
+    the mORMot2 primitives (`TWebSocketProtocolBinary`,
+    `TWebSocketProtocolJson`, `TInterfacedCallback`,
+    `IServiceWithCallbackReleased`, `WebSocketsEnable`), the subscriber
+    bookkeeping idiom and the gateway broker pattern.
   version: 1.0.0
   contact:
     name: Blog Microservices Demo
@@ -60,7 +117,15 @@ tags:
       the browser UI at `/logs` can query by correlation ID, time range, service/level
       filter, or full-text SQLite FTS5 search.
 
-      See [`.claude/central-logging.md`](.claude/central-logging.md) for the full design.
+      In addition, `ms.logs` exposes `ILogStream` (Subscribe / Unsubscribe) that
+      broadcasts every new entry to subscribers in real time via mORMot2
+      interface-based callbacks **over WebSocket**. This interface does NOT appear
+      in the `paths:` section of this spec because it is not an HTTP endpoint --
+      see the top-level `info.description` section "Real-time events: ILogStream
+      over WebSocket" for the protocol and browser usage.
+
+      See [`.claude/central-logging.md`](.claude/central-logging.md) and
+      [`.claude/event-driven.md`](.claude/event-driven.md) for the full designs.
 
 paths:
   # =====================================================================

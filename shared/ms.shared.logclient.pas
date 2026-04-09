@@ -146,9 +146,12 @@ type
     FPort: RawUtf8;
 
     /// <summary>
-    ///   The HTTP REST client connected to <c>ms.logs</c>. Created lazily on first successful flush.
+    ///   The persistent WebSocket REST client connected to <c>ms.logs</c>. Created lazily on first successful
+    ///   flush; once upgraded the same socket carries every subsequent <c>AppendBatch</c> call until the server
+    ///   restarts. <c>TRestHttpClientWebsockets</c> descends from <c>TRestHttpClient</c> and is API-compatible
+    ///   for SOA invocations.
     /// </summary>
-    FClient: TRestHttpClient;
+    FClient: TRestHttpClientWebsockets;
 
     /// <summary>
     ///   The resolved <c>ILogIngestion</c> interface from <c>FClient</c>.
@@ -430,15 +433,27 @@ end;
 function TLogShipper.EnsureIngestion: boolean;
 var
   ClientModel: TOrmModel;
+  UpgradeError: RawUtf8;
 begin
   if FIngestion <> nil then
     Exit(True);
   if FClient = nil then
   begin
     try
+      // TRestHttpClientWebsockets first opens a normal HTTP connection, then upgrades it to WebSocket via
+      // the standard Sec-WebSocket-Key handshake. The encryption key must match the server's WebSocketsEnable
+      // call -- both sides use WEBSOCKETS_KEY from ms.shared.api.
       ClientModel := TOrmModel.Create([], 'api');
-      FClient := TRestHttpClient.Create(FHost, FPort, ClientModel);
+      FClient := TRestHttpClientWebsockets.Create(FHost, FPort, ClientModel);
       FClient.Model.Owner := FClient;
+      UpgradeError := FClient.WebSocketsUpgrade(WEBSOCKETS_KEY);
+      if UpgradeError <> '' then
+      begin
+        // Server is unreachable or rejected the handshake -- drop the half-built client and let the next
+        // batch retry. The producing service keeps logging to its local file in the meantime.
+        FreeAndNil(FClient);
+        Exit(False);
+      end;
       FClient.ServiceRegister([TypeInfo(ILogIngestion)], sicShared);
       TServiceFactoryClient(FClient.Services.Info(TypeInfo(ILogIngestion))).
         ResultAsJsonObjectWithoutResult := True;

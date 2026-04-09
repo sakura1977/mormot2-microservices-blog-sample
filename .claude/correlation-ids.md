@@ -262,3 +262,15 @@ See [central-logging.md](central-logging.md) for the full design of
 the logging service, the mORMot2 primitives it uses (`EchoCustom`,
 `TOrmFts5`) and how each service ships its log lines without
 blocking the producing thread.
+
+### Correlation IDs in the live log stream
+
+The `/logs` viewer now also shows a **live tail** of new entries as
+they are persisted. Because the stream carries the full `TLogEntryDto`
+record -- including the `CorrelationId` field that ms.logs parses from
+the message text -- every live row is immediately clickable and pivots
+to "all entries for this request" just like the static query results.
+In other words, correlation IDs work end-to-end from the moment a log
+line is written, through the WebSocket callback, into the live row
+that appears in the browser. See [event-driven.md](event-driven.md)
+for the broadcast mechanism.

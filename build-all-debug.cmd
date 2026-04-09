@@ -5,7 +5,7 @@ set DELPHI_BIN=C:\Program Files (x86)\Embarcadero\Studio\37.0\bin
 call "%DELPHI_BIN%\rsvars.bat"
 
 set CONFIG=Debug
-set PLATFORM=Win64
+set PLATFORM=Win32
 set ERRORS=0
 
 echo ============================================

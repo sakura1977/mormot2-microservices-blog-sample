@@ -389,5 +389,71 @@ const API = {
     if (r.ok) r.data = typeof r.data.Result === 'string'
       ? JSON.parse(r.data.Result) : r.data.Result;
     return r;
+  },
+
+  // --- Live log stream (WebSocket via custom 'blog-logs' chat protocol) ---
+  //
+  // openLogStream() opens a persistent WebSocket connection to the gateway. As soon as the
+  // socket is open, we send a tiny "hello" frame which the gateway uses to register us as an
+  // active subscriber. From then on, every new log entry is pushed by the server as a JSON
+  // frame of the shape {"entry": {...TLogEntryDto...}}.
+  //
+  // Why a custom chat protocol instead of mORMot2's built-in 'synopsejson'?
+  // mORMot2's TWebSocketProtocolJson is REST-over-WebSocket with mORMot2-specific framing
+  // (call IDs, callback registration sequence). It is designed for TRestHttpClientWebsockets,
+  // not for raw `new WebSocket(...)` from a browser. The pragmatic fix is a tiny custom chat
+  // protocol on the last hop only -- the Pascal stack (Producer -> ms.logs -> Gateway) keeps
+  // using mORMot2's proper binary callbacks. See `.claude/event-driven.md` for the full story.
+  openLogStream(onEntry, onClose) {
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${wsProtocol}//${location.host}/`;
+    let ws;
+    let reconnectTimer = null;
+    let closed = false;
+
+    const connect = () => {
+      ws = new WebSocket(url, 'blog-logs');
+
+      ws.onopen = () => {
+        console.debug('[logstream] WebSocket open, sending hello');
+        // The gateway registers a sender as an active subscriber on the first frame it receives.
+        // The frame content is irrelevant -- we only need the server to know we exist.
+        ws.send('hello');
+      };
+
+      ws.onmessage = (event) => {
+        let frame;
+        try {
+          frame = JSON.parse(event.data);
+        } catch (e) {
+          console.warn('[logstream] Could not parse frame:', event.data);
+          return;
+        }
+        if (frame && frame.entry) {
+          onEntry(frame.entry);
+        }
+      };
+
+      ws.onerror = (event) => {
+        console.warn('[logstream] WebSocket error:', event);
+      };
+
+      ws.onclose = () => {
+        if (closed) return;
+        console.debug('[logstream] WebSocket closed, reconnecting in 2s');
+        if (onClose) onClose();
+        reconnectTimer = setTimeout(connect, 2000);
+      };
+    };
+
+    connect();
+
+    return {
+      close() {
+        closed = true;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        if (ws && ws.readyState !== WebSocket.CLOSED) ws.close();
+      }
+    };
   }
 };

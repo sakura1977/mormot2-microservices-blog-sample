@@ -17,7 +17,7 @@ graph TB
     COMMENTS["ms.comments :8085<br/>IComment"]
     MEDIA["ms.media :8086<br/>IMedia"]
     ANALYTICS["ms.analytics :8088<br/>IAnalytics"]
-    LOGS["ms.logs :8089<br/>ILogIngestion + ILogQuery"]
+    LOGS["ms.logs :8089<br/>ILogIngestion + ILogQuery<br/>+ ILogStream (WebSocket)"]
 
     DB_AUTH[(auth.db)]
     DB_USERS[(users.db)]
@@ -76,7 +76,7 @@ graph TB
 | 7 | **ms.media** | 8086 | IMedia | Image upload, storage |
 | 8 | **ms.config** | 8087 | IConfig | Central configuration registry |
 | 9 | **ms.analytics** | 8088 | IAnalytics | Cross-service data aggregation |
-| 10 | **ms.logs** | 8089 | ILogIngestion + ILogQuery | Central log aggregation (SQLite FTS5) |
+| 10 | **ms.logs** | 8089 | ILogIngestion + ILogQuery + ILogStream | Central log aggregation (SQLite FTS5) + live broadcast |
 
 ## API Style: mORMot2 SOA
 
@@ -168,6 +168,44 @@ This is the full payoff for correlation IDs: one click on an ID in
 the log viewer reveals every entry from every service that belongs
 to one user request. See [central-logging.md](central-logging.md)
 for the full design.
+
+### Real-time Event Distribution (WebSocket Callbacks)
+
+Polling is a poor fit for "tell me when X happens". mORMot2 ships a
+clean answer: **interface-based callbacks over WebSockets**. A server
+method calls a regular Pascal interface on the client over a
+persistent WebSocket connection, with no custom framing in user code.
+
+- `TMicroService` now creates its `TRestHttpServer` with
+  `WEBSOCKETS_DEFAULT_MODE` and calls `WebSocketsEnable(..., ajax=True)`.
+  Every service therefore hosts plain HTTP, the binary `synopsebin`
+  protocol (for Pascal clients) and the JSON `synopsejson` protocol
+  (for browsers) on the **same** listen port -- browser traffic
+  continues to flow only through the gateway.
+- `ILogStream` / `ILogStreamCallback` in `shared/ms.shared.api.pas`
+  define the pub/sub contract. `ILogStream` inherits
+  `IServiceWithCallbackReleased`, so mORMot2 invokes `CallbackReleased`
+  the moment a subscriber's refcount drops to zero (e.g. browser tab
+  closed) -- no explicit close protocol needed.
+- `TLogStreamService` in `ms.logs/ms.logs.server.pas` holds the
+  subscriber list and is broadcast from `TLogIngestionService.AppendBatch`
+  after every persisted entry.
+- `TLogShipper` now uses `TRestHttpClientWebsockets` with a persistent
+  WebSocket connection (replacing the old per-batch HTTP path).
+- The gateway hosts a **broker**
+  (`TGatewayLogBrokerCallback` + `TLogStreamBrokerService`) that
+  subscribes to ms.logs once and re-broadcasts every entry to its own
+  browser subscribers. This preserves the "all browser traffic via the
+  gateway" rule even though events originate in ms.logs.
+- Browser side: `api.js` opens the stream via
+  `new WebSocket(url, 'synopsejson')`, and `app.js` prepends new rows
+  live in `/logs` with a fade-in highlight.
+
+This is a reusable foundation -- adding live comment moderation, live
+analytics tiles, or cross-service cache invalidation means defining
+one more callback interface and registering one more service; nothing
+else. See [event-driven.md](event-driven.md) for the full design, the
+mORMot2 building blocks, and the subscriber-bookkeeping idiom.
 
 ## Service Dependencies
 

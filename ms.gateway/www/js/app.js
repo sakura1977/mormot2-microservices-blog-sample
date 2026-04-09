@@ -29,6 +29,7 @@ function updateAuthNav() {
 let currentPage = 1;
 
 async function loadPosts(page = 1) {
+  closeActiveLogStream();
   currentPage = page;
   app.innerHTML = '<div class="loading">Loading posts...</div>';
   const r = await API.getPosts(page);
@@ -171,6 +172,7 @@ async function submitComment(e, postId) {
 
 // === Tags ===
 async function loadTags() {
+  closeActiveLogStream();
   app.innerHTML = '<div class="loading">Loading tags...</div>';
   const r = await API.getTags();
   if (!r.ok) { app.innerHTML = '<p class="error">Error.</p>'; return; }
@@ -300,7 +302,7 @@ function doLogout() {
 // === Dashboard (authenticated) ===
 async function loadDashboard() {
   if (!API.isLoggedIn()) { showLogin(); return; }
-
+  closeActiveLogStream();
   app.innerHTML = '<div class="loading">Loading dashboard...</div>';
 
   let html = `
@@ -537,6 +539,7 @@ async function saveProfile(e) {
 
 // === Analytics ===
 async function loadAnalytics() {
+  closeActiveLogStream();
   app.innerHTML = '<div class="loading">Loading analytics...</div>';
   const r = await API.getOverview();
   if (!r.ok) { app.innerHTML = '<p class="error">Analytics service unavailable.</p>'; return; }
@@ -737,7 +740,18 @@ function formatTimestamp(ts) {
   return d.toLocaleString('en') + '.' + String(d.getMilliseconds()).padStart(3, '0');
 }
 
+// Module-level handle to the active log stream so navigation away from /logs can close it.
+let activeLogStream = null;
+
+function closeActiveLogStream() {
+  if (activeLogStream) {
+    try { activeLogStream.close(); } catch (e) { /* ignore */ }
+    activeLogStream = null;
+  }
+}
+
 async function loadLogs() {
+  closeActiveLogStream();
   app.innerHTML = '<div class="loading">Loading logs...</div>';
   // Render the static page chrome (filters + results placeholder), then fire the initial query.
   app.innerHTML = `
@@ -777,6 +791,39 @@ async function loadLogs() {
   });
   await loadLogsStats();
   await refreshLogs();
+  // Open the live log stream so new entries pop in at the top of the table without polling.
+  // The previous stream (if any) was closed at the start of loadLogs.
+  activeLogStream = API.openLogStream(
+    (entry) => prependLogEntry(entry),
+    () => { /* onClose handled by api.js with auto-reconnect */ }
+  );
+}
+
+/// Prepends one freshly arrived entry at the top of the logs table, fades it in, and trims
+/// the table at 200 rows so the DOM stays light. Called from the WebSocket onmessage handler.
+function prependLogEntry(entry) {
+  const tbody = document.querySelector('#logs-results table tbody');
+  if (!tbody) return;
+  const lvl = LOG_LEVEL_NAMES[entry.Level] || String(entry.Level);
+  const cls = logLevelClass(entry.Level);
+  const corrLink = entry.CorrelationId
+    ? `<a href="#" class="log-corr" onclick="loadLogsByCorrelation('${esc(entry.CorrelationId)}'); return false;">${esc(entry.CorrelationId).substring(0, 8)}...</a>`
+    : '';
+  const tr = document.createElement('tr');
+  tr.className = cls + ' log-new';
+  tr.innerHTML = `
+    <td class="log-ts">${formatTimestamp(entry.Timestamp)}</td>
+    <td>${esc(entry.ServiceName)}</td>
+    <td><span class="log-level">${lvl}</span></td>
+    <td>${corrLink}</td>
+    <td class="log-msg">${esc(entry.Message)}</td>`;
+  tbody.insertBefore(tr, tbody.firstChild);
+  // Trim the table at 200 rows.
+  while (tbody.children.length > 200) {
+    tbody.removeChild(tbody.lastChild);
+  }
+  // Remove the highlight class after the CSS animation runs.
+  setTimeout(() => tr.classList.remove('log-new'), 1500);
 }
 
 async function loadLogsStats() {

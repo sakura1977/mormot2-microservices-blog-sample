@@ -20,6 +20,15 @@ POST   /api/shutdown    Graceful shutdown
          Response: HTTP 200
 ```
 
+Every service additionally hosts **WebSocket upgrade on the same
+port**. `TMicroService` creates its `TRestHttpServer` with
+`WEBSOCKETS_DEFAULT_MODE` and calls `WebSocketsEnable(..., ajax=True)`,
+so each server speaks plain HTTP, the binary `synopsebin` protocol
+(used by `TRestHttpClientWebsockets`) and the JSON `synopsejson`
+protocol (used by browsers via `new WebSocket(url, 'synopsejson')`)
+from the one listen socket. This is the transport for interface-based
+callbacks -- see [event-driven.md](event-driven.md).
+
 ---
 
 ## Cross-Service: Correlation IDs
@@ -370,7 +379,7 @@ Connects directly to ms.posts, ms.users, ms.tags, ms.comments (same pattern as g
 ## 10. ms.logs (Port 8089)
 
 ### Responsibility
-Central log aggregation. Receives log entries from every other service via `ILogIngestion`, stores them in SQLite with an FTS5 full-text search index, and exposes the typed `ILogQuery` interface for retrieval. See [central-logging.md](central-logging.md) for the full design.
+Central log aggregation. Receives log entries from every other service via `ILogIngestion`, stores them in SQLite with an FTS5 full-text search index, exposes the typed `ILogQuery` interface for retrieval, and broadcasts every new entry to subscribers over `ILogStream` (interface-based WebSocket callbacks). See [central-logging.md](central-logging.md) and [event-driven.md](event-driven.md) for the full designs.
 
 ### Data Model
 
@@ -412,6 +421,32 @@ end;
 ```
 
 `TLogQueryFilter` carries optional `ServiceName`, `MinLevel`, `Since`, `UntilTime`, `Limit` fields. `TLogStatsDto` returns `TotalEntries`, `OldestEntry`, `NewestEntry` and a per-service breakdown.
+
+### SOA Interface: ILogStream (real-time broadcast, WebSocket callbacks)
+
+```pascal
+ILogStreamCallback = interface(IInvokable)
+  ['{...}']
+  procedure NotifyEntry(const aEntry: TLogEntryDto);
+end;
+
+ILogStream = interface(IServiceWithCallbackReleased)
+  ['{...}']
+  procedure Subscribe(const aCallback: ILogStreamCallback);
+  procedure Unsubscribe(const aCallback: ILogStreamCallback);
+end;
+```
+
+`TLogStreamService` keeps a subscriber list and is broadcast from
+`TLogIngestionService.AppendBatch` for every persisted entry.
+`IServiceWithCallbackReleased` gives the server a hook when the
+client's refcount drops to zero (e.g. browser tab closed), so
+subscriber cleanup needs no explicit close protocol. The gateway
+hosts a broker (`TGatewayLogBrokerCallback` +
+`TLogStreamBrokerService`) that subscribes to ms.logs once and
+re-broadcasts every entry to its own browser subscribers, keeping
+"all browser traffic flows through the gateway" intact. See
+[event-driven.md](event-driven.md) for the full design.
 
 ### Ingestion Flow
 1. Producer services install a `TLogShipper` (`shared/ms.shared.logclient.pas`) as a `TSynLogFamily.EchoCustom` callback

@@ -315,6 +315,19 @@ One click on a correlation ID reveals every entry from every service that belong
 
 See [.claude/central-logging.md](.claude/central-logging.md) for the full design, the mORMot2 primitives considered, and the schema details.
 
+### Real-time Log Tail via WebSocket Callbacks
+
+Central logging is no longer just a query-on-demand store -- the `/logs` viewer now **streams new entries live** into the browser as they happen. The mechanism is mORMot2's **interface-based callbacks over WebSockets**: the server calls a Pascal interface method on the client over a persistent WebSocket connection, with zero custom framing in user code.
+
+- Every service now hosts both plain HTTP and WebSocket on the **same port**. `TMicroService` creates its `TRestHttpServer` with `WEBSOCKETS_DEFAULT_MODE` and calls `WebSocketsEnable(..., ajax=True)`, so each server speaks the binary `synopsebin` protocol (Pascal-to-Pascal) **and** the JSON `synopsejson` protocol (browser) on the one listen socket.
+- `ILogStream` / `ILogStreamCallback` in `shared/ms.shared.api.pas` define a pub/sub contract: `Subscribe` / `Unsubscribe` with an `ILogStreamCallback.NotifyEntry(TLogEntryDto)` invoked by the server per new entry. `ILogStream` inherits `IServiceWithCallbackReleased`, so mORMot2 notifies us the instant a browser tab closes.
+- `TLogStreamService` in `ms.logs/ms.logs.server.pas` holds the subscriber list and broadcasts every persisted entry; dead subscribers are dropped via `CallbackReleased`.
+- `TLogShipper` now uses `TRestHttpClientWebsockets` with a persistent WebSocket connection instead of one HTTP call per batch -- same queue, same drain thread, one less handshake per flush.
+- The gateway hosts a **broker** (`TGatewayLogBrokerCallback` + `TLogStreamBrokerService`) that subscribes to ms.logs once and re-broadcasts every received entry to its own browser-side subscribers. This keeps the rule "all browser traffic flows through the gateway" intact.
+- Browser side: `api.js` exposes `openLogStream(onEntry)` using `new WebSocket(url, 'synopsejson')`, and the `/logs` viewer prepends new rows live with a fade-in highlight.
+
+See [.claude/event-driven.md](.claude/event-driven.md) for the full design, the mORMot2 building blocks (`TWebSocketProtocolBinary`, `TWebSocketProtocolJson`, `TInterfacedCallback`, `IServiceWithCallbackReleased`, `WebSocketsEnable`), and the subscriber-bookkeeping idiom.
+
 ---
 
 ## Configuration
@@ -357,6 +370,7 @@ Example (`ms.gateway.config.json`):
 - **THttpAsyncServer** -- high-performance async HTTP server with IOCP
 - **JWT authentication** -- token creation and validation with `TJwtHS256`
 - **SCRAM-MCF** -- password hashing with `mormot.crypt.core`
+- **Interface-based callbacks over WebSockets** -- server-side methods invoked on the client via `TInterfacedCallback` + `IServiceWithCallbackReleased`, carried by `TWebSocketProtocolBinary` / `TWebSocketProtocolJson` on the same port as plain HTTP (see [.claude/event-driven.md](.claude/event-driven.md))
 
 ### Web Development
 

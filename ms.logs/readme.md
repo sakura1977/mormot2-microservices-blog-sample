@@ -1,10 +1,10 @@
 # ms.logs -- Central Logging Service
 
-Port **8089** | Interfaces **ILogIngestion** + **ILogQuery** | Own SQLite database (FTS5)
+Port **8089** | Interfaces **ILogIngestion** + **ILogQuery** + **ILogStream** | Own SQLite database (FTS5) | HTTP + WebSocket on the same port
 
-Central log aggregation for every other microservice. Receives log entries via a custom SOA interface, stores them in SQLite with an FTS5 full-text search index, and exposes a typed query API that the gateway proxies through to the browser UI at `/logs`.
+Central log aggregation for every other microservice. Receives log entries via a custom SOA interface, stores them in SQLite with an FTS5 full-text search index, exposes a typed query API that the gateway proxies through to the browser UI at `/logs`, and broadcasts every new entry in real time to subscribers over `ILogStream` (mORMot2 interface-based callbacks over WebSockets).
 
-The full design doc lives at [`.claude/central-logging.md`](../.claude/central-logging.md). This readme covers the service as a deployable unit.
+The full design docs live at [`.claude/central-logging.md`](../.claude/central-logging.md) (ingest + query) and [`.claude/event-driven.md`](../.claude/event-driven.md) (live broadcast). This readme covers the service as a deployable unit.
 
 ## Why this service exists
 
@@ -60,6 +60,27 @@ POST /api/LogQuery/{Method}
 `TLogQueryFilter` fields are all optional: empty `ServiceName`, zero `MinLevel`, zero `Since`/`UntilTime`, zero `Limit` disable the corresponding filter. `Limit` is clamped server-side to 1..1000 (default 100).
 
 `TLogEntryDto` adds the parsed `CorrelationId` to what the client sent.
+
+### ILogStream (real-time broadcast, WebSocket callbacks)
+
+```pascal
+ILogStreamCallback = interface(IInvokable)
+  ['{...}']
+  procedure NotifyEntry(const aEntry: TLogEntryDto);
+end;
+
+ILogStream = interface(IServiceWithCallbackReleased)
+  ['{...}']
+  procedure Subscribe(const aCallback: ILogStreamCallback);
+  procedure Unsubscribe(const aCallback: ILogStreamCallback);
+end;
+```
+
+`ILogStream` is **not** a plain HTTP SOA method -- it rides an interface-based callback over a persistent WebSocket connection. `TLogStreamService` holds a thread-safe subscriber list, and `TLogIngestionService.AppendBatch` fans out every persisted entry to it. The server receives `CallbackReleased` (from the inherited `IServiceWithCallbackReleased`) the moment a subscriber's refcount drops to zero, so dead subscribers are removed automatically without an explicit close protocol. Inside `Broadcast`, any exception calling a subscriber also drops it as a safety net.
+
+The service is registered with `optExecLockedPerInterface` so mORMot2 serializes calls per subscriber -- one slow subscriber cannot delay events from reaching others, but each subscriber sees its entries in order.
+
+Subscribers connect with `TRestHttpClientWebsockets` (Pascal) or `new WebSocket(url, 'synopsejson')` (browser). In this project the gateway is the only direct subscriber to ms.logs; it re-broadcasts over its own `ILogStream` broker so browsers never talk to ms.logs directly. See [`.claude/event-driven.md`](../.claude/event-driven.md) for the broker pattern and the synopsebin / synopsejson protocol details.
 
 ## Data Model
 
@@ -127,7 +148,11 @@ The gateway proxies `ILogQuery` (not `ILogIngestion`, which is internal). The SP
 | Primitive | Purpose |
 |-----------|---------|
 | `TSynLogFamily.EchoCustom` | Per-line hook that fires inside the log lock -- the producer pushes onto a queue and returns immediately |
-| `TRestHttpClient` + `TServiceFactoryClient` | The background thread calls `ILogIngestion.AppendBatch` as a typed SOA method |
+| `TRestHttpClientWebsockets` + `WebSocketsUpgrade(WEBSOCKETS_KEY)` | `TLogShipper` holds a persistent WebSocket connection and calls `ILogIngestion.AppendBatch` over the binary `synopsebin` protocol -- no per-batch handshake |
+| `TRestHttpServer` with `WEBSOCKETS_DEFAULT_MODE` + `WebSocketsEnable(..., ajax=True)` | Same port serves HTTP, `synopsebin` (Pascal clients) and `synopsejson` (browsers) |
+| `TWebSocketProtocolBinary` / `TWebSocketProtocolJson` | Transport for the interface-based callbacks used by `ILogStream` |
+| `IServiceWithCallbackReleased` | Server hook that fires the instant a subscriber's refcount drops to zero -- removes dead subscribers without an explicit close protocol |
+| `TInterfacedCallback` | Refcount-managed server-to-client invocations of `ILogStreamCallback.NotifyEntry` |
 | `TOrmFts5` | SQLite FTS5 virtual table for fast full-text search |
 | `TransactionBegin` / `Commit` | Both the regular row and the FTS5 row are inserted in one transaction |
 

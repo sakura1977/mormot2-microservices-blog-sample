@@ -45,6 +45,59 @@ Seven backend interfaces are transparently forwarded without manual proxy classe
 | IComment | ms.comments | 8085 |
 | IMedia | ms.media | 8086 |
 | IAnalytics | ms.analytics | 8088 |
+| ILogQuery | ms.logs | 8089 |
+
+## Real-time Log Stream Broker
+
+`ILogStream` on ms.logs is **not** a transparent proxy. It uses
+mORMot2 **interface-based callbacks over WebSockets**, and the
+gateway sits between ms.logs and the browser as a broker so that
+"all browser traffic flows through the gateway" continues to hold
+even for live events.
+
+Two Pascal types implement the broker:
+
+- **`TGatewayLogBrokerCallback`** -- implements `ILogStreamCallback`
+  and is registered with ms.logs as a subscriber. ms.logs calls
+  `NotifyEntry` on it over the binary `synopsebin` protocol for
+  every persisted log entry.
+- **`TLogStreamBrokerService`** -- a full `ILogStream` SOA service
+  hosted by the gateway itself. Browsers subscribe to it over the
+  JSON `synopsejson` protocol. When an entry arrives via the
+  Pascal-side callback, the broker service iterates its own
+  subscriber list and calls `NotifyEntry` on every browser
+  callback.
+
+```mermaid
+flowchart LR
+    subgraph ms.logs :8089
+        LStream["TLogStreamService<br/>(ILogStream)"]
+    end
+    subgraph ms.gateway :8080
+        GCB["TGatewayLogBrokerCallback<br/>(ILogStreamCallback)"]
+        GSrv["TLogStreamBrokerService<br/>(ILogStream)"]
+    end
+    Browser["Browser /logs viewer"]
+
+    LStream -. "synopsebin<br/>NotifyEntry(entry)" .-> GCB
+    GCB -->|fan out| GSrv
+    GSrv -. "synopsejson<br/>NotifyEntry(entry)" .-> Browser
+```
+
+The gateway subscribes to ms.logs **once** and reuses that single
+upstream connection for every browser subscriber. Dead browser
+subscribers are cleaned up via the inherited `CallbackReleased`
+from `IServiceWithCallbackReleased` -- no explicit close protocol.
+
+Every service (including the gateway) now hosts HTTP, the binary
+`synopsebin` protocol and the JSON `synopsejson` protocol on the
+same port, because `TMicroService` creates its `TRestHttpServer`
+with `WEBSOCKETS_DEFAULT_MODE` and calls `WebSocketsEnable(..., ajax=True)`.
+The browser opens the live stream with
+`new WebSocket('/api', 'synopsejson')` -- see `api.js` /
+`openLogStream(onEntry)`.
+
+See [.claude/event-driven.md](../.claude/event-driven.md) for the full design, the mORMot2 building blocks, the subscriber-bookkeeping idiom and the lifecycle of one subscription.
 
 ## Static File Serving
 

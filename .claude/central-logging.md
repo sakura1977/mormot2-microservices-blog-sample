@@ -9,7 +9,8 @@ This project ships a dedicated `ms.logs` microservice that:
 1. **Ingests** every log line from every other service via a custom SOA call
 2. **Stores** entries in its own SQLite database with full-text search (FTS5)
 3. **Exposes** a typed `ILogQuery` interface for time/level/correlation/text searches
-4. **Renders** the results in a browser UI accessed through the gateway
+4. **Broadcasts** every new entry to subscribers in real time via `ILogStream` (interface-based WebSocket callbacks -- see [event-driven.md](event-driven.md))
+5. **Renders** the results in a browser UI accessed through the gateway -- both the query-on-demand results and a **live tail** of new entries
 
 The payoff for the [correlation IDs](correlation-ids.md) feature: a single click on a correlation ID in the log viewer reveals every entry from every service that belongs to one user request.
 
@@ -191,6 +192,33 @@ The log client is **best-effort**: if `ms.logs` is down, the queue drops oldest 
 - The full payoff for [correlation IDs](correlation-ids.md): every distributed request becomes one click
 - Cross-cutting concerns belong in their own service, not duplicated in every service
 
+## Now also live!
+
+The query path was always "refresh to see new entries". That is no
+longer the case -- `ms.logs` additionally exposes an `ILogStream`
+pub/sub interface that broadcasts every newly persisted entry to
+subscribers over **mORMot2 interface-based callbacks on a persistent
+WebSocket connection**. The gateway hosts a broker that subscribes to
+ms.logs once and re-broadcasts to every browser-side subscriber, so
+the `/logs` viewer can stream new rows in live with a fade-in
+highlight while the static filters continue to work unchanged.
+
+- Producers keep using the batched `ILogIngestion` path -- no change
+- `TLogIngestionService.AppendBatch` fans out every persisted entry
+  to `TLogStreamService`, which iterates its subscribers
+- The gateway's `TGatewayLogBrokerCallback` receives entries over
+  the binary protocol and `TLogStreamBrokerService` re-broadcasts
+  them over the JSON protocol to browsers
+- Every row in the live stream still carries its `CorrelationId`,
+  so the click-through to "all entries for this request" works the
+  instant the entry appears
+
+See [event-driven.md](event-driven.md) for the full design of the
+WebSocket callback machinery, the subscriber-bookkeeping idiom, the
+broker pattern that keeps the "all browser traffic through the
+gateway" rule intact, and the reusable foundation it provides for
+future event use cases.
+
 ## Verification
 
 1. Start all services (the new `ms.logs` is on port 8089)
@@ -198,3 +226,4 @@ The log client is **best-effort**: if `ms.logs` is down, the queue drops oldest 
 3. Open `http://localhost:8080/logs`
 4. Search for any correlation ID -- every service that handled that request shows up in one timeline
 5. Type a phrase ("connection timeout") into the search box -- FTS5 returns matching entries across all services in milliseconds
+6. Leave the page open and trigger another request in a second tab -- new rows appear live at the top of the table without a refresh

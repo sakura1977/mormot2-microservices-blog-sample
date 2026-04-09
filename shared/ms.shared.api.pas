@@ -29,8 +29,24 @@ interface
 
 uses
   mormot.core.base,
+  mormot.core.interfaces,
   mormot.core.rtti,
-  mormot.core.text;
+  mormot.core.text,
+  mormot.soa.core;
+
+const
+  /// <summary>
+  ///   Symmetric encryption key used during the WebSocket upgrade handshake. Both server and client sides must
+  ///   use the same value, otherwise <c>WebSocketsUpgrade</c> fails. Override in <c>ms.config.master.json</c>
+  ///   for any real deployment -- this default is suitable for the development demo only.
+  /// </summary>
+  WEBSOCKETS_KEY = 'blog-microservices-ws-change-me';
+
+  /// <summary>
+  ///   The friendly URI segment used for WebSocket upgrades. Empty means "any URI is accepted", which keeps the
+  ///   handshake compatible with the existing <c>/api</c> root used by REST traffic.
+  /// </summary>
+  WEBSOCKETS_URI = '';
 
 type
 
@@ -1763,6 +1779,62 @@ type
     function Stats: TLogStatsDto;
   end;
 
+  /// <summary>
+  ///   Server-to-client callback interface used by <c>ILogStream</c> to push new log entries to subscribers in
+  ///   real time. The framework transports each call over the persistent WebSocket connection between client and
+  ///   server (binary protocol for service-to-service, JSON protocol for browsers).
+  /// </summary>
+  ILogStreamCallback = interface(IInvokable)
+    ['{1A2B3C4D-5E6F-7A8B-9C0D-1E2F3A4B5C6D}']
+
+    /// <summary>
+    ///   Invoked by the server every time a new log entry is persisted by the central logging service. The
+    ///   subscriber receives the entry on its own thread; mORMot2 serializes calls per subscriber when the
+    ///   service is registered with <c>optExecLockedPerInterface</c>.
+    /// </summary>
+    /// <param name="aEntry">
+    ///   The log entry exactly as it was persisted to the central store.
+    /// </param>
+    procedure NotifyEntry(
+      const aEntry: TLogEntryDto
+      );
+  end;
+
+  /// <summary>
+  ///   Publish/subscribe interface for the central logging service. Clients call <c>Subscribe</c> with their own
+  ///   <c>ILogStreamCallback</c> implementation; the server invokes <c>NotifyEntry</c> on every subscriber for
+  ///   each new log entry. The inherited <c>CallbackReleased</c> hook from <c>IServiceWithCallbackReleased</c>
+  ///   fires automatically when a subscriber's WebSocket connection drops, so no explicit unregistration is
+  ///   required when a client disconnects ungracefully.
+  /// </summary>
+  ILogStream = interface(IServiceWithCallbackReleased)
+    ['{2B3C4D5E-6F7A-8B9C-0D1E-2F3A4B5C6D7E}']
+
+    /// <summary>
+    ///   Registers a callback to receive every subsequent log entry. The callback's lifetime is managed by the
+    ///   framework via reference counting -- when the calling client releases its reference (or its WebSocket
+    ///   connection closes), the server-side <c>CallbackReleased</c> notification fires.
+    /// </summary>
+    /// <param name="aCallback">
+    ///   The subscriber's callback implementation.
+    /// </param>
+    procedure Subscribe(
+      const aCallback: ILogStreamCallback
+      );
+
+    /// <summary>
+    ///   Removes a previously registered callback. Most clients do not need to call this explicitly because the
+    ///   framework cleans up automatically on disconnect; explicit unsubscription is provided for tests and for
+    ///   long-running clients that wish to pause notifications without dropping their REST connection.
+    /// </summary>
+    /// <param name="aCallback">
+    ///   The subscriber's callback implementation, identical to the one passed to <c>Subscribe</c>.
+    /// </param>
+    procedure Unsubscribe(
+      const aCallback: ILogStreamCallback
+      );
+  end;
+
 implementation
 
 initialization
@@ -1803,5 +1875,14 @@ initialization
   Rtti.RegisterType(TypeInfo(TLogServiceStatDto));
   Rtti.RegisterType(TypeInfo(TLogServiceStatDtoArray));
   Rtti.RegisterType(TypeInfo(TLogStatsDto));
+  // Pre-register the SOA interfaces involved in the WebSocket-callback flow. mORMot2 needs both the
+  // service interface (ILogStream) and its callback parameter type (ILogStreamCallback) to be in the
+  // global TInterfaceFactory registry BEFORE a Subscribe call arrives, otherwise the server-side
+  // TServiceContainerServer.GetFakeCallback raises 'Unexpected ILogStreamCallback' when it tries to
+  // materialize the fake instance for the incoming call. Auto-discovery via ServiceRegister covers
+  // the parent interface but not callback parameter types, so we register them explicitly here.
+  TInterfaceFactory.RegisterInterfaces([
+    TypeInfo(ILogStream),
+    TypeInfo(ILogStreamCallback)]);
 
 end.

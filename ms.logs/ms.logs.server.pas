@@ -27,6 +27,7 @@ uses
   System.SysUtils,
   mormot.core.base,
   mormot.core.datetime,
+  mormot.core.interfaces,
   mormot.core.log,
   mormot.core.os,
   mormot.core.text,
@@ -47,8 +48,14 @@ uses
 type
 
   /// <summary>
-  ///   Implements <c>ILogIngestion</c>. Stores each batch in a single SQLite transaction. The correlation ID
-  ///   (if present) is parsed out of the message text by <c>ExtractCorrelationIdFromMessage</c>.
+  ///   Forward declaration so the ingestion service can hold a reference to the broadcaster.
+  /// </summary>
+  TLogStreamService = class;
+
+  /// <summary>
+  ///   Implements <c>ILogIngestion</c>. Stores each batch in a single SQLite transaction and fans out every
+  ///   newly persisted entry to subscribers of the live <c>ILogStream</c> service. The correlation ID (if present)
+  ///   is parsed out of the message text by <c>ExtractCorrelationIdFromMessage</c>.
   /// </summary>
   TLogIngestionService = class(TInterfacedObject, ILogIngestion)
   strict private
@@ -56,26 +63,119 @@ type
     ///   Injected ORM interface used for batched inserts.
     /// </summary>
     FOrm: IRestOrm;
+
+    /// <summary>
+    ///   The live stream service used to broadcast newly ingested entries to WebSocket subscribers. May be
+    ///   <c>nil</c> in test scenarios that exercise only the persistence path.
+    /// </summary>
+    FStream: TLogStreamService;
   public
 
     /// <summary>
-    ///   Creates the ingestion service with the given ORM interface.
+    ///   Creates the ingestion service with the given ORM interface and the broadcaster used for live streaming.
     /// </summary>
     /// <param name="aOrm">
     ///   The ORM interface (typically <c>FRestServer.Orm</c>).
     /// </param>
+    /// <param name="aStream">
+    ///   The live stream service that fans out new entries to WebSocket subscribers, or <c>nil</c> to disable
+    ///   the live broadcast (the persisted rows are still queryable via <c>ILogQuery</c>).
+    /// </param>
     constructor Create(
-      const aOrm: IRestOrm
+      const aOrm: IRestOrm;
+      aStream: TLogStreamService
       );
 
     /// <summary>
-    ///   Persists a batch of log entries. Inserts both the regular row and the FTS5 row in the same transaction.
+    ///   Persists a batch of log entries. Inserts both the regular row and the FTS5 row in the same transaction,
+    ///   then notifies the broadcaster for every successfully persisted entry.
     /// </summary>
     /// <param name="aEntries">
     ///   The entries to persist. Each carries its own service name, timestamp, level and message text.
     /// </param>
     procedure AppendBatch(
       const aEntries: TLogEntryIngestDtoArray
+      );
+  end;
+
+  /// <summary>
+  ///   Implements <c>ILogStream</c>. Maintains a thread-safe list of <c>ILogStreamCallback</c> subscribers and
+  ///   pushes new entries to every subscriber via the persistent WebSocket connection. Dead subscribers are
+  ///   detected through the inherited <c>CallbackReleased</c> hook from <c>IServiceWithCallbackReleased</c> and
+  ///   removed automatically -- there is no manual disconnect bookkeeping in the service code.
+  ///
+  ///   The service is registered with <c>optExecLockedPerInterface</c> so callbacks are dispatched serially per
+  ///   subscriber instance, which keeps the order of <c>NotifyEntry</c> calls predictable for each viewer.
+  /// </summary>
+  TLogStreamService = class(TInterfacedObject, ILogStream)
+  strict private
+    /// <summary>
+    ///   Critical section guarding the subscriber list against concurrent Subscribe/Broadcast/CallbackReleased.
+    /// </summary>
+    FLock: TRTLCriticalSection;
+
+    /// <summary>
+    ///   Active subscriber callbacks. Each entry holds a reference that keeps the underlying interfaced fake
+    ///   alive across HTTP threads.
+    /// </summary>
+    FSubscribers: array of ILogStreamCallback;
+  public
+
+    /// <summary>
+    ///   Initializes the critical section that protects the subscriber list.
+    /// </summary>
+    constructor Create;
+
+    /// <summary>
+    ///   Releases the subscriber list and the critical section.
+    /// </summary>
+    destructor Destroy; override;
+
+    /// <summary>
+    ///   Adds a subscriber to the active list. The framework will track the callback's lifetime and notify the
+    ///   server via <c>CallbackReleased</c> when the connection drops.
+    /// </summary>
+    /// <param name="aCallback">
+    ///   The subscriber's callback implementation.
+    /// </param>
+    procedure Subscribe(
+      const aCallback: ILogStreamCallback
+      );
+
+    /// <summary>
+    ///   Removes a previously registered callback. Does nothing if the callback was never registered.
+    /// </summary>
+    /// <param name="aCallback">
+    ///   The subscriber's callback implementation.
+    /// </param>
+    procedure Unsubscribe(
+      const aCallback: ILogStreamCallback
+      );
+
+    /// <summary>
+    ///   Cleanup hook invoked by mORMot2 when a subscriber's interface reference count reaches zero (typically
+    ///   because its WebSocket connection was closed). Removes the callback from the subscriber list.
+    /// </summary>
+    /// <param name="aCallback">
+    ///   The released callback (compared by reference identity to detect the matching entry).
+    /// </param>
+    /// <param name="aInterfaceName">
+    ///   The interface name of the released callback. Always <c>'ILogStreamCallback'</c> for our case.
+    /// </param>
+    procedure CallbackReleased(
+      const aCallback: IInvokable;
+      const aInterfaceName: RawUtf8
+      );
+
+    /// <summary>
+    ///   Pushes one entry to every active subscriber. Subscribers that raise an exception during dispatch are
+    ///   removed from the active list (defense in depth -- normally <c>CallbackReleased</c> arrives first).
+    /// </summary>
+    /// <param name="aEntry">
+    ///   The log entry to broadcast.
+    /// </param>
+    procedure Broadcast(
+      const aEntry: TLogEntryDto
       );
   end;
 
@@ -155,7 +255,8 @@ type
 
   /// <summary>
   ///   Microservice server hosting the central logging service. Wires the ORM model
-  ///   (<c>TOrmLogEntry</c> + <c>TOrmLogEntryFts</c>) and registers both SOA implementations.
+  ///   (<c>TOrmLogEntry</c> + <c>TOrmLogEntryFts</c>) and registers all three SOA implementations
+  ///   (<c>ILogIngestion</c>, <c>ILogQuery</c>, <c>ILogStream</c>).
   /// </summary>
   TLogsServer = class(TMicroService)
   strict private
@@ -168,6 +269,11 @@ type
     ///   The query service implementation instance.
     /// </summary>
     FQueryImpl: TLogQueryService;
+
+    /// <summary>
+    ///   The live-stream service that broadcasts new entries to WebSocket subscribers.
+    /// </summary>
+    FStreamImpl: TLogStreamService;
   protected
 
     /// <summary>
@@ -282,11 +388,13 @@ begin
 end;
 
 constructor TLogIngestionService.Create(
-  const aOrm: IRestOrm
+  const aOrm: IRestOrm;
+  aStream: TLogStreamService
   );
 begin
   inherited Create;
   FOrm := aOrm;
+  FStream := aStream;
 end;
 
 procedure TLogIngestionService.AppendBatch(
@@ -297,6 +405,7 @@ var
   Rec: TOrmLogEntry;
   Fts: TOrmLogEntryFts;
   NewId: TID;
+  BroadcastDto: TLogEntryDto;
 begin
   if Length(aEntries) = 0 then
     Exit;
@@ -327,12 +436,127 @@ begin
         finally
           Fts.Free;
         end;
+        // Hand the freshly persisted entry to the broadcaster (if any). The DTO is built outside of any
+        // ORM lock so the broadcast itself never holds the database open longer than needed.
+        if FStream <> nil then
+        begin
+          Finalize(BroadcastDto);
+          FillCharFast(BroadcastDto, SizeOf(BroadcastDto), 0);
+          BroadcastDto.ID := NewId;
+          BroadcastDto.ServiceName := aEntries[EntryIdx].ServiceName;
+          BroadcastDto.Timestamp := aEntries[EntryIdx].Timestamp;
+          BroadcastDto.Level := aEntries[EntryIdx].Level;
+          BroadcastDto.CorrelationId := ExtractCorrelationIdFromMessage(aEntries[EntryIdx].Message);
+          BroadcastDto.Message := aEntries[EntryIdx].Message;
+          FStream.Broadcast(BroadcastDto);
+        end;
       end;
     end;
     FOrm.Commit;
   except
     FOrm.RollBack;
     raise;
+  end;
+end;
+
+constructor TLogStreamService.Create;
+begin
+  inherited Create;
+  InitializeCriticalSection(FLock);
+end;
+
+destructor TLogStreamService.Destroy;
+begin
+  EnterCriticalSection(FLock);
+  try
+    FSubscribers := nil;
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+  DeleteCriticalSection(FLock);
+  inherited Destroy;
+end;
+
+procedure TLogStreamService.Subscribe(
+  const aCallback: ILogStreamCallback
+  );
+begin
+  if aCallback = nil then
+    Exit;
+  EnterCriticalSection(FLock);
+  try
+    SetLength(FSubscribers, Length(FSubscribers) + 1);
+    FSubscribers[High(FSubscribers)] := aCallback;
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+procedure TLogStreamService.Unsubscribe(
+  const aCallback: ILogStreamCallback
+  );
+var
+  SubscriberIdx: PtrInt;
+begin
+  if aCallback = nil then
+    Exit;
+  EnterCriticalSection(FLock);
+  try
+    for SubscriberIdx := High(FSubscribers) downto 0 do
+      if FSubscribers[SubscriberIdx] = aCallback then
+      begin
+        Delete(FSubscribers, SubscriberIdx, 1);
+        Break;
+      end;
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+procedure TLogStreamService.CallbackReleased(
+  const aCallback: IInvokable;
+  const aInterfaceName: RawUtf8
+  );
+var
+  SubscriberIdx: PtrInt;
+  ReleasedAsStream: ILogStreamCallback;
+begin
+  // Only react to releases of our own callback interface.
+  if aInterfaceName <> 'ILogStreamCallback' then
+    Exit;
+  if not Supports(aCallback, ILogStreamCallback, ReleasedAsStream) then
+    Exit;
+  EnterCriticalSection(FLock);
+  try
+    for SubscriberIdx := High(FSubscribers) downto 0 do
+      if FSubscribers[SubscriberIdx] = ReleasedAsStream then
+      begin
+        Delete(FSubscribers, SubscriberIdx, 1);
+        Break;
+      end;
+  finally
+    LeaveCriticalSection(FLock);
+  end;
+end;
+
+procedure TLogStreamService.Broadcast(
+  const aEntry: TLogEntryDto
+  );
+var
+  SubscriberIdx: PtrInt;
+begin
+  EnterCriticalSection(FLock);
+  try
+    // Iterate from the end so deletions on failure don't shift later indices.
+    for SubscriberIdx := High(FSubscribers) downto 0 do
+      try
+        FSubscribers[SubscriberIdx].NotifyEntry(aEntry);
+      except
+        // Defense in depth: a failing subscriber gets removed even if CallbackReleased did not fire first.
+        Delete(FSubscribers, SubscriberIdx, 1);
+      end;
+  finally
+    LeaveCriticalSection(FLock);
   end;
 end;
 
@@ -472,11 +696,19 @@ begin
 end;
 
 procedure TLogsServer.SetupServices;
+var
+  StreamFactory: TServiceFactoryServerAbstract;
 begin
-  FIngestionImpl := TLogIngestionService.Create(FRestServer.Orm);
+  // Stream service must exist before the ingestion service so the latter can hand it new entries.
+  FStreamImpl := TLogStreamService.Create;
+  FIngestionImpl := TLogIngestionService.Create(FRestServer.Orm, FStreamImpl);
   FQueryImpl := TLogQueryService.Create(FRestServer.Orm);
   RegisterService(FIngestionImpl, TypeInfo(ILogIngestion));
   RegisterService(FQueryImpl, TypeInfo(ILogQuery));
+  StreamFactory := RegisterService(FStreamImpl, TypeInfo(ILogStream));
+  // Serialize NotifyEntry calls per subscriber so each viewer sees events in order, even when several
+  // ingestion threads broadcast concurrently.
+  StreamFactory.SetOptions([], [optExecLockedPerInterface]);
 end;
 
 end.

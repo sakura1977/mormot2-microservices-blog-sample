@@ -23,6 +23,7 @@ Microservice-based blog system with **Delphi 13** and **mORMot2**.
 | [workflows.md](workflows.md) | Sequence diagrams for all key workflows |
 | [correlation-ids.md](correlation-ids.md) | `X-Correlation-Id` propagation, threadvar, `OnBeforeCall` hook, logging |
 | [central-logging.md](central-logging.md) | `ms.logs` service, `EchoCustom` shipper, SQLite FTS5, `ILogIngestion` / `ILogQuery` |
+| [event-driven.md](event-driven.md) | Interface-based callbacks over WebSockets, live log tail, `ILogStream`, broker pattern, `synopsebin` / `synopsejson` |
 
 ## Architecture
 
@@ -43,14 +44,14 @@ Microservice-based blog system with **Delphi 13** and **mORMot2**.
 | ms.media | 8086 | IMedia | Image upload and serving |
 | ms.config | 8087 | IConfig | Central configuration registry |
 | ms.analytics | 8088 | IAnalytics | Cross-service data aggregation |
-| ms.logs | 8089 | ILogIngestion + ILogQuery | Central log aggregation (SQLite FTS5) |
+| ms.logs | 8089 | ILogIngestion + ILogQuery + ILogStream | Central log aggregation (SQLite FTS5) + live broadcast |
 
 ## Technology
 
 - **Language**: Object Pascal (Delphi 13)
 - **Framework**: mORMot2
 - **Database**: SQLite (one DB per service)
-- **Communication**: mORMot2 SOA over REST/HTTP with JSON
+- **Communication**: mORMot2 SOA over REST/HTTP with JSON, plus WebSocket callbacks (`synopsebin` + `synopsejson`) for real-time events (see [event-driven.md](event-driven.md))
 - **Authentication**: SCRAM-MCF + JWT (HMAC-SHA256)
 - **Frontend**: Vanilla JS SPA (no dependencies)
 - **Logging**: TSynLog with rotation (5 x 5 MB per service) + central `ms.logs` ingestion via `EchoCustom` + SQLite FTS5

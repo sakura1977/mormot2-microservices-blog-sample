@@ -244,6 +244,11 @@ button.btn-outline:hover { background: var(--primary); color: #fff; }
 .log-msg { word-break: break-word; max-width: 600px; }
 .log-error .log-level { background: var(--danger); color: #fff; }
 .log-warn .log-level { background: #f59e0b; color: #fff; }
+@keyframes log-fade-in {
+  0%   { background-color: #bfdbfe; }
+  100% { background-color: inherit; }
+}
+.logs-table tr.log-new { animation: log-fade-in 1.5s ease-out; }
 
 /* === Pagination === */
 .pagination { display: flex; justify-content: center; gap: .5rem; margin-top: 2rem; }
