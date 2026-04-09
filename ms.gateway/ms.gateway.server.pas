@@ -707,18 +707,23 @@ begin
     'Access-Control-Expose-Headers: ' + CORRELATION_HEADER + #13#10 +
     CORRELATION_HEADER + ': ' + CorrId;
   try
-    // Handle CORS preflight
+    // Handle CORS preflight -- bypasses the inner wrapper, so log it here.
     if aCtxt.Method = 'OPTIONS' then
     begin
+      LogWithCorrelation(sllInfo, '% OPTIONS %', [ServiceName, aCtxt.Url], self);
       aCtxt.OutContent := '';
       Exit(HTTP_NOCONTENT);
     end;
-    // API calls go to the REST server (interface-based services)
+    // API calls go to the REST server (interface-based services). The base wrapper logs them.
     if IdemPChar(pointer(aCtxt.Url), '/API/') or IdemPChar(pointer(aCtxt.Url), '/API') then
       Result := FOriginalHandler(aCtxt)
     else
-      // Non-API calls serve static files (SPA frontend)
+    begin
+      // Non-API calls serve static files (SPA frontend) -- not logged by the inner wrapper.
+      LogWithCorrelation(sllInfo, '% STATIC %', [ServiceName, aCtxt.Url], self);
       Result := HandleStaticFile(aCtxt);
+      LogWithCorrelation(sllInfo, '% STATIC % -> %', [ServiceName, aCtxt.Url, Result], self);
+    end;
   finally
     // Clear the correlation ID so the next request on this thread starts clean.
     ClearCurrentCorrelationId;

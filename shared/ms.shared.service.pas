@@ -427,8 +427,12 @@ begin
   CorrId := EnsureCorrelationIdFromHeaders(aCtxt.InHeaders);
   // Mirror the correlation ID to the response so the caller can correlate request and response.
   aCtxt.OutCustomHeaders := aCtxt.OutCustomHeaders + #13#10 + CORRELATION_HEADER + ': ' + CorrId;
+  // Log the incoming request with the correlation ID -- this is the entry point on every backend service
+  // that gives operators a complete trace of which request hit which service.
+  LogWithCorrelation(sllInfo, '% REQ % %', [FServiceName, aCtxt.Method, aCtxt.Url], self);
   try
     Result := FInnerHttpHandler(aCtxt);
+    LogWithCorrelation(sllInfo, '% RSP % % -> %', [FServiceName, aCtxt.Method, aCtxt.Url, Result], self);
   finally
     // The HTTP server reuses threads from a pool. Clear the threadvar so the next request
     // on this thread does not inherit the previous correlation ID.
@@ -521,7 +525,7 @@ var
   DatabasePath: TFileName;
 begin
   FStartTime := NowUtc;
-  TSynLog.Add.Log(sllInfo, '% starting on port %...', [FServiceName, FPort], self);
+  LogWithCorrelation(sllInfo, '% starting on port %...', [FServiceName, FPort], self);
   try
     // --- Phase 1: Create ORM model and database ---
     // Each service has its own SQLite file ({serviceName}.db).
@@ -586,16 +590,16 @@ begin
     end;
 
     // --- Phase 6: Graceful shutdown ---
-    TSynLog.Add.Log(sllInfo, '% shutting down...', [FServiceName], self);
+    LogWithCorrelation(sllInfo, '% shutting down...', [FServiceName], self);
     DoFinalize;
     FreeAndNil(FHttpServer);
     FreeAndNil(FRestServer);
     FreeAndNil(FModel);
-    TSynLog.Add.Log(sllInfo, '% stopped.', [FServiceName], self);
+    LogWithCorrelation(sllInfo, '% stopped.', [FServiceName], self);
   except
     on E: Exception do
     begin
-      TSynLog.Add.Log(sllError, 'ERROR in %: %', [FServiceName, E.Message], self);
+      LogWithCorrelation(sllError, 'ERROR in %: %', [FServiceName, E.Message], self);
       WriteLn('ERROR: ', E.Message);
     end;
   end;

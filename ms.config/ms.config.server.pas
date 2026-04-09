@@ -29,6 +29,7 @@ uses
   mormot.soa.server,
   ms.shared,
   ms.shared.api,
+  ms.shared.correlation,
   ms.shared.service;
 
 type
@@ -176,7 +177,7 @@ begin
     MasterJson := StringFromFile(MasterPath)
   else
   begin
-    TSynLog.Add.Log(sllWarning, 'ms.config.master.json not found, serving empty config', self);
+    LogWithCorrelation(sllWarning, 'ms.config.master.json not found, serving empty config', [], self);
     MasterJson := '{}';
   end;
   FConfigImpl := TConfigService.Create(MasterJson);
