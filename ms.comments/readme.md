@@ -12,9 +12,9 @@ POST /api/Comment/{Method}
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| GetByPost | `(aPostId): RawJson` | Approved comments for a post |
-| GetPending | `(): RawJson` | All comments awaiting moderation |
-| Add | `(aPostId, aData): TID` | Submit comment (status: pending) |
+| GetByPost | `(aPostId): TCommentDtoArray` | Approved comments for a post |
+| GetPending | `(): TCommentDtoArray` | All comments awaiting moderation |
+| Add | `(aPostId, const aData: TCommentCreateDto): TID` | Submit comment (status: pending) |
 | Approve | `(aId, aModeratedBy): boolean` | Approve a pending comment |
 | Reject | `(aId, aModeratedBy): boolean` | Reject a pending comment |
 | Remove | `(aId): boolean` | Delete permanently |

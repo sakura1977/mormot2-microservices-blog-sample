@@ -12,10 +12,10 @@ POST /api/Post/{Method}
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| Get | `(aId): RawJson` | Single post, or `'{}'` |
-| GetBySlug | `(aSlug): RawJson` | Lookup by URL slug |
-| GetList | `(aPage, aLimit, aStatus, aAuthorId): RawJson` | Paginated list with filters |
-| Add | `(aData): TID` | Creates post, auto-generates slug |
+| Get | `(aId): TPostDto` | Single post, ID=0 if not found |
+| GetBySlug | `(aSlug): TPostDto` | Lookup by URL slug |
+| GetList | `(aPage, aLimit, aStatus, aAuthorId): TPostListDto` | Paginated list with filters |
+| Add | `(const aData: TPostCreateDto): TID` | Creates post, auto-generates slug |
 | Update | `(aId, aData): boolean` | Partial update |
 | Remove | `(aId): boolean` | Deletes post |
 
@@ -28,7 +28,7 @@ POST /api/Post/{Method}
 | aStatus | integer | 0 = all, 1 = published, 2 = archived |
 | aAuthorId | TID | 0 = all authors |
 
-Returns: `{"items":[...], "total": N, "page": N}`
+Returns: `TPostListDto` record with `Items: TPostDtoArray`, `Total`, `Page` fields
 
 ## Data Model
 

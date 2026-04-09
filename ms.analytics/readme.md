@@ -12,11 +12,11 @@ POST /api/Analytics/{Method}
 
 | Method | Calls | Returns |
 |--------|-------|---------|
-| GetOverview | Posts, Users, Tags, Comments | `{posts, authors, tags, pendingComments}` |
-| GetAuthorStats | Users, Posts, Comments | `[{authorId, displayName, postCount, commentCount}]` |
-| GetTagCloud | Tags | `[{tagId, name, postCount}]` sorted by usage |
-| GetCommentActivity | Comments, Posts | `{pendingCount, topCommentedPosts:[...]}` |
-| GetRecentPostsFull | Posts, Users, Tags, Comments | Enriched posts with Author, Tags, Comments |
+| GetOverview | Posts, Users, Tags, Comments | `TOverviewDto` (Posts, Authors, Tags, PendingComments) |
+| GetAuthorStats | Users, Posts, Comments | `TAuthorStatDtoArray` (AuthorId, DisplayName, PostCount, CommentCount) |
+| GetTagCloud | Tags | `TTagCloudItemDtoArray` (TagId, Name, Slug, PostCount) sorted by usage |
+| GetCommentActivity | Comments, Posts | `TCommentActivityDto` (PendingCount, TopCommentedPosts) |
+| GetRecentPostsFull | Posts, Users, Tags, Comments | `TPostFullDtoArray` -- enriched posts with Author, Tags, Comments |
 
 ## The Cross-Service JOIN (GetRecentPostsFull)
 

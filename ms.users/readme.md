@@ -12,9 +12,9 @@ POST /api/User/{Method}
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| Get | `(aId): RawJson` | Single author profile, or `'{}'` |
-| GetAll | `(): RawJson` | All authors as JSON array |
-| Add | `(aData): TID` | Creates profile, auto-generates slug |
+| Get | `(aId): TAuthorDto` | Single author profile, ID=0 if not found |
+| GetAll | `(): TAuthorDtoArray` | All authors as typed array |
+| Add | `(const aData: TAuthorCreateDto): TID` | Creates profile, auto-generates slug |
 | Update | `(aId, aData): boolean` | Partial update (only provided fields) |
 | Remove | `(aId): boolean` | Deletes profile |
 

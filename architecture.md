@@ -106,8 +106,12 @@ Example:
 ```
 POST /api/Post/GetList
 Body: [1, 10, 1, 0]
-Response: {"Result": "{\"items\":[...],\"total\":5,\"page\":1}"}
+Response: {"Result": {"Items":[...],"Total":5,"Page":1}}
 ```
+
+Most service methods return typed DTO records (e.g. `TPostDto`, `TPostListDto`)
+which mORMot2 serializes directly as JSON objects. Only `IConfig` and Update
+methods still use `RawJson` for schema-less / PATCH semantics.
 
 ---
 
@@ -123,8 +127,8 @@ sequenceDiagram
 
     B->>GW: POST /api/Post/GetList [1, 10, 1, 0]
     GW->>P: POST /api/Post/GetList [1, 10, 1, 0]
-    P-->>GW: {"Result": "{\"items\":[...],\"total\":N}"}
-    GW-->>B: {"Result": "{\"items\":[...],\"total\":N}"}
+    P-->>GW: {"Result": {"Items":[...],"Total":N,"Page":1}}
+    GW-->>B: {"Result": {"Items":[...],"Total":N,"Page":1}}
 ```
 
 ### Single Post (Aggregated via IBlog)

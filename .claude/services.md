@@ -39,10 +39,10 @@ and aggregates data via the IBlog service.
 
 ```pascal
 IBlog = interface(IInvokable)
-  function GetPostFull(aId: TID): RawJson;
+  function GetPostFull(aId: TID): TPostFullDto;
     // Aggregates: Post + Author + Tags + Comments
-  function GetPostsByTag(aTagId: TID): RawJson;
-    // Returns {Tag:{...}, Posts:[...]} with author enrichment
+  function GetPostsByTag(aTagId: TID): TPostsByTagDto;
+    // Returns Tag + Posts with author enrichment
 end;
 ```
 
@@ -127,10 +127,11 @@ end;
 
 ```pascal
 IUser = interface(IInvokable)
-  function Get(aId: TID): RawJson;
-  function GetAll: RawJson;
-  function Add(const aData: RawJson): TID;
+  function Get(aId: TID): TAuthorDto;
+  function GetAll: TAuthorDtoArray;
+  function Add(const aData: TAuthorCreateDto): TID;
   function Update(aId: TID; const aData: RawJson): boolean;
+    // RawJson: PATCH semantics (only present fields updated)
   function Remove(aId: TID): boolean;
 end;
 ```
@@ -166,12 +167,13 @@ end;
 
 ```pascal
 IPost = interface(IInvokable)
-  function Get(aId: TID): RawJson;
-  function GetBySlug(const aSlug: RawUtf8): RawJson;
+  function Get(aId: TID): TPostDto;
+  function GetBySlug(const aSlug: RawUtf8): TPostDto;
   function GetList(aPage, aLimit, aStatus: integer;
-    aAuthorId: TID): RawJson;
-  function Add(const aData: RawJson): TID;
+    aAuthorId: TID): TPostListDto;
+  function Add(const aData: TPostCreateDto): TID;
   function Update(aId: TID; const aData: RawJson): boolean;
+    // RawJson: PATCH semantics (only present fields updated)
   function Remove(aId: TID): boolean;
 end;
 ```
@@ -203,15 +205,16 @@ end;
 
 ```pascal
 ITag = interface(IInvokable)
-  function Get(aId: TID): RawJson;
-  function GetAll: RawJson;
-  function GetByPost(aPostId: TID): RawJson;
-  function GetPostIds(aTagId: TID): RawJson;
-    // Returns JSON array of post IDs for a tag, e.g. [1,3,5]
+  function Get(aId: TID): TTagDto;
+  function GetAll: TTagDtoArray;
+  function GetByPost(aPostId: TID): TTagDtoArray;
+  function GetPostIds(aTagId: TID): TIDDynArray;
+    // Returns array of post IDs for a tag
   function SetPostTags(aPostId: TID;
     const aTagIds: RawJson): boolean;
-  function Add(const aData: RawJson): TID;
+  function Add(const aData: TTagCreateDto): TID;
   function Update(aId: TID; const aData: RawJson): boolean;
+    // RawJson: PATCH semantics (only present fields updated)
   function Remove(aId: TID): boolean;
 end;
 ```
@@ -242,9 +245,9 @@ end;
 
 ```pascal
 IComment = interface(IInvokable)
-  function GetByPost(aPostId: TID): RawJson;
-  function GetPending: RawJson;
-  function Add(aPostId: TID; const aData: RawJson): TID;
+  function GetByPost(aPostId: TID): TCommentDtoArray;
+  function GetPending: TCommentDtoArray;
+  function Add(aPostId: TID; const aData: TCommentCreateDto): TID;
   function Approve(aId, aModeratedBy: TID): boolean;
   function Reject(aId, aModeratedBy: TID): boolean;
   function Remove(aId: TID): boolean;
@@ -282,7 +285,7 @@ end;
 IMedia = interface(IInvokable)
   function Upload(const aFileName, aFileData, aAltText: RawUtf8;
     aUploadedBy: TID): TID;
-  function GetInfo(aId: TID): RawJson;
+  function GetInfo(aId: TID): TMediaInfoDto;
   function GetFile(aId: TID;
     out aContentType: RawUtf8): RawByteString;
   function Remove(aId: TID): boolean;
@@ -326,11 +329,11 @@ Cross-service data aggregation. Demonstrates the microservice equivalent of SQL 
 
 ```pascal
 IAnalytics = interface(IInvokable)
-  function GetOverview: RawJson;
-  function GetAuthorStats: RawJson;
-  function GetTagCloud: RawJson;
-  function GetCommentActivity: RawJson;
-  function GetRecentPostsFull(aLimit: integer): RawJson;
+  function GetOverview: TOverviewDto;
+  function GetAuthorStats: TAuthorStatDtoArray;
+  function GetTagCloud: TTagCloudItemDtoArray;
+  function GetCommentActivity: TCommentActivityDto;
+  function GetRecentPostsFull(aLimit: integer): TPostFullDtoArray;
     // Cross-service JOIN: enriches posts with author, tags, comments
 end;
 ```

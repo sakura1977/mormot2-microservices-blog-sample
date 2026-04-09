@@ -1,6 +1,6 @@
 # ms.gateway -- API Gateway
 
-Port **8080** | Interface **IBlog** + 6 proxied interfaces | No own database
+Port **8080** | Interface **IBlog** + 7 proxied interfaces | No own database
 
 Central entry point for all browser requests. Combines three responsibilities: transparent SOA proxying, response aggregation, and static file serving.
 
@@ -12,8 +12,8 @@ POST /api/Blog/{Method}
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| GetPostFull | `(aId): RawJson` | Post enriched with author, tags, comments |
-| GetPostsByTag | `(aTagId): RawJson` | Published posts for a tag, with author info |
+| GetPostFull | `(aId): TPostFullDto` | Post enriched with author, tags, comments |
+| GetPostsByTag | `(aTagId): TPostsByTagDto` | Published posts for a tag, with author info |
 
 ### GetPostFull Response
 
@@ -34,7 +34,7 @@ Returns `{Tag: {...}, Posts: [...]}` where each post includes its author. Only p
 
 ## Proxied Interfaces
 
-Six backend interfaces are transparently forwarded without manual proxy classes:
+Seven backend interfaces are transparently forwarded without manual proxy classes:
 
 | Interface | Backend | Port |
 |-----------|---------|------|
@@ -44,6 +44,7 @@ Six backend interfaces are transparently forwarded without manual proxy classes:
 | ITag | ms.tags | 8084 |
 | IComment | ms.comments | 8085 |
 | IMedia | ms.media | 8086 |
+| IAnalytics | ms.analytics | 8088 |
 
 ## Static File Serving
 

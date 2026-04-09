@@ -222,7 +222,7 @@ constructor Create(
 
 function Get(
   aId: TID
-  ): RawJson;
+  ): TPostDto;
 
 procedure Advance(
   const aCount: Integer = 1
@@ -236,7 +236,7 @@ class function Create(
 
 // FALSCH — Parameter NIEMALS auf eine Zeile zusammenfassen:
 constructor Create(const aOrm: IRestOrm);
-function Get(aId: TID): RawJson;
+function Get(aId: TID): TPostDto;
 constructor Create(const aPosts: IPost; const aUsers: IUser;
   const aTags: ITag; const aComments: IComment);
 ```

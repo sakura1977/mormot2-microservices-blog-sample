@@ -59,6 +59,14 @@ the TOrm/I prefixes. mORMot2 reports a routing conflict otherwise.
 Example: `IPost` + `TOrmPost` -> conflict! Solution: `TOrmBlogPost`.
 
 ### SOA Parameter Format
+Most service methods use typed DTO records (e.g. `TPostCreateDto`, `TAuthorDto`) for
+both input and output. mORMot2 serializes these directly to/from JSON objects.
+
+`RawJson` is still used in two cases:
+- **Update methods** (PATCH semantics): `const aData: RawJson` -- allows partial updates
+  where only the fields present in the JSON are modified.
+- **IConfig**: schema-less configuration data that varies per service.
+
 `RawJson` parameters must be passed as JSON objects (not strings) in the array:
 - Correct: `[{"Name":"Delphi"}]`
 - Wrong: `["{\"Name\":\"Delphi\"}"]`

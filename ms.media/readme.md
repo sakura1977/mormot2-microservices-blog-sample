@@ -13,7 +13,7 @@ POST /api/Media/{Method}
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | Upload | `(aFileName, aFileData, aAltText, aUploadedBy): TID` | Upload Base64-encoded file |
-| GetInfo | `(aId): RawJson` | File metadata (name, MIME, size) |
+| GetInfo | `(aId): TMediaInfoDto` | File metadata (name, MIME, size; excludes StoragePath) |
 | GetFile | `(aId) -> (aContentType): RawByteString` | Raw file content |
 | Remove | `(aId): boolean` | Delete file + metadata |
 

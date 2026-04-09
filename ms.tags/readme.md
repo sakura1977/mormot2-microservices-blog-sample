@@ -12,12 +12,12 @@ POST /api/Tag/{Method}
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| Get | `(aId): RawJson` | Single tag, or `'{}'` |
-| GetAll | `(): RawJson` | All tags as JSON array |
-| GetByPost | `(aPostId): RawJson` | Tags assigned to a post |
-| GetPostIds | `(aTagId): RawJson` | Post IDs that have this tag, e.g. `[1,3,5]` |
+| Get | `(aId): TTagDto` | Single tag, ID=0 if not found |
+| GetAll | `(): TTagDtoArray` | All tags as typed array |
+| GetByPost | `(aPostId): TTagDtoArray` | Tags assigned to a post |
+| GetPostIds | `(aTagId): TIDDynArray` | Post IDs that have this tag |
 | SetPostTags | `(aPostId, aTagIds): boolean` | Replace all tag assignments for a post |
-| Add | `(aData): TID` | Creates tag, auto-generates slug |
+| Add | `(const aData: TTagCreateDto): TID` | Creates tag, auto-generates slug |
 | Update | `(aId, aData): boolean` | Partial update |
 | Remove | `(aId): boolean` | Deletes tag + all associations |
 

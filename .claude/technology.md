@@ -122,8 +122,8 @@ private
   FOrm: IRestOrm;
 public
   constructor Create(const aOrm: IRestOrm);
-  function Get(aId: TID): RawJson;
-  function Add(const aData: RawJson): TID;
+  function Get(aId: TID): TPostDto;
+  function Add(const aData: TPostCreateDto): TID;
   // ...
 end;
 ```

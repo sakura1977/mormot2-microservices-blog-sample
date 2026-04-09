@@ -47,6 +47,11 @@ graph TB
     GW --> TAGS[ms.tags :8084]
     GW --> COMMENTS[ms.comments :8085]
     GW --> MEDIA[ms.media :8086]
+    GW --> ANALYTICS[ms.analytics :8088]
+    ANALYTICS --> POSTS
+    ANALYTICS --> USERS
+    ANALYTICS --> TAGS
+    ANALYTICS --> COMMENTS
     CONFIG[ms.config :8087] -.-> AUTH
     CONFIG -.-> USERS
     CONFIG -.-> POSTS
@@ -62,7 +67,7 @@ graph TB
     MEDIA --- DB6[(media.db)]
 ```
 
-Eight independent services, each a standalone console application:
+Nine independent services, each a standalone console application:
 
 | Service | Port | SOA Interface | Responsibility |
 |---------|------|---------------|----------------|
@@ -74,6 +79,7 @@ Eight independent services, each a standalone console application:
 | **ms.tags** | 8084 | ITag | Tag management and post-tag associations (m:n) |
 | **ms.comments** | 8085 | IComment | Comments with moderation workflow |
 | **ms.media** | 8086 | IMedia | File uploads with Base64 encoding |
+| **ms.analytics** | 8088 | IAnalytics | Cross-service data aggregation and statistics |
 
 For detailed diagrams (request flows, data model, routing map), see [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -150,7 +156,7 @@ Response: {"Result":1}
 ```
 POST /api/Post/GetList
 Body: [1, 10, 1, 0]    // page, limit, status, authorId
-Response: {"Result":{"items":[...],"total":3,"page":1}}
+Response: {"Result":{"Items":[...],"Total":3,"Page":1}}
 ```
 
 ### Authentication: SCRAM-MCF
@@ -317,7 +323,7 @@ Example (`ms.gateway.config.json`):
 
 ### Testing with mORMot2
 
-- **In-process integration tests** -- all 7 services run in a single process with in-memory SQLite (`:memory:`) -- no HTTP, no ports, no separate processes
+- **In-process integration tests** -- all 9 services run in a single process with in-memory SQLite (`:memory:`) -- no HTTP, no ports, no separate processes
 - **TSynTestCase** -- mORMot2's test framework with `Check`, `CheckEqual` assertions
 - **130+ assertions** covering happy paths, validation errors, not-found cases, SCRAM authentication, cascading deletes, and upload limits
 - **Constructor injection** -- service implementations receive `IRestOrm` for easy test wiring
