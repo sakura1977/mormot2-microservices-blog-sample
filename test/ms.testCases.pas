@@ -42,6 +42,7 @@ uses
   mormot.core.base,
   mormot.core.buffers,
   mormot.core.datetime,
+  mormot.core.interfaces,
   mormot.core.json,
   mormot.core.log,
   mormot.core.os,
@@ -53,11 +54,15 @@ uses
   mormot.crypt.core,
   mormot.crypt.secure,
   mormot.db.raw.sqlite3,
+  mormot.net.ws.core,
   mormot.orm.base,
   mormot.orm.core,
   mormot.rest.core,
+  mormot.rest.http.client,
+  mormot.rest.http.server,
   mormot.rest.server,
   mormot.rest.sqlite3,
+  mormot.soa.client,
   mormot.soa.core,
   mormot.soa.server,
   ms.shared,
@@ -908,6 +913,31 @@ type
     ///   subscribers continue to receive future broadcasts.
     /// </summary>
     procedure FailingSubscriberIsDropped;
+  end;
+
+  /// <summary>
+  ///   End-to-end round-trip test that exercises the full WebSocket-based event pipeline:
+  ///   <list>
+  ///   <item>Spins up a real <c>TRestHttpServer</c> with WebSocket support on a high test port</item>
+  ///   <item>Registers <c>ILogIngestion</c> + <c>ILogStream</c> services on the server</item>
+  ///   <item>Creates a <c>TRestHttpClientWebsockets</c>, performs <c>WebSocketsUpgrade</c>, resolves both
+  ///     interfaces</item>
+  ///   <item>Calls <c>ILogStream.Subscribe(callback)</c> -- this is the path that exercises mORMot2's
+  ///     <c>TServiceContainerServer.GetFakeCallback</c> mechanism</item>
+  ///   <item>Calls <c>ILogIngestion.AppendBatch(...)</c> which should fan out to the subscriber</item>
+  ///   <item>Polls (with timeout) until the callback fires on the client side</item>
+  ///   </list>
+  ///   This test would fail with <c>EInterfaceFactory: Unexpected GetFakeCallback(ILogStreamCallback)</c>
+  ///   if the explicit <c>TInterfaceFactory.RegisterInterfaces</c> call in <c>ms.shared.api</c>'s
+  ///   initialization were removed -- it is a regression guard for that exact class of bug.
+  /// </summary>
+  TTestWebSocketRoundtrip = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   Subscribes a callback over a real WebSocket connection, ingests one entry, and verifies that
+    ///   the callback fires within a timeout.
+    /// </summary>
+    procedure SubscribeIngestReceive;
   end;
 
   /// <summary>
@@ -3076,6 +3106,111 @@ begin
   end;
 end;
 
+procedure TTestWebSocketRoundtrip.SubscribeIngestReceive;
+const
+  TEST_PORT = '18789';
+  TIMEOUT_MS = 5000;
+  POLL_MS = 20;
+var
+  ServerModel: TOrmModel;
+  RestServer: TRestServerDB;
+  HttpServer: TRestHttpServer;
+  StreamSvc: TLogStreamService;
+  IngestSvc: TLogIngestionService;
+  StreamFactory: TServiceFactoryServerAbstract;
+  ClientModel: TOrmModel;
+  Client: TRestHttpClientWebsockets;
+  StreamRemote: ILogStream;
+  IngestRemote: ILogIngestion;
+  Recorder: TTestLogStreamRecorder;
+  CallbackIntf: ILogStreamCallback;
+  Batch: TLogEntryIngestDtoArray;
+  WaitedMs: integer;
+  UpgradeError: RawUtf8;
+begin
+  // === Server side: dedicated REST + HTTP server with WebSockets enabled ===
+  // We don't reuse TBlogTestContext here because we need a real HTTP+WebSocket transport rather than
+  // the in-process direct interface calls used by every other test in this file.
+  ServerModel := TOrmModel.Create([TOrmLogEntry, TOrmLogEntryFts], 'api');
+  RestServer := TRestServerDB.Create(ServerModel, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    RestServer.DB.Synchronous := smOff;
+    RestServer.Server.CreateMissingTables;
+    StreamSvc := TLogStreamService.Create;
+    IngestSvc := TLogIngestionService.Create(RestServer.Orm, StreamSvc);
+    RestServer.ServiceRegister(IngestSvc, [TypeInfo(ILogIngestion)]).
+      ByPassAuthentication := True;
+    StreamFactory := RestServer.ServiceRegister(StreamSvc, [TypeInfo(ILogStream)]);
+    StreamFactory.SetOptions([], [optExecLockedPerInterface]);
+    StreamFactory.ByPassAuthentication := True;
+    HttpServer := TRestHttpServer.Create(
+      TEST_PORT, RestServer, '+', WEBSOCKETS_DEFAULT_MODE, nil, 4, secNone);
+    try
+      HttpServer.WebSocketsEnable(RestServer, WEBSOCKETS_KEY, {ajax=}False);
+      // === Client side: real WebSocket upgrade against the test server ===
+      ClientModel := TOrmModel.Create([], 'api');
+      Client := TRestHttpClientWebsockets.Create('localhost', TEST_PORT, ClientModel);
+      try
+        Client.Model.Owner := Client;
+        UpgradeError := Client.WebSocketsUpgrade(WEBSOCKETS_KEY);
+        CheckEqual(UpgradeError, '',
+          'WebSocketsUpgrade must succeed (otherwise the test cannot continue)');
+        Client.ServiceRegister([TypeInfo(ILogStream), TypeInfo(ILogIngestion)], sicShared);
+        Check(Client.Services.Resolve(ILogStream, StreamRemote),
+          'client must resolve ILogStream');
+        Check(Client.Services.Resolve(ILogIngestion, IngestRemote),
+          'client must resolve ILogIngestion');
+        // === The actual round-trip ===
+        Recorder := TTestLogStreamRecorder.Create;
+        CallbackIntf := Recorder;
+        // This Subscribe is the call that traverses TServiceContainerServer.GetFakeCallback on the
+        // server side. If TInterfaceFactory.RegisterInterfaces was not called for ILogStreamCallback,
+        // this raises 'Unexpected GetFakeCallback(ILogStreamCallback)'. The test exists specifically
+        // to catch that regression.
+        StreamRemote.Subscribe(CallbackIntf);
+        try
+          // Trigger an ingestion which will fan out to all server-side subscribers, including ours.
+          SetLength(Batch, 1);
+          Batch[0].ServiceName := 'roundtrip-test';
+          Batch[0].Timestamp := NowUtc;
+          Batch[0].Level := 1;
+          Batch[0].Message := 'roundtrip test entry payload';
+          IngestRemote.AppendBatch(Batch);
+          // The callback fires asynchronously on the WebSocket worker thread. Poll until either it
+          // arrives or we hit the timeout.
+          WaitedMs := 0;
+          while (Recorder.ReceivedCount = 0) and (WaitedMs < TIMEOUT_MS) do
+          begin
+            SleepHiRes(POLL_MS);
+            Inc(WaitedMs, POLL_MS);
+          end;
+          Check(Recorder.ReceivedCount > 0,
+            'subscriber must receive the broadcast within timeout (full WS round-trip path)');
+          if Recorder.ReceivedCount > 0 then
+            CheckEqual(Recorder.ReceivedEntry(0).Message, 'roundtrip test entry payload',
+              'received entry payload must match the ingested one');
+        finally
+          // Explicit unsubscribe so the cleanup is deterministic instead of relying on the disconnect
+          // hook fired by the framework when the WebSocket closes.
+          StreamRemote.Unsubscribe(CallbackIntf);
+        end;
+      finally
+        StreamRemote := nil;
+        IngestRemote := nil;
+        CallbackIntf := nil;
+        Client.Free;
+      end;
+    finally
+      HttpServer.Free;
+    end;
+  finally
+    RestServer.Free;
+    ServerModel.Free;
+    // The two service implementations (StreamSvc, IngestSvc) are owned by RestServer once registered,
+    // so we do not free them explicitly here.
+  end;
+end;
+
 constructor TBlogTests.Create(
   const Ident: string
   );
@@ -3108,6 +3243,7 @@ begin
   AddCase(TTestCorrelationIds);
   AddCase(TTestLogService);
   AddCase(TTestLogStream);
+  AddCase(TTestWebSocketRoundtrip);
   AddCase(TTestFullWorkflow);
 end;
 
