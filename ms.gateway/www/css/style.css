@@ -192,6 +192,39 @@ button.btn-outline:hover { background: var(--primary); color: #fff; }
   line-height: 1;
 }
 
+/* === Analytics === */
+.analytics-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+.analytics-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+.analytics-card.unavailable { opacity: .5; }
+.analytics-value { font-size: 2rem; font-weight: 700; color: var(--primary); }
+.analytics-label { font-size: .9rem; color: var(--text-light); margin-top: .25rem; }
+.analytics-hint { font-size: .75rem; color: var(--danger); margin-top: .25rem; }
+.analytics-nav { display: flex; gap: .5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+.analytics-table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+.analytics-table th, .analytics-table td { padding: .6rem .75rem; text-align: left; border-bottom: 1px solid var(--border); }
+.analytics-table th { font-size: .85rem; color: var(--text-light); font-weight: 600; }
+.analytics-table tr:hover { background: var(--bg); }
+.tag-cloud { display: flex; flex-wrap: wrap; gap: .75rem; align-items: baseline; padding: 1rem 0; }
+.tag-cloud-item { display: inline-block; background: #e0e7ff; color: var(--primary-dark); padding: .2rem .7rem; border-radius: 1rem; cursor: pointer; transition: background .15s; }
+.tag-cloud-item:hover { background: var(--primary); color: #fff; }
+
+/* === Enriched Posts (Recent Posts Full) === */
+.enriched-post { padding-bottom: .75rem; }
+.enriched-author { margin: .5rem 0; font-size: .9rem; }
+.enriched-author-bio { color: var(--text-light); font-size: .85rem; }
+.enriched-tags { margin: .4rem 0; }
+.enriched-comments { margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--border); }
+.enriched-comments strong { font-size: .9rem; display: block; margin-bottom: .5rem; }
+.enriched-comments em { color: var(--text-light); font-size: .85rem; }
+.enriched-comments .comment { margin-bottom: .5rem; padding: .5rem .75rem; }
+
 /* === Pagination === */
 .pagination { display: flex; justify-content: center; gap: .5rem; margin-top: 2rem; }
 .pagination button { margin-top: 0; }

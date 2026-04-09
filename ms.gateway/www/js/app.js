@@ -535,6 +535,185 @@ async function saveProfile(e) {
   }
 }
 
+// === Analytics ===
+async function loadAnalytics() {
+  app.innerHTML = '<div class="loading">Loading analytics...</div>';
+  const r = await API.getOverview();
+  if (!r.ok) { app.innerHTML = '<p class="error">Analytics service unavailable.</p>'; return; }
+
+  const d = r.data;
+  let html = '<h2>Analytics</h2>';
+
+  // Overview cards
+  html += '<div class="analytics-cards">';
+  html += renderCard('Posts', d.posts, d.postsUnavailable);
+  html += renderCard('Authors', d.authors, d.authorsUnavailable);
+  html += renderCard('Tags', d.tags, d.tagsUnavailable);
+  html += renderCard('Pending Comments', d.pendingComments, d.commentsUnavailable);
+  html += '</div>';
+
+  // Sub-navigation
+  html += `
+    <div class="analytics-nav">
+      <button onclick="loadAuthorStats()">Author Stats</button>
+      <button class="btn-outline" onclick="loadTagCloudView()">Tag Cloud</button>
+      <button class="btn-outline" onclick="loadCommentActivityView()">Comment Activity</button>
+      <button class="btn-outline" onclick="loadRecentPostsFullView()">Recent Posts</button>
+    </div>`;
+
+  app.innerHTML = html;
+}
+
+function renderCard(label, value, unavailable) {
+  if (unavailable)
+    return `<div class="analytics-card unavailable"><div class="analytics-value">--</div><div class="analytics-label">${esc(label)}</div><div class="analytics-hint">Service unavailable</div></div>`;
+  return `<div class="analytics-card"><div class="analytics-value">${value ?? 0}</div><div class="analytics-label">${esc(label)}</div></div>`;
+}
+
+async function loadAuthorStats() {
+  app.innerHTML = '<div class="loading">Loading author stats...</div>';
+  const r = await API.getAuthorStats();
+  if (!r.ok) { app.innerHTML = '<p class="error">Failed to load author stats.</p>'; return; }
+
+  const authors = Array.isArray(r.data) ? r.data : [];
+  let html = '<h2>Author Stats</h2>';
+  if (authors.length === 0) {
+    html += '<p>No author data available.</p>';
+  } else {
+    html += '<table class="analytics-table"><thead><tr><th>Author</th><th>Posts</th><th>Comments</th></tr></thead><tbody>';
+    for (const a of authors) {
+      html += `<tr>
+        <td><a href="#" onclick="loadAuthor(${a.authorId}); return false;">${esc(a.displayName)}</a></td>
+        <td>${a.postCount ?? 0}</td>
+        <td>${a.commentCount ?? 0}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  html += '<p style="margin-top:1rem"><a href="#" onclick="loadAnalytics(); return false;">&laquo; Analytics</a></p>';
+  app.innerHTML = html;
+}
+
+async function loadTagCloudView() {
+  app.innerHTML = '<div class="loading">Loading tag cloud...</div>';
+  const r = await API.getTagCloud();
+  if (!r.ok) { app.innerHTML = '<p class="error">Failed to load tag cloud.</p>'; return; }
+
+  const tags = Array.isArray(r.data) ? r.data : [];
+  let html = '<h2>Tag Cloud</h2>';
+  if (tags.length === 0) {
+    html += '<p>No tags available.</p>';
+  } else {
+    const maxCount = Math.max(...tags.map(t => t.postCount || 0), 1);
+    html += '<div class="tag-cloud">';
+    for (const t of tags) {
+      const size = 0.8 + (t.postCount || 0) / maxCount * 1.2;
+      html += `<span class="tag-cloud-item" style="font-size:${size.toFixed(2)}rem" onclick="loadPostsByTag(${t.tagId})">${esc(t.name)} <sup>${t.postCount || 0}</sup></span> `;
+    }
+    html += '</div>';
+  }
+  html += '<p style="margin-top:1rem"><a href="#" onclick="loadAnalytics(); return false;">&laquo; Analytics</a></p>';
+  app.innerHTML = html;
+}
+
+async function loadCommentActivityView() {
+  app.innerHTML = '<div class="loading">Loading comment activity...</div>';
+  const r = await API.getCommentActivity();
+  if (!r.ok) { app.innerHTML = '<p class="error">Failed to load comment activity.</p>'; return; }
+
+  const d = r.data;
+  let html = '<h2>Comment Activity</h2>';
+  html += `<div class="analytics-cards">`;
+  html += renderCard('Pending', d.pendingCount, false);
+  html += `</div>`;
+
+  const top = d.topCommentedPosts || [];
+  if (top.length > 0) {
+    html += '<h3>Top Commented Posts</h3>';
+    html += '<table class="analytics-table"><thead><tr><th>Post</th><th>Comments</th></tr></thead><tbody>';
+    for (const p of top) {
+      html += `<tr>
+        <td><a href="#" onclick="loadPost(${p.postId}); return false;">${esc(p.title)}</a></td>
+        <td>${p.commentCount ?? 0}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  html += '<p style="margin-top:1rem"><a href="#" onclick="loadAnalytics(); return false;">&laquo; Analytics</a></p>';
+  app.innerHTML = html;
+}
+
+async function loadRecentPostsFullView() {
+  app.innerHTML = '<div class="loading">Loading recent posts...</div>';
+  const r = await API.getRecentPostsFull(10);
+  if (!r.ok) { app.innerHTML = '<p class="error">Failed to load recent posts.</p>'; return; }
+
+  const posts = Array.isArray(r.data) ? r.data : [];
+  let html = '<h2>Recent Posts (Enriched)</h2>';
+  if (posts.length === 0) {
+    html += '<p>No posts available.</p>';
+  } else {
+    for (const p of posts) {
+      const postId = p.RowID || p.ID;
+      const date = p.PublishedAt ? new Date(p.PublishedAt).toLocaleDateString('en') : '';
+      const tags = p.Tags || [];
+      const comments = p.Comments || [];
+
+      // Author block
+      let authorHtml = '';
+      if (p.Author && p.Author.DisplayName) {
+        const a = p.Author;
+        authorHtml = `<div class="enriched-author"><a href="#" onclick="loadAuthor(${a.RowID || a.ID}); return false;">${esc(a.DisplayName)}</a>`;
+        if (a.Bio) authorHtml += ` <span class="enriched-author-bio">&mdash; ${esc(a.Bio)}</span>`;
+        authorHtml += '</div>';
+      } else {
+        authorHtml = '<div class="enriched-author">(Author unknown)</div>';
+      }
+
+      // Tags block
+      let tagsHtml = '';
+      if (p.TagsUnavailable) {
+        tagsHtml = '<p class="error" style="margin:.3rem 0">Tags unavailable</p>';
+      } else if (tags.length > 0) {
+        tagsHtml = '<div class="enriched-tags">' + tags.map(t =>
+          `<span class="tag" onclick="loadPostsByTag(${t.RowID || t.ID})">${esc(t.Name)}</span>`
+        ).join('') + '</div>';
+      }
+
+      // Comments block
+      let commentsHtml = '';
+      if (p.CommentsUnavailable) {
+        commentsHtml = '<p class="error" style="margin:.3rem 0">Comments unavailable</p>';
+      } else if (comments.length > 0) {
+        commentsHtml = `<div class="enriched-comments"><strong>${comments.length} Comment(s):</strong>`;
+        for (const c of comments) {
+          const cDate = c.CreatedAt ? new Date(c.CreatedAt).toLocaleDateString('en') : '';
+          commentsHtml += `
+            <div class="comment">
+              <span class="comment-author">${esc(c.AuthorName)}</span>
+              <span class="comment-date">${cDate}</span>
+              <div class="comment-body">${esc(c.Body)}</div>
+            </div>`;
+        }
+        commentsHtml += '</div>';
+      } else {
+        commentsHtml = '<div class="enriched-comments"><em>No comments yet.</em></div>';
+      }
+
+      html += `
+        <div class="post-card enriched-post">
+          <h2><a href="#" onclick="loadPost(${postId}); return false;">${esc(p.Title)}</a></h2>
+          <div class="post-meta">${date}</div>
+          ${authorHtml}
+          ${tagsHtml}
+          ${commentsHtml}
+        </div>`;
+    }
+  }
+  html += '<p style="margin-top:1rem"><a href="#" onclick="loadAnalytics(); return false;">&laquo; Analytics</a></p>';
+  app.innerHTML = html;
+}
+
 // === Utility Functions ===
 function esc(str) {
   if (!str) return '';

@@ -307,5 +307,37 @@ const API = {
   // --- Media ---
   async uploadMedia(fileName, base64Data, altText) {
     return soaCall('Media', 'Upload', [fileName, base64Data, altText, this.userId]);
+  },
+
+  // --- Analytics ---
+  async getOverview() {
+    const r = await soaCall('Analytics', 'GetOverview', []);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async getAuthorStats() {
+    const r = await soaCall('Analytics', 'GetAuthorStats', []);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async getTagCloud() {
+    const r = await soaCall('Analytics', 'GetTagCloud', []);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async getCommentActivity() {
+    const r = await soaCall('Analytics', 'GetCommentActivity', []);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
+  async getRecentPostsFull(limit = 5) {
+    const r = await soaCall('Analytics', 'GetRecentPostsFull', [limit]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
   }
 };
