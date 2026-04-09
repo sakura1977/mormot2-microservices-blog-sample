@@ -1,0 +1,1746 @@
+openapi: 3.0.3
+info:
+  title: Blog Microservices API
+  description: |
+    REST API for the Blog Microservices platform built with Delphi 13 and mORMot2.
+
+    **mORMot2 SOA convention:** All endpoints use `POST` with a JSON array of positional
+    parameters as the request body. Function return values are wrapped in `{"Result": <value>}`.
+    Procedures with `out` parameters return them as named JSON keys.
+
+    All services are accessible through the API gateway on port 8080.
+  version: 1.0.0
+  contact:
+    name: Blog Microservices Demo
+  license:
+    name: GPL-3.0
+servers:
+  - url: http://localhost:8080
+    description: API Gateway
+
+tags:
+  - name: Auth
+    description: SCRAM-MCF authentication and JWT token management
+  - name: User
+    description: Author profile CRUD
+  - name: Post
+    description: Blog post CRUD with pagination and filtering
+  - name: Tag
+    description: Tag management and post-tag associations
+  - name: Comment
+    description: Comments with moderation workflow
+  - name: Media
+    description: File upload and storage
+  - name: Blog
+    description: Gateway aggregation (cross-service enrichment)
+  - name: Analytics
+    description: Cross-service data aggregation and statistics
+  - name: Config
+    description: Central configuration registry (internal)
+
+paths:
+  # =====================================================================
+  #  Auth
+  # =====================================================================
+  /api/Auth/Challenge:
+    post:
+      tags: [Auth]
+      summary: "SCRAM-MCF Phase 1: request challenge"
+      description: Returns MCF format info (algorithm, rounds, salt) and a one-time server nonce. For unknown emails, returns fake MCF info to prevent user enumeration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+              example: ["max@example.com"]
+            examples:
+              default:
+                value: ["max@example.com"]
+      responses:
+        '200':
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  aMcfInfo:
+                    type: string
+                    example: "$pbkdf2-sha256$310000$salt$"
+                  aServerNonce:
+                    type: string
+                    example: "base64uri-encoded-nonce"
+
+  /api/Auth/Authenticate:
+    post:
+      tags: [Auth]
+      summary: "SCRAM-MCF Phase 2: verify proof, receive JWT"
+      description: Verifies the client's cryptographic proof and returns a JWT token on success, plus a server proof for mutual authentication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 3
+              maxItems: 3
+            examples:
+              default:
+                value: ["max@example.com", "server-nonce", "client-proof-base64uri"]
+      responses:
+        '200':
+          description: Authentication result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+                  aToken:
+                    type: string
+                    description: JWT token (empty on failure)
+                  aUserId:
+                    type: integer
+                    format: int64
+                  aServerProof:
+                    type: string
+                    description: Server proof for mutual authentication (base64uri)
+
+  /api/Auth/Register:
+    post:
+      tags: [Auth]
+      summary: Create authentication account
+      description: Stores email with PBKDF2-derived credentials. Password is hashed server-side.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 3
+              maxItems: 3
+            examples:
+              default:
+                value: ["max@example.com", "demo1234", 1]
+      responses:
+        '200':
+          description: Registration result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: integer
+                    format: int64
+                    description: UserId on success, 0 on failure
+
+  /api/Auth/Validate:
+    post:
+      tags: [Auth]
+      summary: Validate JWT token
+      description: Validates a JWT token and extracts the user ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: ["eyJhbGciOiJIUzI1NiIs..."]
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+                  aUserId:
+                    type: integer
+                    format: int64
+
+  /api/Auth/ChangePassword:
+    post:
+      tags: [Auth]
+      summary: Change user password
+      description: Changes a user's password after verifying the old one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 3
+              maxItems: 3
+            examples:
+              default:
+                value: [1, "old-password", "new-password"]
+      responses:
+        '200':
+          description: Password change result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  # =====================================================================
+  #  User
+  # =====================================================================
+  /api/User/Get:
+    post:
+      tags: [User]
+      summary: Get author profile by ID
+      description: Returns a single author profile. ID=0 in the result indicates not found.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Author profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/AuthorDto'
+
+  /api/User/GetAll:
+    post:
+      tags: [User]
+      summary: Get all author profiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: Array of all authors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuthorDto'
+
+  /api/User/Add:
+    post:
+      tags: [User]
+      summary: Create new author profile
+      description: Requires DisplayName. Slug is auto-generated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/AuthorCreateDto'
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [{"DisplayName": "Max Mustermann", "Bio": "Delphi developer", "WebsiteUrl": "https://example.com"}]
+      responses:
+        '200':
+          description: New record ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: integer
+                    format: int64
+                    description: New ID, or 0 if validation failed
+
+  /api/User/Update:
+    post:
+      tags: [User]
+      summary: Partially update author profile (PATCH)
+      description: Only fields present in the JSON object are modified.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 2
+              maxItems: 2
+            examples:
+              default:
+                value: [1, {"Bio": "Updated biography"}]
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  /api/User/Remove:
+    post:
+      tags: [User]
+      summary: Delete author profile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  # =====================================================================
+  #  Post
+  # =====================================================================
+  /api/Post/Get:
+    post:
+      tags: [Post]
+      summary: Get post by ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Post data (ID=0 if not found)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/PostDto'
+
+  /api/Post/GetBySlug:
+    post:
+      tags: [Post]
+      summary: Get post by URL slug
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: ["my-first-post"]
+      responses:
+        '200':
+          description: Post data (ID=0 if not found)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/PostDto'
+
+  /api/Post/GetList:
+    post:
+      tags: [Post]
+      summary: Get paginated post list
+      description: "Parameters: page (1-based), limit (1..100), status (0=all, 1=published, 2=archived), authorId (0=all)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 4
+              maxItems: 4
+            examples:
+              default:
+                value: [1, 10, 1, 0]
+                summary: "Page 1, 10 per page, published only, all authors"
+      responses:
+        '200':
+          description: Paginated post list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/PostListDto'
+
+  /api/Post/Add:
+    post:
+      tags: [Post]
+      summary: Create new blog post
+      description: Title is required. Slug auto-generated from title.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/PostCreateDto'
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [{"Title": "My First Post", "Body": "Hello world!", "AuthorId": 1, "Status": 1}]
+      responses:
+        '200':
+          description: New record ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: integer
+                    format: int64
+
+  /api/Post/Update:
+    post:
+      tags: [Post]
+      summary: Partially update post (PATCH)
+      description: Only fields present in the JSON are modified. Title change regenerates slug.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 2
+              maxItems: 2
+            examples:
+              default:
+                value: [1, {"Title": "Updated Title", "Status": 1}]
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  /api/Post/Remove:
+    post:
+      tags: [Post]
+      summary: Delete blog post
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  # =====================================================================
+  #  Tag
+  # =====================================================================
+  /api/Tag/Get:
+    post:
+      tags: [Tag]
+      summary: Get tag by ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Tag data (ID=0 if not found)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/TagDto'
+
+  /api/Tag/GetAll:
+    post:
+      tags: [Tag]
+      summary: Get all tags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: Array of all tags
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TagDto'
+
+  /api/Tag/GetByPost:
+    post:
+      tags: [Tag]
+      summary: Get tags assigned to a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Tags for this post
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TagDto'
+
+  /api/Tag/GetPostIds:
+    post:
+      tags: [Tag]
+      summary: Get post IDs that have a specific tag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Array of post IDs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      type: integer
+                      format: int64
+
+  /api/Tag/SetPostTags:
+    post:
+      tags: [Tag]
+      summary: Replace all tag assignments for a post
+      description: Deletes existing tag associations and creates new ones from the provided tag IDs.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 2
+              maxItems: 2
+            examples:
+              default:
+                value: [1, [1, 3, 5]]
+                summary: "Assign tags 1, 3, 5 to post 1"
+      responses:
+        '200':
+          description: Assignment result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  /api/Tag/Add:
+    post:
+      tags: [Tag]
+      summary: Create new tag
+      description: Name must be unique. Slug auto-generated.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/TagCreateDto'
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [{"Name": "Delphi", "Description": "Everything about Delphi"}]
+      responses:
+        '200':
+          description: New record ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: integer
+                    format: int64
+
+  /api/Tag/Update:
+    post:
+      tags: [Tag]
+      summary: Partially update tag (PATCH)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 2
+              maxItems: 2
+            examples:
+              default:
+                value: [1, {"Description": "Updated description"}]
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  /api/Tag/Remove:
+    post:
+      tags: [Tag]
+      summary: Delete tag and its post associations
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  # =====================================================================
+  #  Comment
+  # =====================================================================
+  /api/Comment/GetByPost:
+    post:
+      tags: [Comment]
+      summary: Get approved comments for a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Approved comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CommentDto'
+
+  /api/Comment/GetPending:
+    post:
+      tags: [Comment]
+      summary: Get all pending comments
+      description: Returns comments awaiting moderation. Requires authentication.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: Pending comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CommentDto'
+
+  /api/Comment/Add:
+    post:
+      tags: [Comment]
+      summary: Add comment to a post
+      description: Comment starts as pending. Body is required. No authentication needed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                oneOf:
+                  - type: integer
+                    format: int64
+                  - $ref: '#/components/schemas/CommentCreateDto'
+              minItems: 2
+              maxItems: 2
+              description: "[postId: integer, commentData: CommentCreateDto]"
+            examples:
+              default:
+                value: [1, {"AuthorName": "Visitor", "AuthorEmail": "v@test.com", "Body": "Great post!"}]
+      responses:
+        '200':
+          description: New comment ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: integer
+                    format: int64
+
+  /api/Comment/Approve:
+    post:
+      tags: [Comment]
+      summary: Approve a pending comment
+      description: "Parameters: commentId, moderatorUserId"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 2
+              maxItems: 2
+            examples:
+              default:
+                value: [1, 1]
+      responses:
+        '200':
+          description: Approval result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  /api/Comment/Reject:
+    post:
+      tags: [Comment]
+      summary: Reject a pending comment
+      description: "Parameters: commentId, moderatorUserId"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 2
+              maxItems: 2
+            examples:
+              default:
+                value: [1, 1]
+      responses:
+        '200':
+          description: Rejection result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  /api/Comment/Remove:
+    post:
+      tags: [Comment]
+      summary: Delete comment permanently
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  # =====================================================================
+  #  Media
+  # =====================================================================
+  /api/Media/Upload:
+    post:
+      tags: [Media]
+      summary: Upload media file
+      description: "File data is Base64-encoded. Maximum 3 MB after decoding. Parameters: fileName, base64Data, altText, uploadedByUserId"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 4
+              maxItems: 4
+            examples:
+              default:
+                value: ["photo.png", "iVBORw0KGgo...", "A photo", 1]
+      responses:
+        '200':
+          description: New media record ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: integer
+                    format: int64
+
+  /api/Media/GetInfo:
+    post:
+      tags: [Media]
+      summary: Get media file metadata
+      description: Returns metadata without file content. StoragePath is excluded (internal detail).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Media metadata (ID=0 if not found)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/MediaInfoDto'
+
+  /api/Media/GetFile:
+    post:
+      tags: [Media]
+      summary: Get raw file content
+      description: Returns the file bytes and MIME type.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: File content and MIME type
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: string
+                    description: Raw file bytes (Base64-encoded in JSON transport)
+                  aContentType:
+                    type: string
+                    description: "MIME type (e.g. 'image/png')"
+
+  /api/Media/Remove:
+    post:
+      tags: [Media]
+      summary: Delete media file
+      description: Removes from database and file system.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Delete result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: boolean
+
+  # =====================================================================
+  #  Blog (Gateway Aggregation)
+  # =====================================================================
+  /api/Blog/GetPostFull:
+    post:
+      tags: [Blog]
+      summary: Get fully enriched post
+      description: Aggregates post data with author profile, tags, and approved comments from 4 backend services. Graceful degradation if sub-services are unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Enriched post (ID=0 if not found)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/PostFullDto'
+
+  /api/Blog/GetPostsByTag:
+    post:
+      tags: [Blog]
+      summary: Get published posts by tag
+      description: Returns tag info and all published posts with that tag, each enriched with author data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [1]
+      responses:
+        '200':
+          description: Tag and its posts (Tag.ID=0 if not found)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/PostsByTagDto'
+
+  # =====================================================================
+  #  Analytics
+  # =====================================================================
+  /api/Analytics/GetOverview:
+    post:
+      tags: [Analytics]
+      summary: Get aggregate counts
+      description: Returns total posts, authors, tags, and pending comments. Unavailable flags indicate unreachable services.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: Overview counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/OverviewDto'
+
+  /api/Analytics/GetAuthorStats:
+    post:
+      tags: [Analytics]
+      summary: Get per-author statistics
+      description: Post count and total comment count per author.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: Author statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuthorStatDto'
+
+  /api/Analytics/GetTagCloud:
+    post:
+      tags: [Analytics]
+      summary: Get tag cloud data
+      description: Tags ranked by post count (descending).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: Tag cloud items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TagCloudItemDto'
+
+  /api/Analytics/GetCommentActivity:
+    post:
+      tags: [Analytics]
+      summary: Get comment activity
+      description: Pending comment count and top 10 most-commented posts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: Comment activity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/CommentActivityDto'
+
+  /api/Analytics/GetRecentPostsFull:
+    post:
+      tags: [Analytics]
+      summary: Get recent enriched posts
+      description: Most recent published posts, each enriched with author, tags, and up to 10 comments. Pass 0 for empty result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [5]
+      responses:
+        '200':
+          description: Enriched recent posts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PostFullDto'
+
+  # =====================================================================
+  #  Config (Internal)
+  # =====================================================================
+  /api/Config/GetServiceConfig:
+    post:
+      tags: [Config]
+      summary: Get configuration for one service
+      description: Returns service-specific config. Internal use only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: ["ms.auth"]
+      responses:
+        '200':
+          description: Service configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: object
+                    description: Schema-less JSON configuration object
+
+  /api/Config/GetAllConfigs:
+    post:
+      tags: [Config]
+      summary: Get all service configurations
+      description: Returns complete configuration for all services. Internal use only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: All configurations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: object
+                    description: JSON object keyed by service name
+
+  /api/Config/GetServiceRegistry:
+    post:
+      tags: [Config]
+      summary: Get service registry
+      description: Returns Host and Port for all services. No secrets included.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: Service registry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: object
+                    description: "JSON object: {serviceName: {Host, Port}}"
+
+# =======================================================================
+#  Schemas
+# =======================================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained via Auth/Authenticate
+
+  schemas:
+    # --- Base Entity DTOs ---
+
+    AuthorDto:
+      type: object
+      description: Author/user profile. ID=0 indicates not found.
+      properties:
+        ID:
+          type: integer
+          format: int64
+          description: Unique author identifier
+        DisplayName:
+          type: string
+          description: Display name shown on posts and profiles
+        Slug:
+          type: string
+          description: URL-friendly identifier
+        Bio:
+          type: string
+          description: Biographical text
+        WebsiteUrl:
+          type: string
+          description: Personal or professional website URL
+        AvatarMediaId:
+          type: integer
+          format: int64
+          description: Foreign key to avatar media file
+        CreatedAt:
+          type: string
+          format: date-time
+        UpdatedAt:
+          type: string
+          format: date-time
+
+    PostDto:
+      type: object
+      description: Blog post. ID=0 indicates not found.
+      properties:
+        ID:
+          type: integer
+          format: int64
+        Title:
+          type: string
+        Slug:
+          type: string
+          description: URL-friendly identifier
+        Body:
+          type: string
+          description: Full post content
+        Excerpt:
+          type: string
+          description: Short teaser text
+        AuthorId:
+          type: integer
+          format: int64
+        FeaturedImageId:
+          type: integer
+          format: int64
+        MetaTitle:
+          type: string
+        MetaDescription:
+          type: string
+        MetaKeywords:
+          type: string
+          description: Comma-separated SEO keywords
+        Status:
+          type: integer
+          description: "0=draft, 1=published, 2=archived"
+          enum: [0, 1, 2]
+        PublishedAt:
+          type: string
+          format: date-time
+        CreatedAt:
+          type: string
+          format: date-time
+        UpdatedAt:
+          type: string
+          format: date-time
+
+    PostListDto:
+      type: object
+      description: Paginated post list
+      properties:
+        Items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PostDto'
+        Total:
+          type: integer
+          description: Total matching posts across all pages
+        Page:
+          type: integer
+          description: Current page number (1-based)
+
+    TagDto:
+      type: object
+      description: Blog tag. ID=0 indicates not found.
+      properties:
+        ID:
+          type: integer
+          format: int64
+        Name:
+          type: string
+          description: Unique tag name
+        Slug:
+          type: string
+        Description:
+          type: string
+        CreatedAt:
+          type: string
+          format: date-time
+
+    CommentDto:
+      type: object
+      description: Blog comment. ID=0 indicates not found.
+      properties:
+        ID:
+          type: integer
+          format: int64
+        PostId:
+          type: integer
+          format: int64
+        AuthorName:
+          type: string
+          description: Visitor-supplied display name
+        AuthorEmail:
+          type: string
+          description: Visitor-supplied email (optional)
+        Body:
+          type: string
+        Status:
+          type: integer
+          description: "0=pending, 1=approved, 2=rejected"
+          enum: [0, 1, 2]
+        ModeratedBy:
+          type: integer
+          format: int64
+          description: Author ID who moderated
+        ModeratedAt:
+          type: string
+          format: date-time
+        CreatedAt:
+          type: string
+          format: date-time
+
+    MediaInfoDto:
+      type: object
+      description: Media file metadata (excludes StoragePath). ID=0 indicates not found.
+      properties:
+        ID:
+          type: integer
+          format: int64
+        FileName:
+          type: string
+          description: Original file name
+        MimeType:
+          type: string
+          description: "Detected MIME type (e.g. 'image/png')"
+        FileSize:
+          type: integer
+          format: int64
+          description: File size in bytes
+        AltText:
+          type: string
+          description: Accessibility alternative text
+        UploadedBy:
+          type: integer
+          format: int64
+        CreatedAt:
+          type: string
+          format: date-time
+
+    # --- Input DTOs ---
+
+    AuthorCreateDto:
+      type: object
+      required: [DisplayName]
+      properties:
+        DisplayName:
+          type: string
+          description: Required, must not be empty
+        Bio:
+          type: string
+        WebsiteUrl:
+          type: string
+
+    PostCreateDto:
+      type: object
+      required: [Title]
+      properties:
+        Title:
+          type: string
+          description: Required, must not be empty
+        Body:
+          type: string
+        Excerpt:
+          type: string
+        AuthorId:
+          type: integer
+          format: int64
+        FeaturedImageId:
+          type: integer
+          format: int64
+        MetaTitle:
+          type: string
+        MetaDescription:
+          type: string
+        MetaKeywords:
+          type: string
+        Status:
+          type: integer
+          description: "0=draft, 1=published"
+          enum: [0, 1]
+
+    TagCreateDto:
+      type: object
+      required: [Name]
+      properties:
+        Name:
+          type: string
+          description: Required, must be unique
+        Description:
+          type: string
+
+    CommentCreateDto:
+      type: object
+      required: [Body]
+      properties:
+        AuthorName:
+          type: string
+        AuthorEmail:
+          type: string
+        Body:
+          type: string
+          description: Required, must not be empty
+
+    # --- Composite DTOs ---
+
+    PostFullDto:
+      type: object
+      description: Fully enriched post with author, tags, and comments
+      allOf:
+        - $ref: '#/components/schemas/PostDto'
+        - type: object
+          properties:
+            Author:
+              $ref: '#/components/schemas/AuthorDto'
+            Tags:
+              type: array
+              items:
+                $ref: '#/components/schemas/TagDto'
+            Comments:
+              type: array
+              items:
+                $ref: '#/components/schemas/CommentDto'
+            AuthorUnavailable:
+              type: boolean
+              description: True if users service was unreachable
+            TagsUnavailable:
+              type: boolean
+              description: True if tags service was unreachable
+            CommentsUnavailable:
+              type: boolean
+              description: True if comments service was unreachable
+
+    PostWithAuthorDto:
+      type: object
+      description: Post enriched with author only (no tags or comments)
+      allOf:
+        - $ref: '#/components/schemas/PostDto'
+        - type: object
+          properties:
+            Author:
+              $ref: '#/components/schemas/AuthorDto'
+            AuthorUnavailable:
+              type: boolean
+
+    PostsByTagDto:
+      type: object
+      description: Tag with its associated published posts
+      properties:
+        Tag:
+          $ref: '#/components/schemas/TagDto'
+        Posts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PostWithAuthorDto'
+
+    # --- Analytics DTOs ---
+
+    OverviewDto:
+      type: object
+      description: Aggregate counts from all services
+      properties:
+        Posts:
+          type: integer
+          description: Total posts (-1 if unavailable)
+        Authors:
+          type: integer
+          description: Total authors (-1 if unavailable)
+        Tags:
+          type: integer
+          description: Total tags (-1 if unavailable)
+        PendingComments:
+          type: integer
+          description: Pending comments (-1 if unavailable)
+        PostsUnavailable:
+          type: boolean
+        AuthorsUnavailable:
+          type: boolean
+        TagsUnavailable:
+          type: boolean
+        CommentsUnavailable:
+          type: boolean
+
+    AuthorStatDto:
+      type: object
+      description: Per-author statistics
+      properties:
+        AuthorId:
+          type: integer
+          format: int64
+        DisplayName:
+          type: string
+        PostCount:
+          type: integer
+        CommentCount:
+          type: integer
+          description: Total approved comments on author's posts
+
+    TagCloudItemDto:
+      type: object
+      description: Tag with usage count
+      properties:
+        TagId:
+          type: integer
+          format: int64
+        Name:
+          type: string
+        Slug:
+          type: string
+        PostCount:
+          type: integer
+
+    TopCommentedPostDto:
+      type: object
+      properties:
+        PostId:
+          type: integer
+          format: int64
+        Title:
+          type: string
+        CommentCount:
+          type: integer
+
+    CommentActivityDto:
+      type: object
+      description: Comment activity overview
+      properties:
+        PendingCount:
+          type: integer
+        TopCommentedPosts:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopCommentedPostDto'
+          description: Top 10 posts by comment count (descending)
