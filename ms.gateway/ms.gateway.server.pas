@@ -11,8 +11,8 @@
 ///      proxy classes needed. The gateway acts as a pure pass-through for 6 interfaces.
 ///
 ///   2. <em>Response aggregation</em> (<c>TBlogService</c>): The <c>IBlog.GetPostFull</c> method queries 4 backend
-///      services (posts, users, tags, comments) and merges their responses into one enriched JSON document using
-///      <c>TDocVariantData</c>.
+///      services (posts, users, tags, comments) and merges their responses into one enriched <c>TPostFullDto</c>
+///      record.
 ///
 ///   3. <em>HTTP request interception</em>: The gateway intercepts the <c>THttpAsyncServer.OnRequest</c> handler to
 ///      split traffic between API calls (/api/...) and static file serving (SPA frontend from www/ directory).
@@ -112,17 +112,17 @@ type
       );
 
     /// <summary>
-    ///   Returns a fully enriched post with author, tags, and comments merged into one JSON document.
+    ///   Returns a fully enriched post with author, tags, and comments as a typed record.
     /// </summary>
     /// <param name="aId">
     ///   The post identifier.
     /// </param>
     /// <returns>
-    ///   A JSON object with the post data plus Author, Tags, and Comments fields.
+    ///   A <c>TPostFullDto</c> record. <c>ID = 0</c> if the post was not found.
     /// </returns>
     function GetPostFull(
       aId: TID
-      ): RawJson;
+      ): TPostFullDto;
 
     /// <summary>
     ///   Returns all published posts for a given tag, each enriched with author information.
@@ -131,11 +131,11 @@ type
     ///   The tag identifier.
     /// </param>
     /// <returns>
-    ///   A JSON object with the tag data and an array of enriched posts.
+    ///   A <c>TPostsByTagDto</c> record. <c>Tag.ID = 0</c> if the tag was not found.
     /// </returns>
     function GetPostsByTag(
       aTagId: TID
-      ): RawJson;
+      ): TPostsByTagDto;
   end;
 
   /// <summary>
@@ -356,117 +356,127 @@ begin
   FComments := aComments;
 end;
 
+function PostDtoToFull(
+  const aPost: TPostDto
+  ): TPostFullDto;
+begin
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Result.ID := aPost.ID;
+  Result.Title := aPost.Title;
+  Result.Slug := aPost.Slug;
+  Result.Body := aPost.Body;
+  Result.Excerpt := aPost.Excerpt;
+  Result.AuthorId := aPost.AuthorId;
+  Result.FeaturedImageId := aPost.FeaturedImageId;
+  Result.MetaTitle := aPost.MetaTitle;
+  Result.MetaDescription := aPost.MetaDescription;
+  Result.MetaKeywords := aPost.MetaKeywords;
+  Result.Status := aPost.Status;
+  Result.PublishedAt := aPost.PublishedAt;
+  Result.CreatedAt := aPost.CreatedAt;
+  Result.UpdatedAt := aPost.UpdatedAt;
+end;
+
+function PostDtoToWithAuthor(
+  const aPost: TPostDto
+  ): TPostWithAuthorDto;
+begin
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Result.ID := aPost.ID;
+  Result.Title := aPost.Title;
+  Result.Slug := aPost.Slug;
+  Result.Body := aPost.Body;
+  Result.Excerpt := aPost.Excerpt;
+  Result.AuthorId := aPost.AuthorId;
+  Result.FeaturedImageId := aPost.FeaturedImageId;
+  Result.MetaTitle := aPost.MetaTitle;
+  Result.MetaDescription := aPost.MetaDescription;
+  Result.MetaKeywords := aPost.MetaKeywords;
+  Result.Status := aPost.Status;
+  Result.PublishedAt := aPost.PublishedAt;
+  Result.CreatedAt := aPost.CreatedAt;
+  Result.UpdatedAt := aPost.UpdatedAt;
+end;
+
 function TBlogService.GetPostFull(
   aId: TID
-  ): RawJson;
+  ): TPostFullDto;
 var
-  PostJson, AuthorJson, TagsJson, CommentsJson: RawJson;
-  PostDoc: TDocVariantData;
-  AuthorId, PostId: TID;
+  Post: TPostDto;
+  Author: TAuthorDto;
 begin
-  PostJson := FPosts.Get(aId);
-  if PostJson = '{}' then
-    Exit('{}');
-  PostDoc.InitJson(PostJson, JSON_FAST_FLOAT);
-  AuthorId := PostDoc.I['AuthorId'];
-  PostId := PostDoc.I['RowID'];
-  if PostId = 0 then
-    PostId := PostDoc.I['ID'];
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Post := FPosts.Get(aId);
+  if Post.ID = 0 then
+    Exit;
+  Result := PostDtoToFull(Post);
   // Enrich with author (graceful degradation)
   try
-    AuthorJson := FUsers.Get(AuthorId);
-    if AuthorJson <> '{}' then
-      PostDoc.AddValue('Author', _JsonFast(AuthorJson))
-    else
-      PostDoc.AddValue('Author', null);
+    Author := FUsers.Get(Post.AuthorId);
+    Result.Author := Author;
   except
-    PostDoc.AddValue('Author', null);
-    PostDoc.B['AuthorUnavailable'] := True;
+    Result.AuthorUnavailable := True;
   end;
   // Enrich with tags (graceful degradation)
-  if PostId > 0 then
-  begin
-    try
-      TagsJson := FTags.GetByPost(PostId);
-      if TagsJson <> '[]' then
-        PostDoc.AddValue('Tags', _JsonFast(TagsJson))
-      else
-        PostDoc.AddValue('Tags', _ArrFast([]));
-    except
-      PostDoc.AddValue('Tags', _ArrFast([]));
-      PostDoc.B['TagsUnavailable'] := True;
-    end;
-    // Enrich with comments (graceful degradation)
-    try
-      CommentsJson := FComments.GetByPost(PostId);
-      if CommentsJson <> '[]' then
-        PostDoc.AddValue('Comments', _JsonFast(CommentsJson))
-      else
-        PostDoc.AddValue('Comments', _ArrFast([]));
-    except
-      PostDoc.AddValue('Comments', _ArrFast([]));
-      PostDoc.B['CommentsUnavailable'] := True;
-    end;
+  try
+    Result.Tags := FTags.GetByPost(Post.ID);
+  except
+    Result.TagsUnavailable := True;
   end;
-  Result := RawJson(PostDoc.ToJson);
+  // Enrich with comments (graceful degradation)
+  try
+    Result.Comments := FComments.GetByPost(Post.ID);
+  except
+    Result.CommentsUnavailable := True;
+  end;
 end;
 
 function TBlogService.GetPostsByTag(
   aTagId: TID
-  ): RawJson;
+  ): TPostsByTagDto;
 var
-  TagJson, PostIdsJson, PostJson, AuthorJson: RawJson;
-  ResultDoc, PostDoc: TDocVariantData;
-  PostIds, Posts: TDocVariantData;
+  Tag: TTagDto;
+  PostIds: TIDDynArray;
+  Post: TPostDto;
+  Author: TAuthorDto;
+  PostWithAuthor: TPostWithAuthorDto;
   PostIdx: PtrInt;
-  PostId, AuthorId: TID;
 begin
-  TagJson := FTags.Get(aTagId);
-  if TagJson = '{}' then
-    Exit('{}');
-  PostIdsJson := FTags.GetPostIds(aTagId);
-  if PostIdsJson = '[]' then
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Tag := FTags.Get(aTagId);
+  if Tag.ID = 0 then
+    Exit;
+  Result.Tag := Tag;
+  PostIds := FTags.GetPostIds(aTagId);
+  if Length(PostIds) = 0 then
+    Exit;
+  for PostIdx := 0 to High(PostIds) do
   begin
-    ResultDoc.InitObject([
-      'Tag', _JsonFast(TagJson),
-      'Posts', _ArrFast([])
-    ], JSON_FAST);
-    Exit(RawJson(ResultDoc.ToJson));
-  end;
-  PostIds.InitJson(PostIdsJson, JSON_FAST_FLOAT);
-  Posts.InitArray([], JSON_FAST);
-  for PostIdx := 0 to PostIds.Count - 1 do
-  begin
-    PostId := PostIds.Values[PostIdx];
     // Post service unavailable -> skip this post
     try
-      PostJson := FPosts.Get(PostId);
+      Post := FPosts.Get(PostIds[PostIdx]);
     except
       continue;
     end;
-    if PostJson = '{}' then
+    if Post.ID = 0 then
       continue;
-    PostDoc.InitJson(PostJson, JSON_FAST_FLOAT);
-    if PostDoc.I['Status'] <> POST_STATUS_PUBLISHED then
+    if Post.Status <> POST_STATUS_PUBLISHED then
       continue;
+    PostWithAuthor := PostDtoToWithAuthor(Post);
     // Author service unavailable -> post without author
-    AuthorId := PostDoc.I['AuthorId'];
     try
-      AuthorJson := FUsers.Get(AuthorId);
-      if AuthorJson <> '{}' then
-        PostDoc.AddValue('Author', _JsonFast(AuthorJson))
-      else
-        PostDoc.AddValue('Author', null);
+      Author := FUsers.Get(Post.AuthorId);
+      PostWithAuthor.Author := Author;
     except
-      PostDoc.AddValue('Author', null);
+      PostWithAuthor.AuthorUnavailable := True;
     end;
-    Posts.AddItem(_JsonFast(RawUtf8(PostDoc.ToJson)));
+    SetLength(Result.Posts, Length(Result.Posts) + 1);
+    Result.Posts[High(Result.Posts)] := PostWithAuthor;
   end;
-  ResultDoc.InitObject([
-    'Tag', _JsonFast(TagJson),
-    'Posts', variant(Posts)
-  ], JSON_FAST);
-  Result := RawJson(ResultDoc.ToJson);
 end;
 
 function TGatewayServer.ConnectToBackend(

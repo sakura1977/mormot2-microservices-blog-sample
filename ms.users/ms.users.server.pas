@@ -78,31 +78,31 @@ type
     ///   The author's record ID.
     /// </param>
     /// <returns>
-    ///   JSON object with author data, or '{}' if not found.
+    ///   Author profile data. <c>ID = 0</c> if not found.
     /// </returns>
     function Get(
       aId: TID
-      ): RawJson;
+      ): TAuthorDto;
 
     /// <summary>
     ///   Retrieves all author profiles.
     /// </summary>
     /// <returns>
-    ///   JSON array of author objects.
+    ///   Array of all author profiles.
     /// </returns>
-    function GetAll: RawJson;
+    function GetAll: TAuthorDtoArray;
 
     /// <summary>
-    ///   Creates a new author profile from JSON data. Requires <c>DisplayName</c>. Auto-generates the URL slug.
+    ///   Creates a new author profile. Requires <c>DisplayName</c>. Auto-generates the URL slug.
     /// </summary>
     /// <param name="aData">
-    ///   JSON object with author fields.
+    ///   Author data with at least <c>DisplayName</c>.
     /// </param>
     /// <returns>
     ///   The new record ID, or 0 if validation failed.
     /// </returns>
     function Add(
-      const aData: RawJson
+      const aData: TAuthorCreateDto
       ): TID;
 
     /// <summary>
@@ -166,21 +166,33 @@ type
 
 implementation
 
+function AuthorToDto(
+  aRec: TOrmAuthor
+  ): TAuthorDto;
+begin
+  Result.ID := aRec.IDValue;
+  Result.DisplayName := aRec.DisplayName;
+  Result.Slug := aRec.Slug;
+  Result.Bio := aRec.Bio;
+  Result.WebsiteUrl := aRec.WebsiteUrl;
+  Result.AvatarMediaId := aRec.AvatarMediaId;
+  Result.CreatedAt := aRec.CreatedAt;
+  Result.UpdatedAt := aRec.UpdatedAt;
+end;
+
 function TUserService.Add(
-  const aData: RawJson
+  const aData: TAuthorCreateDto
   ): TID;
 var
-  Doc: TDocVariantData;
   Rec: TOrmAuthor;
 begin
-  Doc.InitJson(aData, JSON_FAST_FLOAT);
-  if Doc.U['DisplayName'] = '' then
+  if aData.DisplayName = '' then
     Exit(0);
   Rec := TOrmAuthor.Create;
   try
-    Rec.DisplayName := Doc.U['DisplayName'];
-    Rec.Bio := Doc.U['Bio'];
-    Rec.WebsiteUrl := Doc.U['WebsiteUrl'];
+    Rec.DisplayName := aData.DisplayName;
+    Rec.Bio := aData.Bio;
+    Rec.WebsiteUrl := aData.WebsiteUrl;
     Rec.Slug := TextToSlug(Rec.DisplayName);
     Rec.CreatedAt := NowUtc;
     Rec.UpdatedAt := NowUtc;
@@ -200,14 +212,40 @@ end;
 
 function TUserService.Get(
   aId: TID
-  ): RawJson;
+  ): TAuthorDto;
+var
+  Rec: TOrmAuthor;
 begin
-  Result := OrmGetById(FOrm, TOrmAuthor, aId);
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Rec := TOrmAuthor.Create;
+  try
+    if FOrm.Retrieve(aId, Rec) then
+      Result := AuthorToDto(Rec);
+  finally
+    Rec.Free;
+  end;
 end;
 
-function TUserService.GetAll: RawJson;
+function TUserService.GetAll: TAuthorDtoArray;
+var
+  Rec: TOrmAuthor;
+  Count: PtrInt;
 begin
-  Result := OrmGetAll(FOrm, TOrmAuthor);
+  Result := nil;
+  Count := 0;
+  Rec := TOrmAuthor.CreateAndFillPrepare(FOrm, '', []);
+  try
+    SetLength(Result, Rec.FillTable.RowCount);
+    while Rec.FillOne do
+    begin
+      Result[Count] := AuthorToDto(Rec);
+      Inc(Count);
+    end;
+    SetLength(Result, Count);
+  finally
+    Rec.Free;
+  end;
 end;
 
 function TUserService.Remove(

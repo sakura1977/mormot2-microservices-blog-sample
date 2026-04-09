@@ -74,11 +74,11 @@ type
     ///   The unique identifier of the post to retrieve.
     /// </param>
     /// <returns>
-    ///   JSON representation of the post, or empty JSON object if not found.
+    ///   Post data. <c>ID = 0</c> if not found.
     /// </returns>
     function Get(
       aId: TID
-      ): RawJson;
+      ): TPostDto;
 
     /// <summary>
     ///   Retrieves a single post by its URL slug.
@@ -87,11 +87,11 @@ type
     ///   The URL-friendly slug identifying the post.
     /// </param>
     /// <returns>
-    ///   JSON representation of the post, or empty JSON object if not found.
+    ///   Post data. <c>ID = 0</c> if not found.
     /// </returns>
     function GetBySlug(
       const aSlug: RawUtf8
-      ): RawJson;
+      ): TPostDto;
 
     /// <summary>
     ///   Retrieves a paginated, filtered list of posts.
@@ -109,26 +109,26 @@ type
     ///   Filter by author ID. Values <= 0 mean no filter.
     /// </param>
     /// <returns>
-    ///   JSON object with items array, total count, and current page number.
+    ///   Paginated result with items array, total count, and current page.
     /// </returns>
     function GetList(
       aPage: integer;
       aLimit: integer;
       aStatus: integer;
       aAuthorId: TID
-      ): RawJson;
+      ): TPostListDto;
 
     /// <summary>
-    ///   Creates a new post from JSON data. Returns the new ID.
+    ///   Creates a new post. Returns the new ID.
     /// </summary>
     /// <param name="aData">
-    ///   JSON object containing the post fields (Title, Body, Excerpt, AuthorId, etc.).
+    ///   Post data with at least <c>Title</c> (required).
     /// </param>
     /// <returns>
     ///   The ID of the newly created post, or 0 if the Title was empty.
     /// </returns>
     function Add(
-      const aData: RawJson
+      const aData: TPostCreateDto
       ): TID;
 
     /// <summary>
@@ -189,6 +189,26 @@ type
 
 implementation
 
+function PostToDto(
+  aRec: TOrmBlogPost
+  ): TPostDto;
+begin
+  Result.ID := aRec.IDValue;
+  Result.Title := aRec.Title;
+  Result.Slug := aRec.Slug;
+  Result.Body := aRec.Body;
+  Result.Excerpt := aRec.Excerpt;
+  Result.AuthorId := aRec.AuthorId;
+  Result.FeaturedImageId := aRec.FeaturedImageId;
+  Result.MetaTitle := aRec.MetaTitle;
+  Result.MetaDescription := aRec.MetaDescription;
+  Result.MetaKeywords := aRec.MetaKeywords;
+  Result.Status := aRec.Status;
+  Result.PublishedAt := aRec.PublishedAt;
+  Result.CreatedAt := aRec.CreatedAt;
+  Result.UpdatedAt := aRec.UpdatedAt;
+end;
+
 constructor TPostService.Create(
   const aOrm: IRestOrm
   );
@@ -199,25 +219,35 @@ end;
 
 function TPostService.Get(
   aId: TID
-  ): RawJson;
+  ): TPostDto;
+var
+  Rec: TOrmBlogPost;
 begin
-  Result := OrmGetById(FOrm, TOrmBlogPost, aId);
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Rec := TOrmBlogPost.Create;
+  try
+    if FOrm.Retrieve(aId, Rec) then
+      Result := PostToDto(Rec);
+  finally
+    Rec.Free;
+  end;
 end;
 
 function TPostService.GetBySlug(
   const aSlug: RawUtf8
-  ): RawJson;
+  ): TPostDto;
 var
-  PostRecord: TOrmBlogPost;
+  Rec: TOrmBlogPost;
 begin
-  PostRecord := TOrmBlogPost.Create;
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Rec := TOrmBlogPost.Create;
   try
-    if FOrm.Retrieve('Slug=?', [], [aSlug], PostRecord) then
-      Result := PostRecord.GetJsonValues(True, True, ooSelect)
-    else
-      Result := '{}';
+    if FOrm.Retrieve('Slug=?', [], [aSlug], Rec) then
+      Result := PostToDto(Rec);
   finally
-    PostRecord.Free;
+    Rec.Free;
   end;
 end;
 
@@ -226,12 +256,14 @@ function TPostService.GetList(
   aLimit: integer;
   aStatus: integer;
   aAuthorId: TID
-  ): RawJson;
+  ): TPostListDto;
 var
   WhereClause: RawUtf8;
-  Total: Int64;
-  ResultTable: TOrmTable;
+  Rec: TOrmBlogPost;
+  Count: PtrInt;
 begin
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
   // Clamp page and limit
   if aPage <= 0 then
     aPage := 1;
@@ -239,7 +271,6 @@ begin
     aLimit := 10;
   if aLimit > 100 then
     aLimit := 100;
-
   // Build WHERE clause from filters
   WhereClause := '';
   if aStatus > 0 then
@@ -250,50 +281,51 @@ begin
       WhereClause := WhereClause + ' AND ';
     WhereClause := WhereClause + FormatUtf8('AuthorId=%', [aAuthorId]);
   end;
-
   // Calculate filtered total count
   if WhereClause <> '' then
-    Total := FOrm.OneFieldValueInt64(TOrmBlogPost, 'Count(*)', WhereClause)
+    Result.Total := FOrm.OneFieldValueInt64(TOrmBlogPost, 'Count(*)', WhereClause)
   else
-    Total := FOrm.TableRowCount(TOrmBlogPost);
-
+    Result.Total := FOrm.TableRowCount(TOrmBlogPost);
+  Result.Page := aPage;
   // Retrieve paginated results
   if WhereClause = '' then
     WhereClause := 'RowID>0';
-  ResultTable := FOrm.MultiFieldValues(TOrmBlogPost, '*',
+  Count := 0;
+  Rec := TOrmBlogPost.CreateAndFillPrepare(FOrm,
     WhereClause + FormatUtf8(' ORDER BY RowID DESC LIMIT % OFFSET %', [aLimit, (aPage - 1) * aLimit]));
   try
-    if ResultTable = nil then
-      Result := FormatUtf8('{"items":[],"total":%,"page":%}', [Total, aPage])
-    else
-      Result := FormatUtf8('{"items":%,"total":%,"page":%}', [ResultTable.GetJsonValues(True), Total, aPage]);
+    SetLength(Result.Items, Rec.FillTable.RowCount);
+    while Rec.FillOne do
+    begin
+      Result.Items[Count] := PostToDto(Rec);
+      Inc(Count);
+    end;
+    SetLength(Result.Items, Count);
   finally
-    ResultTable.Free;
+    Rec.Free;
   end;
 end;
 
 function TPostService.Add(
-  const aData: RawJson
+  const aData: TPostCreateDto
   ): TID;
 var
-  JsonDoc: TDocVariantData;
   PostRecord: TOrmBlogPost;
 begin
-  JsonDoc.InitJson(aData, JSON_FAST_FLOAT);
-  if JsonDoc.U['Title'] = '' then
+  if aData.Title = '' then
     Exit(0);
   PostRecord := TOrmBlogPost.Create;
   try
-    PostRecord.Title := JsonDoc.U['Title'];
+    PostRecord.Title := aData.Title;
     PostRecord.Slug := TextToSlug(PostRecord.Title);
-    PostRecord.Body := JsonDoc.U['Body'];
-    PostRecord.Excerpt := JsonDoc.U['Excerpt'];
-    PostRecord.AuthorId := JsonDoc.I['AuthorId'];
-    PostRecord.FeaturedImageId := JsonDoc.I['FeaturedImageId'];
-    PostRecord.MetaTitle := JsonDoc.U['MetaTitle'];
-    PostRecord.MetaDescription := JsonDoc.U['MetaDescription'];
-    PostRecord.MetaKeywords := JsonDoc.U['MetaKeywords'];
-    PostRecord.Status := JsonDoc.I['Status'];
+    PostRecord.Body := aData.Body;
+    PostRecord.Excerpt := aData.Excerpt;
+    PostRecord.AuthorId := aData.AuthorId;
+    PostRecord.FeaturedImageId := aData.FeaturedImageId;
+    PostRecord.MetaTitle := aData.MetaTitle;
+    PostRecord.MetaDescription := aData.MetaDescription;
+    PostRecord.MetaKeywords := aData.MetaKeywords;
+    PostRecord.Status := aData.Status;
     if PostRecord.Status = POST_STATUS_PUBLISHED then
       PostRecord.PublishedAt := NowUtc;
     PostRecord.CreatedAt := NowUtc;

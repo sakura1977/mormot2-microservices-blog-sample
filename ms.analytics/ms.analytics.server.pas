@@ -68,6 +68,20 @@ type
     ///   Interface to the comments backend service.
     /// </summary>
     FComments: IComment;
+
+    /// <summary>
+    ///   Copies all scalar fields from a <c>TPostDto</c> into a <c>TPostFullDto</c>. The nested Author, Tags,
+    ///   Comments and *Unavailable flags are left at their default (zero/empty/false) values.
+    /// </summary>
+    /// <param name="aPost">
+    ///   Source post record.
+    /// </param>
+    /// <returns>
+    ///   A <c>TPostFullDto</c> with scalar fields populated.
+    /// </returns>
+    function PostDtoToFull(
+      const aPost: TPostDto
+      ): TPostFullDto;
   public
 
     /// <summary>
@@ -96,46 +110,46 @@ type
     ///   Returns aggregate counts from all services.
     /// </summary>
     /// <returns>
-    ///   JSON object with count fields and optional <c>*Unavailable</c> flags.
+    ///   Overview with count fields and <c>*Unavailable</c> flags for unreachable services.
     /// </returns>
-    function GetOverview: RawJson;
+    function GetOverview: TOverviewDto;
 
     /// <summary>
     ///   Returns per-author statistics with post and comment counts.
     /// </summary>
     /// <returns>
-    ///   JSON array of author stat objects.
+    ///   Array of author stat records, or empty array if users service is unavailable.
     /// </returns>
-    function GetAuthorStats: RawJson;
+    function GetAuthorStats: TAuthorStatDtoArray;
 
     /// <summary>
     ///   Returns comment activity: pending count and top commented posts.
     /// </summary>
     /// <returns>
-    ///   JSON object with <c>pendingCount</c> and <c>topCommentedPosts</c> array.
+    ///   Comment activity overview with pending count and top 10 most-commented posts.
     /// </returns>
-    function GetCommentActivity: RawJson;
+    function GetCommentActivity: TCommentActivityDto;
 
     /// <summary>
     ///   Returns the most recent published posts enriched with author, tags, and up to 10 comments per post.
     /// </summary>
     /// <param name="aLimit">
-    ///   Maximum number of posts (clamped to 1..50).
+    ///   Maximum number of posts (clamped to 1..50). Pass 0 for empty result.
     /// </param>
     /// <returns>
-    ///   JSON array of enriched post objects.
+    ///   Array of enriched post records, or empty array if unavailable or limit is 0.
     /// </returns>
     function GetRecentPostsFull(
       aLimit: integer
-      ): RawJson;
+      ): TPostFullDtoArray;
 
     /// <summary>
     ///   Returns tags ranked by usage frequency.
     /// </summary>
     /// <returns>
-    ///   JSON array sorted by <c>postCount</c> descending.
+    ///   Array of tag cloud items sorted descending by usage.
     /// </returns>
-    function GetTagCloud: RawJson;
+    function GetTagCloud: TTagCloudItemDtoArray;
   end;
 
   /// <summary>
@@ -270,139 +284,122 @@ begin
   FComments := aComments;
 end;
 
-function TAnalyticsService.GetAuthorStats: RawJson;
-var
-  AuthorsJson, PostsJson, CommentsJson: RawJson;
-  AuthorArray, PostsResponse, CommentsArray: TDocVariantData;
-  ResultArray, AuthorEntry: TDocVariantData;
-  AuthorDoc, PostItem: TDocVariantData;
-  PostItems: PDocVariantData;
-  AuthorIdx, PostIdx: PtrInt;
-  AuthorId, PostId: TID;
-  PostCount, CommentTotal: integer;
+function TAnalyticsService.PostDtoToFull(
+  const aPost: TPostDto
+  ): TPostFullDto;
 begin
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Result.ID := aPost.ID;
+  Result.Title := aPost.Title;
+  Result.Slug := aPost.Slug;
+  Result.Body := aPost.Body;
+  Result.Excerpt := aPost.Excerpt;
+  Result.AuthorId := aPost.AuthorId;
+  Result.FeaturedImageId := aPost.FeaturedImageId;
+  Result.MetaTitle := aPost.MetaTitle;
+  Result.MetaDescription := aPost.MetaDescription;
+  Result.MetaKeywords := aPost.MetaKeywords;
+  Result.Status := aPost.Status;
+  Result.PublishedAt := aPost.PublishedAt;
+  Result.CreatedAt := aPost.CreatedAt;
+  Result.UpdatedAt := aPost.UpdatedAt;
+end;
+
+function TAnalyticsService.GetAuthorStats: TAuthorStatDtoArray;
+var
+  Authors: TAuthorDtoArray;
+  PostList: TPostListDto;
+  PostComments: TCommentDtoArray;
+  AuthorIdx, PostIdx: PtrInt;
+  CommentTotal: integer;
+begin
+  Result := nil;
   try
-    AuthorsJson := FUsers.GetAll;
+    Authors := FUsers.GetAll;
   except
-    Exit('[]');
+    Exit(nil);
   end;
-  AuthorArray.InitJson(AuthorsJson, JSON_FAST_FLOAT);
-  if AuthorArray.Kind <> dvArray then
-    Exit('[]');
-  ResultArray.InitArray([], JSON_FAST);
-  for AuthorIdx := 0 to AuthorArray.Count - 1 do
+  if Length(Authors) = 0 then
+    Exit(nil);
+  SetLength(Result, Length(Authors));
+  for AuthorIdx := 0 to High(Authors) do
   begin
-    AuthorDoc.InitCopy(AuthorArray.Values[AuthorIdx], JSON_FAST_FLOAT);
-    AuthorId := AuthorDoc.I['RowID'];
-    if AuthorId = 0 then
-      AuthorId := AuthorDoc.I['ID'];
+    Result[AuthorIdx].AuthorId := Authors[AuthorIdx].ID;
+    Result[AuthorIdx].DisplayName := Authors[AuthorIdx].DisplayName;
     // Count posts for this author
     CommentTotal := 0;
     try
-      PostsJson := FPosts.GetList(1, 100, 0, AuthorId);
-      PostsResponse.InitJson(PostsJson, JSON_FAST_FLOAT);
-      PostCount := PostsResponse.I['total'];
+      PostList := FPosts.GetList(1, 100, 0, Authors[AuthorIdx].ID);
+      Result[AuthorIdx].PostCount := PostList.Total;
       // Count comments on each post
-      PostItems := PostsResponse.A['items'];
-      if PostItems <> nil then
+      for PostIdx := 0 to High(PostList.Items) do
       begin
-        for PostIdx := 0 to PostItems^.Count - 1 do
-        begin
-          PostItem.InitCopy(PostItems^.Values[PostIdx], JSON_FAST_FLOAT);
-          PostId := PostItem.I['RowID'];
-          if PostId = 0 then
-            PostId := PostItem.I['ID'];
-          try
-            CommentsJson := FComments.GetByPost(PostId);
-            CommentsArray.InitJson(CommentsJson, JSON_FAST_FLOAT);
-            if CommentsArray.Kind = dvArray then
-              CommentTotal := CommentTotal + CommentsArray.Count;
-          except
-            // Comments service unavailable for this post
-          end;
+        try
+          PostComments := FComments.GetByPost(PostList.Items[PostIdx].ID);
+          CommentTotal := CommentTotal + Length(PostComments);
+        except
+          // Comments service unavailable for this post
         end;
       end;
     except
-      PostCount := -1;
+      Result[AuthorIdx].PostCount := -1;
     end;
-    AuthorEntry.InitObject([
-      'authorId', AuthorId,
-      'displayName', AuthorDoc.U['DisplayName'],
-      'postCount', PostCount,
-      'commentCount', CommentTotal
-    ], JSON_FAST);
-    ResultArray.AddItem(variant(AuthorEntry));
+    Result[AuthorIdx].CommentCount := CommentTotal;
   end;
-  Result := ResultArray.ToJson;
 end;
 
-function TAnalyticsService.GetCommentActivity: RawJson;
+function TAnalyticsService.GetCommentActivity: TCommentActivityDto;
 var
-  PendingJson, PostsJson, CommentsJson: RawJson;
-  PendingArray, PostsResponse, CommentsArray: TDocVariantData;
-  ResultDoc, TopPostsArray, PostEntry, PostDoc: TDocVariantData;
-  PostItems: PDocVariantData;
-  PendingCount, CommentCount: integer;
-  PostIdx, SortIdx, SwapIdx: PtrInt;
-  PostId: TID;
-  SwapVariant: variant;
+  PostList: TPostListDto;
+  PostComments: TCommentDtoArray;
+  CommentCount: integer;
+  PostIdx, SortIdx, SwapIdx, EntryCount, TopLimit: PtrInt;
   BestCount, CurrentCount: integer;
+  SwapEntry: TTopCommentedPostDto;
 begin
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
   // Count pending comments
-  PendingCount := 0;
   try
-    PendingJson := FComments.GetPending;
-    PendingArray.InitJson(PendingJson, JSON_FAST_FLOAT);
-    if PendingArray.Kind = dvArray then
-      PendingCount := PendingArray.Count;
+    Result.PendingCount := Length(FComments.GetPending);
   except
-    PendingCount := -1;
+    Result.PendingCount := -1;
   end;
   // Find top commented posts
-  TopPostsArray.InitArray([], JSON_FAST);
+  EntryCount := 0;
   try
-    PostsJson := FPosts.GetList(1, 50, POST_STATUS_PUBLISHED, 0);
-    PostsResponse.InitJson(PostsJson, JSON_FAST_FLOAT);
-    PostItems := PostsResponse.A['items'];
-    if PostItems <> nil then
+    PostList := FPosts.GetList(1, 50, POST_STATUS_PUBLISHED, 0);
+    SetLength(Result.TopCommentedPosts, Length(PostList.Items));
+    for PostIdx := 0 to High(PostList.Items) do
     begin
-      for PostIdx := 0 to PostItems^.Count - 1 do
+      CommentCount := 0;
+      try
+        PostComments := FComments.GetByPost(PostList.Items[PostIdx].ID);
+        CommentCount := Length(PostComments);
+      except
+        // Comments unavailable for this post
+      end;
+      if CommentCount > 0 then
       begin
-        PostDoc.InitCopy(PostItems^.Values[PostIdx], JSON_FAST_FLOAT);
-        PostId := PostDoc.I['RowID'];
-        if PostId = 0 then
-          PostId := PostDoc.I['ID'];
-        CommentCount := 0;
-        try
-          CommentsJson := FComments.GetByPost(PostId);
-          CommentsArray.InitJson(CommentsJson, JSON_FAST_FLOAT);
-          if CommentsArray.Kind = dvArray then
-            CommentCount := CommentsArray.Count;
-        except
-          // Comments unavailable for this post
-        end;
-        if CommentCount > 0 then
-        begin
-          PostEntry.InitObject([
-            'postId', PostId,
-            'title', PostDoc.U['Title'],
-            'commentCount', CommentCount
-          ], JSON_FAST);
-          TopPostsArray.AddItem(variant(PostEntry));
-        end;
+        Result.TopCommentedPosts[EntryCount].PostId := PostList.Items[PostIdx].ID;
+        Result.TopCommentedPosts[EntryCount].Title := PostList.Items[PostIdx].Title;
+        Result.TopCommentedPosts[EntryCount].CommentCount := CommentCount;
+        Inc(EntryCount);
       end;
     end;
+    SetLength(Result.TopCommentedPosts, EntryCount);
   except
     // Posts service unavailable
   end;
-  // Sort by commentCount descending (selection sort, small data)
-  for SortIdx := 0 to TopPostsArray.Count - 2 do
+  // Sort by CommentCount descending (selection sort, small data)
+  for SortIdx := 0 to EntryCount - 2 do
   begin
-    BestCount := _Safe(TopPostsArray.Values[SortIdx])^.I['commentCount'];
+    BestCount := Result.TopCommentedPosts[SortIdx].CommentCount;
     SwapIdx := SortIdx;
-    for PostIdx := SortIdx + 1 to TopPostsArray.Count - 1 do
+    for PostIdx := SortIdx + 1 to EntryCount - 1 do
     begin
-      CurrentCount := _Safe(TopPostsArray.Values[PostIdx])^.I['commentCount'];
+      CurrentCount := Result.TopCommentedPosts[PostIdx].CommentCount;
       if CurrentCount > BestCount then
       begin
         BestCount := CurrentCount;
@@ -411,235 +408,191 @@ begin
     end;
     if SwapIdx <> SortIdx then
     begin
-      SwapVariant := TopPostsArray.Values[SortIdx];
-      TopPostsArray.Values[SortIdx] := TopPostsArray.Values[SwapIdx];
-      TopPostsArray.Values[SwapIdx] := SwapVariant;
+      SwapEntry := Result.TopCommentedPosts[SortIdx];
+      Result.TopCommentedPosts[SortIdx] := Result.TopCommentedPosts[SwapIdx];
+      Result.TopCommentedPosts[SwapIdx] := SwapEntry;
     end;
   end;
   // Limit to top 10
-  while TopPostsArray.Count > 10 do
-    TopPostsArray.Delete(TopPostsArray.Count - 1);
-  ResultDoc.InitObject([
-    'pendingCount', PendingCount,
-    'topCommentedPosts', variant(TopPostsArray)
-  ], JSON_FAST);
-  Result := ResultDoc.ToJson;
+  TopLimit := 10;
+  if EntryCount > TopLimit then
+    SetLength(Result.TopCommentedPosts, TopLimit);
 end;
 
-function TAnalyticsService.GetOverview: RawJson;
+function TAnalyticsService.GetOverview: TOverviewDto;
 var
-  PostsJson, AuthorsJson, TagsJson, PendingJson: RawJson;
-  PostsResponse, AuthorArray, TagArray, PendingArray: TDocVariantData;
-  ResultDoc: TDocVariantData;
-  PostTotal, AuthorCount, TagCount, PendingCount: integer;
+  PostList: TPostListDto;
 begin
-  ResultDoc.InitObject([], JSON_FAST);
-  // Posts count -- GetList returns {"total":N} without loading all items
+  FillCharFast(Result, SizeOf(Result), 0);
+  // Posts count -- GetList returns Total without loading all items
   try
-    PostsJson := FPosts.GetList(1, 1, 0, 0);
-    PostsResponse.InitJson(PostsJson, JSON_FAST_FLOAT);
-    PostTotal := PostsResponse.I['total'];
+    PostList := FPosts.GetList(1, 1, 0, 0);
+    Result.Posts := PostList.Total;
   except
-    PostTotal := -1;
-    ResultDoc.B['postsUnavailable'] := True;
+    Result.Posts := -1;
+    Result.PostsUnavailable := True;
   end;
-  ResultDoc.I['posts'] := PostTotal;
   // Authors count
-  AuthorCount := 0;
   try
-    AuthorsJson := FUsers.GetAll;
-    AuthorArray.InitJson(AuthorsJson, JSON_FAST_FLOAT);
-    if AuthorArray.Kind = dvArray then
-      AuthorCount := AuthorArray.Count;
+    Result.Authors := Length(FUsers.GetAll);
   except
-    AuthorCount := -1;
-    ResultDoc.B['authorsUnavailable'] := True;
+    Result.Authors := -1;
+    Result.AuthorsUnavailable := True;
   end;
-  ResultDoc.I['authors'] := AuthorCount;
   // Tags count
-  TagCount := 0;
   try
-    TagsJson := FTags.GetAll;
-    TagArray.InitJson(TagsJson, JSON_FAST_FLOAT);
-    if TagArray.Kind = dvArray then
-      TagCount := TagArray.Count;
+    Result.Tags := Length(FTags.GetAll);
   except
-    TagCount := -1;
-    ResultDoc.B['tagsUnavailable'] := True;
+    Result.Tags := -1;
+    Result.TagsUnavailable := True;
   end;
-  ResultDoc.I['tags'] := TagCount;
   // Pending comments count
-  PendingCount := 0;
   try
-    PendingJson := FComments.GetPending;
-    PendingArray.InitJson(PendingJson, JSON_FAST_FLOAT);
-    if PendingArray.Kind = dvArray then
-      PendingCount := PendingArray.Count;
+    Result.PendingComments := Length(FComments.GetPending);
   except
-    PendingCount := -1;
-    ResultDoc.B['commentsUnavailable'] := True;
+    Result.PendingComments := -1;
+    Result.CommentsUnavailable := True;
   end;
-  ResultDoc.I['pendingComments'] := PendingCount;
-  Result := ResultDoc.ToJson;
 end;
 
 function TAnalyticsService.GetRecentPostsFull(
   aLimit: integer
-  ): RawJson;
+  ): TPostFullDtoArray;
 const
   MAX_COMMENTS_PER_POST = 10;
 var
-  PostsJson, AuthorJson, TagsJson, CommentsJson: RawJson;
-  PostsResponse, PostDoc, AuthorCache: TDocVariantData;
-  CommentsArray, LimitedComments: TDocVariantData;
-  ResultArray: TDocVariantData;
-  PostItems: PDocVariantData;
-  PostIdx, CommentIdx: PtrInt;
-  PostId, AuthorId: TID;
-  AuthorIdKey: RawUtf8;
-  CachedAuthorIdx: PtrInt;
+  PostList: TPostListDto;
+  AuthorDto: TAuthorDto;
+  AllComments: TCommentDtoArray;
+  PostIdx, CommentIdx, CommentStart: PtrInt;
+  AuthorCache: array of TAuthorDto;
+  AuthorCacheIds: TIDDynArray;
+  CacheIdx: PtrInt;
+  AuthorFound: boolean;
 begin
+  Result := nil;
   // Zero or negative limit returns empty
   if aLimit < 1 then
-    Exit('[]');
+    Exit(nil);
   if aLimit > 50 then
     aLimit := 50;
   // Step 1: fetch recent published posts
   try
-    PostsJson := FPosts.GetList(1, aLimit, POST_STATUS_PUBLISHED, 0);
+    PostList := FPosts.GetList(1, aLimit, POST_STATUS_PUBLISHED, 0);
   except
-    Exit('[]');
+    Exit(nil);
   end;
-  PostsResponse.InitJson(PostsJson, JSON_FAST_FLOAT);
-  PostItems := PostsResponse.A['items'];
-  if (PostItems = nil) or (PostItems^.Count = 0) then
-    Exit('[]');
+  if Length(PostList.Items) = 0 then
+    Exit(nil);
   // Step 2: build author cache (avoid duplicate lookups)
-  AuthorCache.InitObject([], JSON_FAST);
-  for PostIdx := 0 to PostItems^.Count - 1 do
+  AuthorCache := nil;
+  AuthorCacheIds := nil;
+  for PostIdx := 0 to High(PostList.Items) do
   begin
-    PostDoc.InitCopy(PostItems^.Values[PostIdx], JSON_FAST_FLOAT);
-    AuthorId := PostDoc.I['AuthorId'];
-    AuthorIdKey := Int64ToUtf8(AuthorId);
-    if AuthorCache.GetValueIndex(AuthorIdKey) < 0 then
+    AuthorFound := False;
+    for CacheIdx := 0 to High(AuthorCacheIds) do
     begin
-      try
-        AuthorJson := FUsers.Get(AuthorId);
-        if AuthorJson <> '{}' then
-          AuthorCache.AddValue(AuthorIdKey, _JsonFast(AuthorJson))
-        else
-          AuthorCache.AddValue(AuthorIdKey, null);
-      except
-        AuthorCache.AddValue(AuthorIdKey, null);
+      if AuthorCacheIds[CacheIdx] = PostList.Items[PostIdx].AuthorId then
+      begin
+        AuthorFound := True;
+        Break;
       end;
+    end;
+    if not AuthorFound then
+    begin
+      Finalize(AuthorDto);
+      FillCharFast(AuthorDto, SizeOf(AuthorDto), 0);
+      try
+        AuthorDto := FUsers.Get(PostList.Items[PostIdx].AuthorId);
+      except
+        // Author service unavailable -- AuthorDto.ID stays 0
+      end;
+      SetLength(AuthorCache, Length(AuthorCache) + 1);
+      AuthorCache[High(AuthorCache)] := AuthorDto;
+      SetLength(AuthorCacheIds, Length(AuthorCacheIds) + 1);
+      AuthorCacheIds[High(AuthorCacheIds)] := PostList.Items[PostIdx].AuthorId;
     end;
   end;
   // Step 3: enrich each post (the cross-service JOIN)
-  ResultArray.InitArray([], JSON_FAST);
-  for PostIdx := 0 to PostItems^.Count - 1 do
+  SetLength(Result, Length(PostList.Items));
+  for PostIdx := 0 to High(PostList.Items) do
   begin
-    PostDoc.InitCopy(PostItems^.Values[PostIdx], JSON_FAST_FLOAT);
-    PostId := PostDoc.I['RowID'];
-    if PostId = 0 then
-      PostId := PostDoc.I['ID'];
-    AuthorId := PostDoc.I['AuthorId'];
+    Result[PostIdx] := PostDtoToFull(PostList.Items[PostIdx]);
     // Author from cache
-    AuthorIdKey := Int64ToUtf8(AuthorId);
-    CachedAuthorIdx := AuthorCache.GetValueIndex(AuthorIdKey);
-    if CachedAuthorIdx >= 0 then
-      PostDoc.AddValue('Author', AuthorCache.Values[CachedAuthorIdx])
-    else
-      PostDoc.AddValue('Author', null);
+    for CacheIdx := 0 to High(AuthorCacheIds) do
+    begin
+      if AuthorCacheIds[CacheIdx] = PostList.Items[PostIdx].AuthorId then
+      begin
+        Result[PostIdx].Author := AuthorCache[CacheIdx];
+        if AuthorCache[CacheIdx].ID = 0 then
+          Result[PostIdx].AuthorUnavailable := True;
+        Break;
+      end;
+    end;
     // Tags (graceful degradation)
     try
-      TagsJson := FTags.GetByPost(PostId);
-      if TagsJson <> '[]' then
-        PostDoc.AddValue('Tags', _JsonFast(TagsJson))
-      else
-        PostDoc.AddValue('Tags', _ArrFast([]));
+      Result[PostIdx].Tags := FTags.GetByPost(PostList.Items[PostIdx].ID);
     except
-      PostDoc.AddValue('Tags', _ArrFast([]));
-      PostDoc.B['TagsUnavailable'] := True;
+      Result[PostIdx].Tags := nil;
+      Result[PostIdx].TagsUnavailable := True;
     end;
     // Comments with limit (graceful degradation)
     try
-      CommentsJson := FComments.GetByPost(PostId);
-      CommentsArray.InitJson(CommentsJson, JSON_FAST_FLOAT);
-      if (CommentsArray.Kind = dvArray)
-        and (CommentsArray.Count > MAX_COMMENTS_PER_POST) then
+      AllComments := FComments.GetByPost(PostList.Items[PostIdx].ID);
+      if Length(AllComments) > MAX_COMMENTS_PER_POST then
       begin
         // Take only the last MAX_COMMENTS_PER_POST entries
-        LimitedComments.InitArray([], JSON_FAST);
-        for CommentIdx := CommentsArray.Count - MAX_COMMENTS_PER_POST
-          to CommentsArray.Count - 1 do
-        begin
-          LimitedComments.AddItem(CommentsArray.Values[CommentIdx]);
-        end;
-        PostDoc.AddValue('Comments', variant(LimitedComments));
+        CommentStart := Length(AllComments) - MAX_COMMENTS_PER_POST;
+        SetLength(Result[PostIdx].Comments, MAX_COMMENTS_PER_POST);
+        for CommentIdx := 0 to MAX_COMMENTS_PER_POST - 1 do
+          Result[PostIdx].Comments[CommentIdx] := AllComments[CommentStart + CommentIdx];
       end
-      else if CommentsJson <> '[]' then
-        PostDoc.AddValue('Comments', _JsonFast(CommentsJson))
       else
-        PostDoc.AddValue('Comments', _ArrFast([]));
+        Result[PostIdx].Comments := AllComments;
     except
-      PostDoc.AddValue('Comments', _ArrFast([]));
-      PostDoc.B['CommentsUnavailable'] := True;
+      Result[PostIdx].Comments := nil;
+      Result[PostIdx].CommentsUnavailable := True;
     end;
-    ResultArray.AddItem(_JsonFast(RawUtf8(PostDoc.ToJson)));
   end;
-  Result := ResultArray.ToJson;
 end;
 
-function TAnalyticsService.GetTagCloud: RawJson;
+function TAnalyticsService.GetTagCloud: TTagCloudItemDtoArray;
 var
-  TagsJson, PostIdsJson: RawJson;
-  TagArray, PostIdsArray: TDocVariantData;
-  ResultArray, TagEntry, TagDoc: TDocVariantData;
+  AllTags: TTagDtoArray;
+  PostIds: TIDDynArray;
   TagIdx, SortIdx, SwapIdx: PtrInt;
-  TagId, PostCount: integer;
   BestCount, CurrentCount: integer;
-  SwapVariant: variant;
+  SwapEntry: TTagCloudItemDto;
 begin
+  Result := nil;
   try
-    TagsJson := FTags.GetAll;
+    AllTags := FTags.GetAll;
   except
-    Exit('[]');
+    Exit(nil);
   end;
-  TagArray.InitJson(TagsJson, JSON_FAST_FLOAT);
-  if TagArray.Kind <> dvArray then
-    Exit('[]');
-  ResultArray.InitArray([], JSON_FAST);
-  for TagIdx := 0 to TagArray.Count - 1 do
+  if Length(AllTags) = 0 then
+    Exit(nil);
+  SetLength(Result, Length(AllTags));
+  for TagIdx := 0 to High(AllTags) do
   begin
-    TagDoc.InitCopy(TagArray.Values[TagIdx], JSON_FAST_FLOAT);
-    TagId := TagDoc.I['RowID'];
-    if TagId = 0 then
-      TagId := TagDoc.I['ID'];
-    PostCount := 0;
+    Result[TagIdx].TagId := AllTags[TagIdx].ID;
+    Result[TagIdx].Name := AllTags[TagIdx].Name;
+    Result[TagIdx].Slug := AllTags[TagIdx].Slug;
     try
-      PostIdsJson := FTags.GetPostIds(TagId);
-      PostIdsArray.InitJson(PostIdsJson, JSON_FAST_FLOAT);
-      if PostIdsArray.Kind = dvArray then
-        PostCount := PostIdsArray.Count;
+      PostIds := FTags.GetPostIds(AllTags[TagIdx].ID);
+      Result[TagIdx].PostCount := Length(PostIds);
     except
       // Tag post count unavailable
     end;
-    TagEntry.InitObject([
-      'tagId', TagId,
-      'name', TagDoc.U['Name'],
-      'slug', TagDoc.U['Slug'],
-      'postCount', PostCount
-    ], JSON_FAST);
-    ResultArray.AddItem(variant(TagEntry));
   end;
-  // Sort by postCount descending (selection sort)
-  for SortIdx := 0 to ResultArray.Count - 2 do
+  // Sort by PostCount descending (selection sort)
+  for SortIdx := 0 to High(Result) - 1 do
   begin
-    BestCount := _Safe(ResultArray.Values[SortIdx])^.I['postCount'];
+    BestCount := Result[SortIdx].PostCount;
     SwapIdx := SortIdx;
-    for TagIdx := SortIdx + 1 to ResultArray.Count - 1 do
+    for TagIdx := SortIdx + 1 to High(Result) do
     begin
-      CurrentCount := _Safe(ResultArray.Values[TagIdx])^.I['postCount'];
+      CurrentCount := Result[TagIdx].PostCount;
       if CurrentCount > BestCount then
       begin
         BestCount := CurrentCount;
@@ -648,12 +601,11 @@ begin
     end;
     if SwapIdx <> SortIdx then
     begin
-      SwapVariant := ResultArray.Values[SortIdx];
-      ResultArray.Values[SortIdx] := ResultArray.Values[SwapIdx];
-      ResultArray.Values[SwapIdx] := SwapVariant;
+      SwapEntry := Result[SortIdx];
+      Result[SortIdx] := Result[SwapIdx];
+      Result[SwapIdx] := SwapEntry;
     end;
   end;
-  Result := ResultArray.ToJson;
 end;
 
 function TAnalyticsServer.ConnectToBackend(

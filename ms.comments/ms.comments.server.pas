@@ -71,14 +71,14 @@ type
     ///   The post to comment on (must be greater than 0).
     /// </param>
     /// <param name="aData">
-    ///   JSON object with at least <c>Body</c> (required).
+    ///   Comment data with at least <c>Body</c> (required).
     /// </param>
     /// <returns>
     ///   The new comment ID, or 0 if validation failed.
     /// </returns>
     function Add(
       aPostId: TID;
-      const aData: RawJson
+      const aData: TCommentCreateDto
       ): TID;
 
     /// <summary>
@@ -104,19 +104,19 @@ type
     ///   The post's record ID.
     /// </param>
     /// <returns>
-    ///   JSON array of approved comment objects, or '[]'.
+    ///   Array of approved comments.
     /// </returns>
     function GetByPost(
       aPostId: TID
-      ): RawJson;
+      ): TCommentDtoArray;
 
     /// <summary>
     ///   Retrieves all comments awaiting moderation.
     /// </summary>
     /// <returns>
-    ///   JSON array of pending comment objects, or '[]'.
+    ///   Array of pending comments.
     /// </returns>
-    function GetPending: RawJson;
+    function GetPending: TCommentDtoArray;
 
     /// <summary>
     ///   Rejects a pending comment, hiding it from public view.
@@ -176,23 +176,60 @@ type
 
 implementation
 
+function CommentToDto(
+  aRec: TOrmBlogComment
+  ): TCommentDto;
+begin
+  Result.ID := aRec.IDValue;
+  Result.PostId := aRec.PostId;
+  Result.AuthorName := aRec.AuthorName;
+  Result.AuthorEmail := aRec.AuthorEmail;
+  Result.Body := aRec.Body;
+  Result.Status := aRec.Status;
+  Result.ModeratedBy := aRec.ModeratedBy;
+  Result.ModeratedAt := aRec.ModeratedAt;
+  Result.CreatedAt := aRec.CreatedAt;
+end;
+
+function CommentsFromQuery(
+  const aOrm: IRestOrm;
+  const aWhere: RawUtf8
+  ): TCommentDtoArray;
+var
+  Rec: TOrmBlogComment;
+  Count: PtrInt;
+begin
+  Result := nil;
+  Count := 0;
+  Rec := TOrmBlogComment.CreateAndFillPrepare(aOrm, aWhere);
+  try
+    SetLength(Result, Rec.FillTable.RowCount);
+    while Rec.FillOne do
+    begin
+      Result[Count] := CommentToDto(Rec);
+      Inc(Count);
+    end;
+    SetLength(Result, Count);
+  finally
+    Rec.Free;
+  end;
+end;
+
 function TCommentService.Add(
   aPostId: TID;
-  const aData: RawJson
+  const aData: TCommentCreateDto
   ): TID;
 var
-  Doc: TDocVariantData;
   Rec: TOrmBlogComment;
 begin
-  Doc.InitJson(aData, JSON_FAST_FLOAT);
-  if (aPostId <= 0) or (Doc.U['Body'] = '') then
+  if (aPostId <= 0) or (aData.Body = '') then
     Exit(0);
   Rec := TOrmBlogComment.Create;
   try
     Rec.PostId := aPostId;
-    Rec.AuthorName := Doc.U['AuthorName'];
-    Rec.AuthorEmail := Doc.U['AuthorEmail'];
-    Rec.Body := Doc.U['Body'];
+    Rec.AuthorName := aData.AuthorName;
+    Rec.AuthorEmail := aData.AuthorEmail;
+    Rec.Body := aData.Body;
     Rec.Status := COMMENT_STATUS_PENDING;
     Rec.CreatedAt := NowUtc;
     Result := FOrm.Add(Rec, True);
@@ -230,35 +267,15 @@ end;
 
 function TCommentService.GetByPost(
   aPostId: TID
-  ): RawJson;
-var
-  Table: TOrmTable;
+  ): TCommentDtoArray;
 begin
-  Table := FOrm.MultiFieldValues(TOrmBlogComment, '*', FormatUtf8('PostId=% AND Status=% ORDER BY RowID ASC',
+  Result := CommentsFromQuery(FOrm, FormatUtf8('PostId=% AND Status=% ORDER BY RowID ASC',
     [aPostId, COMMENT_STATUS_APPROVED]));
-  try
-    if Table = nil then
-      Result := '[]'
-    else
-      Result := Table.GetJsonValues(True);
-  finally
-    Table.Free;
-  end;
 end;
 
-function TCommentService.GetPending: RawJson;
-var
-  Table: TOrmTable;
+function TCommentService.GetPending: TCommentDtoArray;
 begin
-  Table := FOrm.MultiFieldValues(TOrmBlogComment, '*', FormatUtf8('Status=%', [COMMENT_STATUS_PENDING]));
-  try
-    if Table = nil then
-      Result := '[]'
-    else
-      Result := Table.GetJsonValues(True);
-  finally
-    Table.Free;
-  end;
+  Result := CommentsFromQuery(FOrm, FormatUtf8('Status=%', [COMMENT_STATUS_PENDING]));
 end;
 
 function TCommentService.Reject(

@@ -72,19 +72,19 @@ type
     ///   The unique identifier of the tag to retrieve.
     /// </param>
     /// <returns>
-    ///   JSON representation of the tag, or empty if not found.
+    ///   Tag data. <c>ID = 0</c> if not found.
     /// </returns>
     function Get(
       aId: TID
-      ): RawJson;
+      ): TTagDto;
 
     /// <summary>
     ///   Retrieves all tags.
     /// </summary>
     /// <returns>
-    ///   JSON array of all tags.
+    ///   Array of all tags.
     /// </returns>
-    function GetAll: RawJson;
+    function GetAll: TTagDtoArray;
 
     /// <summary>
     ///   Retrieves all tags associated with a given post.
@@ -93,11 +93,11 @@ type
     ///   The post ID whose tags should be retrieved.
     /// </param>
     /// <returns>
-    ///   JSON array of tags associated with the post.
+    ///   Array of tags associated with the post.
     /// </returns>
     function GetByPost(
       aPostId: TID
-      ): RawJson;
+      ): TTagDtoArray;
 
     /// <summary>
     ///   Retrieves all post IDs that have a specific tag assigned.
@@ -106,11 +106,11 @@ type
     ///   The tag ID to look up.
     /// </param>
     /// <returns>
-    ///   JSON array of post IDs that carry the given tag.
+    ///   Array of post IDs that carry the given tag.
     /// </returns>
     function GetPostIds(
       aTagId: TID
-      ): RawJson;
+      ): TIDDynArray;
 
     /// <summary>
     ///   Replaces all tag associations for a post with the given tag IDs.
@@ -130,16 +130,16 @@ type
       ): boolean;
 
     /// <summary>
-    ///   Creates a new tag from the provided JSON data.
+    ///   Creates a new tag.
     /// </summary>
     /// <param name="aData">
-    ///   JSON object containing at least a <c>Name</c> field.
+    ///   Tag data with at least <c>Name</c> (required).
     /// </param>
     /// <returns>
     ///   The ID of the newly created tag, or 0 if the name was empty.
     /// </returns>
     function Add(
-      const aData: RawJson
+      const aData: TTagCreateDto
       ): TID;
 
     /// <summary>
@@ -200,21 +200,30 @@ type
 
 implementation
 
+function TagToDto(
+  aRec: TOrmBlogTag
+  ): TTagDto;
+begin
+  Result.ID := aRec.IDValue;
+  Result.Name := aRec.Name;
+  Result.Slug := aRec.Slug;
+  Result.Description := aRec.Description;
+  Result.CreatedAt := aRec.CreatedAt;
+end;
+
 function TTagService.Add(
-  const aData: RawJson
+  const aData: TTagCreateDto
   ): TID;
 var
-  Doc: TDocVariantData;
   Tag: TOrmBlogTag;
 begin
-  Doc.InitJson(aData, JSON_FAST_FLOAT);
-  if Doc.U['Name'] = '' then
+  if aData.Name = '' then
     Exit(0);
   Tag := TOrmBlogTag.Create;
   try
-    Tag.Name := Doc.U['Name'];
+    Tag.Name := aData.Name;
     Tag.Slug := TextToSlug(Tag.Name);
-    Tag.Description := Doc.U['Description'];
+    Tag.Description := aData.Description;
     Tag.CreatedAt := NowUtc;
     Result := FOrm.Add(Tag, True);
   finally
@@ -232,43 +241,74 @@ end;
 
 function TTagService.Get(
   aId: TID
-  ): RawJson;
+  ): TTagDto;
+var
+  Rec: TOrmBlogTag;
 begin
-  Result := OrmGetById(FOrm, TOrmBlogTag, aId);
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Rec := TOrmBlogTag.Create;
+  try
+    if FOrm.Retrieve(aId, Rec) then
+      Result := TagToDto(Rec);
+  finally
+    Rec.Free;
+  end;
 end;
 
-function TTagService.GetAll: RawJson;
+function TTagService.GetAll: TTagDtoArray;
+var
+  Rec: TOrmBlogTag;
+  Count: PtrInt;
 begin
-  Result := OrmGetAll(FOrm, TOrmBlogTag);
+  Result := nil;
+  Count := 0;
+  Rec := TOrmBlogTag.CreateAndFillPrepare(FOrm, '', []);
+  try
+    SetLength(Result, Rec.FillTable.RowCount);
+    while Rec.FillOne do
+    begin
+      Result[Count] := TagToDto(Rec);
+      Inc(Count);
+    end;
+    SetLength(Result, Count);
+  finally
+    Rec.Free;
+  end;
 end;
 
 function TTagService.GetByPost(
   aPostId: TID
-  ): RawJson;
+  ): TTagDtoArray;
 var
   Table: TOrmTable;
-  Doc: TDocVariantData;
   Tag: TOrmBlogTag;
   TagId: TID;
   RowIdx: PtrInt;
+  Count: PtrInt;
 begin
+  Result := nil;
+  Count := 0;
   Table := FOrm.MultiFieldValues(TOrmPostTag, 'TagId', FormatUtf8('PostId=%', [aPostId]));
   try
     if (Table = nil) or (Table.RowCount = 0) then
-      Exit('[]');
-    Doc.InitArray([], JSON_FAST);
+      Exit;
+    SetLength(Result, Table.RowCount);
     for RowIdx := 1 to Table.RowCount do
     begin
       TagId := Table.GetAsInt64(RowIdx, 0);
       Tag := TOrmBlogTag.Create;
       try
         if FOrm.Retrieve(TagId, Tag) then
-          Doc.AddItem(_JsonFast(Tag.GetJsonValues(True, True, ooSelect)));
+        begin
+          Result[Count] := TagToDto(Tag);
+          Inc(Count);
+        end;
       finally
         Tag.Free;
       end;
     end;
-    Result := Doc.ToJson;
+    SetLength(Result, Count);
   finally
     Table.Free;
   end;
@@ -276,20 +316,19 @@ end;
 
 function TTagService.GetPostIds(
   aTagId: TID
-  ): RawJson;
+  ): TIDDynArray;
 var
   Table: TOrmTable;
-  Arr: TDocVariantData;
   RowIdx: PtrInt;
 begin
+  Result := nil;
   Table := FOrm.MultiFieldValues(TOrmPostTag, 'PostId', FormatUtf8('TagId=%', [aTagId]));
   try
     if (Table = nil) or (Table.RowCount = 0) then
-      Exit('[]');
-    Arr.InitArray([], JSON_FAST);
+      Exit;
+    SetLength(Result, Table.RowCount);
     for RowIdx := 1 to Table.RowCount do
-      Arr.AddItem(Table.GetAsInt64(RowIdx, 0));
-    Result := Arr.ToJson;
+      Result[RowIdx - 1] := Table.GetAsInt64(RowIdx, 0);
   finally
     Table.Free;
   end;

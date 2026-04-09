@@ -34,8 +34,8 @@ async function loadPosts(page = 1) {
   const r = await API.getPosts(page);
   if (!r.ok) { app.innerHTML = '<p class="error">Failed to load posts.</p>'; return; }
 
-  const posts = r.data.items || r.data || [];
-  const total = r.data.total || 0;
+  const posts = r.data.Items || r.data || [];
+  const total = r.data.Total || 0;
   const totalPages = Math.ceil(total / 10);
 
   if (posts.length === 0) {
@@ -48,7 +48,7 @@ async function loadPosts(page = 1) {
     const date = p.PublishedAt ? new Date(p.PublishedAt).toLocaleDateString('en') : '';
     html += `
       <li class="post-card">
-        <h2><a href="#" onclick="loadPost(${p.RowID || p.ID}); return false;">${esc(p.Title)}</a></h2>
+        <h2><a href="#" onclick="loadPost(${p.ID}); return false;">${esc(p.Title)}</a></h2>
         <div class="post-meta">${date}</div>
         <p class="post-excerpt">${esc(p.Excerpt || '')}</p>
       </li>`;
@@ -75,7 +75,7 @@ async function loadPost(id) {
   if (!r.ok) { app.innerHTML = '<p class="error">Post not found.</p>'; return; }
 
   const p = r.data;
-  const postId = p.RowID || p.ID || id;
+  const postId = p.ID || id;
   const date = p.PublishedAt ? new Date(p.PublishedAt).toLocaleDateString('en') : '';
   const author = p.Author || {};
   const tags = p.Tags || [];
@@ -86,14 +86,14 @@ async function loadPost(id) {
     tagsHtml = '<p class="error" style="margin:.5rem 0">Tags could not be loaded.</p>';
   else if (tags.length > 0)
     tagsHtml = '<div style="margin:.5rem 0">' +
-      tags.map(t => `<span class="tag" onclick="loadPostsByTag(${t.RowID || t.ID})">${esc(t.Name || '')}</span>`).join('') +
+      tags.map(t => `<span class="tag" onclick="loadPostsByTag(${t.ID})">${esc(t.Name || '')}</span>`).join('') +
       '</div>';
 
   let authorHtml = '';
   if (p.AuthorUnavailable)
     authorHtml = ' &mdash; <span style="color:var(--text-light)">(Author unavailable)</span>';
   else if (author.DisplayName)
-    authorHtml = ' &mdash; <a href="#" onclick="loadAuthor(' + (author.RowID || author.ID) + '); return false;">' + esc(author.DisplayName) + '</a>';
+    authorHtml = ' &mdash; <a href="#" onclick="loadAuthor(' + (author.ID) + '); return false;">' + esc(author.DisplayName) + '</a>';
 
   let commentsHtml = '';
   if (p.CommentsUnavailable) {
@@ -182,7 +182,7 @@ async function loadTags() {
   }
   let html = '<h2>Tags</h2><ul class="tag-list">';
   for (const t of tags)
-    html += `<li><span class="tag" onclick="loadPostsByTag(${t.RowID || t.ID})">${esc(t.Name)}</span></li>`;
+    html += `<li><span class="tag" onclick="loadPostsByTag(${t.ID})">${esc(t.Name)}</span></li>`;
   html += '</ul>';
   app.innerHTML = html;
 }
@@ -212,7 +212,7 @@ async function loadPostsByTag(tagId) {
       const author = p.Author ? p.Author.DisplayName : '';
       html += `
         <li class="post-card">
-          <h2><a href="#" onclick="loadPost(${p.RowID || p.ID}); return false;">${esc(p.Title)}</a></h2>
+          <h2><a href="#" onclick="loadPost(${p.ID}); return false;">${esc(p.Title)}</a></h2>
           <div class="post-meta">${date}${author ? ' &mdash; ' + esc(author) : ''}</div>
           <p class="post-excerpt">${esc(p.Excerpt || '')}</p>
         </li>`;
@@ -249,11 +249,11 @@ async function loadAuthor(id) {
   if (pr.ok) {
     let postsData = pr.data.Result;
     if (typeof postsData === 'string') postsData = JSON.parse(postsData);
-    const items = postsData?.items || [];
+    const items = postsData?.Items || [];
     if (items.length > 0) {
       let ph = '<ul class="post-list">';
       for (const p of items)
-        ph += `<li class="post-card"><h2><a href="#" onclick="loadPost(${p.RowID || p.ID}); return false;">${esc(p.Title)}</a></h2></li>`;
+        ph += `<li class="post-card"><h2><a href="#" onclick="loadPost(${p.ID}); return false;">${esc(p.Title)}</a></h2></li>`;
       ph += '</ul>';
       postsDiv.innerHTML = ph;
     } else {
@@ -315,7 +315,7 @@ async function loadDashboard() {
 
   const r = await API.getMyPosts();
   if (r.ok) {
-    const posts = r.data.items || r.data || [];
+    const posts = r.data.Items || r.data || [];
     if (posts.length === 0) {
       html += '<p>No posts yet. Create your first one!</p>';
     } else {
@@ -331,8 +331,8 @@ async function loadDashboard() {
                 <span class="post-status ${statusCls}">${statusTxt}</span>
               </div>
               <div>
-                <button class="btn-sm btn-outline" onclick="editPost(${p.RowID || p.ID})">Edit</button>
-                <button class="btn-sm btn-danger" onclick="deletePostConfirm(${p.RowID || p.ID})">Delete</button>
+                <button class="btn-sm btn-outline" onclick="editPost(${p.ID})">Edit</button>
+                <button class="btn-sm btn-danger" onclick="deletePostConfirm(${p.ID})">Delete</button>
               </div>
             </div>
           </li>`;
@@ -356,7 +356,7 @@ async function loadEditorTags(selectedIds = []) {
   if (!r.ok) { container.innerHTML = ''; return; }
   const tags = Array.isArray(r.data) ? r.data : [];
   container.innerHTML = tags.map(t => {
-    const tid = t.RowID || t.ID;
+    const tid = t.ID;
     const checked = selectedIds.includes(tid) ? ' checked' : '';
     return `<label class="tag-checkbox"><input type="checkbox" value="${tid}"${checked}> ${esc(t.Name)}</label>`;
   }).join('');
@@ -399,7 +399,7 @@ async function editPost(id) {
   const r = await API.getPost(id);
   if (!r.ok) { alert('Post not found.'); return; }
   const p = r.data;
-  const postTags = (p.Tags || []).map(t => t.RowID || t.ID);
+  const postTags = (p.Tags || []).map(t => t.ID);
   $('#editor-id').value = id;
   $('#editor-title').textContent = 'Edit Post';
   $('#editor-post-title').value = p.Title || '';
@@ -475,8 +475,8 @@ async function loadModeration() {
             <div class="comment-body">${esc(c.Body)}</div>
           </div>
           <div class="moderation-actions">
-            <button class="btn-sm btn-success" onclick="moderateComment(${c.RowID || c.ID}, 'approve')">Approve</button>
-            <button class="btn-sm btn-danger" onclick="moderateComment(${c.RowID || c.ID}, 'reject')">Reject</button>
+            <button class="btn-sm btn-success" onclick="moderateComment(${c.ID}, 'approve')">Approve</button>
+            <button class="btn-sm btn-danger" onclick="moderateComment(${c.ID}, 'reject')">Reject</button>
           </div>
         </div>`;
     }
@@ -546,10 +546,10 @@ async function loadAnalytics() {
 
   // Overview cards
   html += '<div class="analytics-cards">';
-  html += renderCard('Posts', d.posts, d.postsUnavailable);
-  html += renderCard('Authors', d.authors, d.authorsUnavailable);
-  html += renderCard('Tags', d.tags, d.tagsUnavailable);
-  html += renderCard('Pending Comments', d.pendingComments, d.commentsUnavailable);
+  html += renderCard('Posts', d.Posts, d.PostsUnavailable);
+  html += renderCard('Authors', d.Authors, d.AuthorsUnavailable);
+  html += renderCard('Tags', d.Tags, d.TagsUnavailable);
+  html += renderCard('Pending Comments', d.PendingComments, d.CommentsUnavailable);
   html += '</div>';
 
   // Sub-navigation
@@ -583,9 +583,9 @@ async function loadAuthorStats() {
     html += '<table class="analytics-table"><thead><tr><th>Author</th><th>Posts</th><th>Comments</th></tr></thead><tbody>';
     for (const a of authors) {
       html += `<tr>
-        <td><a href="#" onclick="loadAuthor(${a.authorId}); return false;">${esc(a.displayName)}</a></td>
-        <td>${a.postCount ?? 0}</td>
-        <td>${a.commentCount ?? 0}</td>
+        <td><a href="#" onclick="loadAuthor(${a.AuthorId}); return false;">${esc(a.DisplayName)}</a></td>
+        <td>${a.PostCount ?? 0}</td>
+        <td>${a.CommentCount ?? 0}</td>
       </tr>`;
     }
     html += '</tbody></table>';
@@ -604,11 +604,11 @@ async function loadTagCloudView() {
   if (tags.length === 0) {
     html += '<p>No tags available.</p>';
   } else {
-    const maxCount = Math.max(...tags.map(t => t.postCount || 0), 1);
+    const maxCount = Math.max(...tags.map(t => t.PostCount || 0), 1);
     html += '<div class="tag-cloud">';
     for (const t of tags) {
-      const size = 0.8 + (t.postCount || 0) / maxCount * 1.2;
-      html += `<span class="tag-cloud-item" style="font-size:${size.toFixed(2)}rem" onclick="loadPostsByTag(${t.tagId})">${esc(t.name)} <sup>${t.postCount || 0}</sup></span> `;
+      const size = 0.8 + (t.PostCount || 0) / maxCount * 1.2;
+      html += `<span class="tag-cloud-item" style="font-size:${size.toFixed(2)}rem" onclick="loadPostsByTag(${t.TagId})">${esc(t.Name)} <sup>${t.PostCount || 0}</sup></span> `;
     }
     html += '</div>';
   }
@@ -624,17 +624,17 @@ async function loadCommentActivityView() {
   const d = r.data;
   let html = '<h2>Comment Activity</h2>';
   html += `<div class="analytics-cards">`;
-  html += renderCard('Pending', d.pendingCount, false);
+  html += renderCard('Pending', d.PendingCount, false);
   html += `</div>`;
 
-  const top = d.topCommentedPosts || [];
+  const top = d.TopCommentedPosts || [];
   if (top.length > 0) {
     html += '<h3>Top Commented Posts</h3>';
     html += '<table class="analytics-table"><thead><tr><th>Post</th><th>Comments</th></tr></thead><tbody>';
     for (const p of top) {
       html += `<tr>
-        <td><a href="#" onclick="loadPost(${p.postId}); return false;">${esc(p.title)}</a></td>
-        <td>${p.commentCount ?? 0}</td>
+        <td><a href="#" onclick="loadPost(${p.PostId}); return false;">${esc(p.Title)}</a></td>
+        <td>${p.CommentCount ?? 0}</td>
       </tr>`;
     }
     html += '</tbody></table>';
@@ -654,7 +654,7 @@ async function loadRecentPostsFullView() {
     html += '<p>No posts available.</p>';
   } else {
     for (const p of posts) {
-      const postId = p.RowID || p.ID;
+      const postId = p.ID;
       const date = p.PublishedAt ? new Date(p.PublishedAt).toLocaleDateString('en') : '';
       const tags = p.Tags || [];
       const comments = p.Comments || [];
@@ -663,7 +663,7 @@ async function loadRecentPostsFullView() {
       let authorHtml = '';
       if (p.Author && p.Author.DisplayName) {
         const a = p.Author;
-        authorHtml = `<div class="enriched-author"><a href="#" onclick="loadAuthor(${a.RowID || a.ID}); return false;">${esc(a.DisplayName)}</a>`;
+        authorHtml = `<div class="enriched-author"><a href="#" onclick="loadAuthor(${a.ID}); return false;">${esc(a.DisplayName)}</a>`;
         if (a.Bio) authorHtml += ` <span class="enriched-author-bio">&mdash; ${esc(a.Bio)}</span>`;
         authorHtml += '</div>';
       } else {
@@ -676,7 +676,7 @@ async function loadRecentPostsFullView() {
         tagsHtml = '<p class="error" style="margin:.3rem 0">Tags unavailable</p>';
       } else if (tags.length > 0) {
         tagsHtml = '<div class="enriched-tags">' + tags.map(t =>
-          `<span class="tag" onclick="loadPostsByTag(${t.RowID || t.ID})">${esc(t.Name)}</span>`
+          `<span class="tag" onclick="loadPostsByTag(${t.ID})">${esc(t.Name)}</span>`
         ).join('') + '</div>';
       }
 

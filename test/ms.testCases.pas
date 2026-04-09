@@ -1,4 +1,4 @@
-﻿/// <summary>
+/// <summary>
 ///   Integration tests for all blog microservices.
 ///
 ///   Demonstrates mORMot2's key testing advantage: all 7 microservices
@@ -836,46 +836,58 @@ end;
 
 function TMsTestCase.Context: TBlogTestContext;
 begin
-  Result := (Owner as TBlogTests).TestContext;
+  Exit((Owner as TBlogTests).TestContext);
 end;
 
 procedure TTestUserService.AddAndGet;
 var
   Id: TID;
-  Json: RawJson;
-  Doc: TDocVariantData;
+  AuthorDto: TAuthorDto;
+  CreateDto: TAuthorCreateDto;
 begin
-  Id := Context.User.Add('{"DisplayName":"Max","Bio":"Test author","WebsiteUrl":"https://example.com"}');
+  CreateDto.DisplayName := 'Max';
+  CreateDto.Bio := 'Test author';
+  CreateDto.WebsiteUrl := 'https://example.com';
+  Id := Context.User.Add(CreateDto);
   Check(Id > 0, 'User.Add should return positive ID');
-  Json := Context.User.Get(Id);
-  Check(Json <> '', 'User.Get should return JSON');
-  Doc.InitJson(Json, JSON_FAST_FLOAT);
-  CheckEqual(Doc.U['DisplayName'], 'Max');
-  CheckEqual(Doc.U['Bio'], 'Test author');
+  AuthorDto := Context.User.Get(Id);
+  Check(AuthorDto.ID > 0, 'User.Get should return a valid record');
+  CheckEqual(AuthorDto.DisplayName, 'Max');
+  CheckEqual(AuthorDto.Bio, 'Test author');
 end;
 
 procedure TTestUserService.AddEmptyName;
+var
+  CreateDto: TAuthorCreateDto;
 begin
-  CheckEqual(Context.User.Add('{"Bio":"No name"}'), 0, 'empty DisplayName should return 0');
-  CheckEqual(Context.User.Add('{}'), 0, 'empty JSON should return 0');
+  CreateDto.DisplayName := '';
+  CreateDto.Bio := 'No name';
+  CheckEqual(Context.User.Add(CreateDto), 0, 'empty DisplayName should return 0');
+  CreateDto.Bio := '';
+  CheckEqual(Context.User.Add(CreateDto), 0, 'empty DTO should return 0');
 end;
 
 procedure TTestUserService.GetNotFound;
+var
+  AuthorDto: TAuthorDto;
 begin
-  CheckEqual(Context.User.Get(99999), '{}');
+  AuthorDto := Context.User.Get(99999);
+  Check(AuthorDto.ID = 0, 'not found should return ID=0');
 end;
 
 procedure TTestUserService.Update;
 var
   Id: TID;
-  Doc: TDocVariantData;
+  AuthorDto: TAuthorDto;
+  CreateDto: TAuthorCreateDto;
 begin
-  Id := Context.User.Add('{"DisplayName":"Update Test"}');
+  CreateDto.DisplayName := 'Update Test';
+  Id := Context.User.Add(CreateDto);
   Check(Id > 0);
   Check(Context.User.Update(Id, '{"Bio":"Updated bio"}'));
-  Doc.InitJson(Context.User.Get(Id), JSON_FAST_FLOAT);
-  CheckEqual(Doc.U['Bio'], 'Updated bio');
-  CheckEqual(Doc.U['DisplayName'], 'Update Test');
+  AuthorDto := Context.User.Get(Id);
+  CheckEqual(AuthorDto.Bio, 'Updated bio');
+  CheckEqual(AuthorDto.DisplayName, 'Update Test');
 end;
 
 procedure TTestUserService.UpdateNotFound;
@@ -885,31 +897,34 @@ end;
 
 procedure TTestUserService.GetAll;
 var
-  Json: RawJson;
-  Arr: TDocVariantData;
+  AllAuthors: TAuthorDtoArray;
 begin
-  Json := Context.User.GetAll;
-  Check(Json <> '', 'GetAll should return JSON');
-  Check(Json <> '[]', 'GetAll should not be empty');
-  Arr.InitJson(Json, JSON_FAST_FLOAT);
-  Check(Arr.Count >= 2, 'should have at least 2 users');
+  AllAuthors := Context.User.GetAll;
+  Check(Length(AllAuthors) >= 2, 'should have at least 2 users');
 end;
 
 procedure TTestUserService.Remove;
 var
   Id: TID;
+  AuthorDto: TAuthorDto;
+  CreateDto: TAuthorCreateDto;
 begin
-  Id := Context.User.Add('{"DisplayName":"To Remove"}');
+  CreateDto.DisplayName := 'To Remove';
+  Id := Context.User.Add(CreateDto);
   Check(Id > 0);
   Check(Context.User.Remove(Id));
-  CheckEqual(Context.User.Get(Id), '{}');
+  AuthorDto := Context.User.Get(Id);
+  Check(AuthorDto.ID = 0, 'removed user should return ID=0');
 end;
 
 procedure TTestUserService.RemoveNotFound;
+var
+  AuthorDto: TAuthorDto;
 begin
   // mORMot2 ORM returns True even if no row was deleted
   Check(Context.User.Remove(99999), 'DELETE on non-existent is not an error in mORMot2');
-  CheckEqual(Context.User.Get(99999), '{}', 'record should still not exist');
+  AuthorDto := Context.User.Get(99999);
+  Check(AuthorDto.ID = 0, 'record should still not exist');
 end;
 
 procedure TTestAuthService.RegisterUser;
@@ -1046,10 +1061,12 @@ var
   ClientProof, Token, ServerProof: RawUtf8;
   UserId, AuthUserId: TID;
   ClientSignature: THash256;
+  CreateDto: TAuthorCreateDto;
   Ok: boolean;
 begin
   // Register a new user with a unique userId for this test
-  UserId := Context.User.Add('{"DisplayName":"PW Changer"}');
+  CreateDto.DisplayName := 'PW Changer';
+  UserId := Context.User.Add(CreateDto);
   Check(UserId > 0, 'create user for changepw test');
   AuthUserId := Context.Auth.Register('changepw@example.com', 'oldpass', UserId);
   Check(AuthUserId > 0, 'register changepw account');
@@ -1058,7 +1075,8 @@ begin
   // Login with new password
   Context.Auth.Challenge('changepw@example.com', McfInfo, ServerNonce);
   McfHash := ModularCryptHash(McfInfo, 'newpass');
-  ClientProof := ScramClientProof(McfHash, 'changepw@example.com', ClientSignature, ['changepw@example.com', ServerNonce]);
+  ClientProof := ScramClientProof(McfHash, 'changepw@example.com', ClientSignature,
+    ['changepw@example.com', ServerNonce]);
   Ok := Context.Auth.Authenticate('changepw@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof);
   Check(Ok, 'login with new password should succeed');
 end;
@@ -1066,8 +1084,10 @@ end;
 procedure TTestAuthService.ChangePasswordWrongOld;
 var
   UserId: TID;
+  CreateDto: TAuthorCreateDto;
 begin
-  UserId := Context.User.Add('{"DisplayName":"WrongOld Test"}');
+  CreateDto.DisplayName := 'WrongOld Test';
+  UserId := Context.User.Add(CreateDto);
   Context.Auth.Register('wrongold@example.com', 'correct', UserId);
   Check(not Context.Auth.ChangePassword(UserId, 'WRONG', 'newpass'), 'wrong old password should fail');
 end;
@@ -1075,70 +1095,101 @@ end;
 procedure TTestPostService.AddAndGet;
 var
   Id: TID;
-  Doc: TDocVariantData;
+  PostDto: TPostDto;
+  CreateDto: TPostCreateDto;
 begin
-  Id := Context.Post.Add('{"Title":"First Post","Body":"Hello world","AuthorId":1,"Status":1}');
+  CreateDto.Title := 'First Post';
+  CreateDto.Body := 'Hello world';
+  CreateDto.AuthorId := 1;
+  CreateDto.Status := POST_STATUS_PUBLISHED;
+  Id := Context.Post.Add(CreateDto);
   Check(Id > 0, 'Post.Add should return positive ID');
-  Doc.InitJson(Context.Post.Get(Id), JSON_FAST_FLOAT);
-  CheckEqual(Doc.U['Title'], 'First Post');
-  CheckEqual(Doc.U['Slug'], 'first-post');
-  CheckEqual(Doc.I['Status'], POST_STATUS_PUBLISHED);
+  PostDto := Context.Post.Get(Id);
+  CheckEqual(PostDto.Title, 'First Post');
+  CheckEqual(PostDto.Slug, 'first-post');
+  CheckEqual(PostDto.Status, POST_STATUS_PUBLISHED);
 end;
 
 procedure TTestPostService.AddEmptyTitle;
+var
+  CreateDto: TPostCreateDto;
 begin
-  CheckEqual(Context.Post.Add('{"Body":"no title","AuthorId":1}'), 0, 'empty title should return 0');
-  CheckEqual(Context.Post.Add('{}'), 0, 'empty JSON should return 0');
+  CreateDto.Title := '';
+  CreateDto.Body := 'no title';
+  CreateDto.AuthorId := 1;
+  CheckEqual(Context.Post.Add(CreateDto), 0, 'empty title should return 0');
+  FillCharFast(CreateDto, SizeOf(CreateDto), 0);
+  CheckEqual(Context.Post.Add(CreateDto), 0, 'empty DTO should return 0');
 end;
 
 procedure TTestPostService.GetNotFound;
+var
+  PostDto: TPostDto;
 begin
-  CheckEqual(Context.Post.Get(99999), '{}');
+  PostDto := Context.Post.Get(99999);
+  Check(PostDto.ID = 0, 'not found should return ID=0');
 end;
 
 procedure TTestPostService.GetBySlug;
 var
-  Doc: TDocVariantData;
+  PostDto: TPostDto;
 begin
-  Doc.InitJson(Context.Post.GetBySlug('first-post'), JSON_FAST_FLOAT);
-  CheckEqual(Doc.U['Title'], 'First Post');
+  PostDto := Context.Post.GetBySlug('first-post');
+  CheckEqual(PostDto.Title, 'First Post');
 end;
 
 procedure TTestPostService.GetBySlugNotFound;
+var
+  PostDto: TPostDto;
 begin
-  CheckEqual(Context.Post.GetBySlug('no-such-slug'), '{}');
+  PostDto := Context.Post.GetBySlug('no-such-slug');
+  Check(PostDto.ID = 0, 'not found by slug should return ID=0');
 end;
 
 procedure TTestPostService.GetList;
 var
   Id: TID;
-  Doc: TDocVariantData;
+  PostList: TPostListDto;
+  CreateDto: TPostCreateDto;
 begin
   // Add more posts
-  Id := Context.Post.Add('{"Title":"Draft Post","Body":"Not published","AuthorId":1,"Status":0}');
+  CreateDto.Title := 'Draft Post';
+  CreateDto.Body := 'Not published';
+  CreateDto.AuthorId := 1;
+  CreateDto.Status := POST_STATUS_DRAFT;
+  Id := Context.Post.Add(CreateDto);
   Check(Id > 0);
-  Id := Context.Post.Add('{"Title":"Second Published","Body":"Content","AuthorId":1,"Status":1}');
+  CreateDto.Title := 'Second Published';
+  CreateDto.Body := 'Content';
+  CreateDto.AuthorId := 1;
+  CreateDto.Status := POST_STATUS_PUBLISHED;
+  Id := Context.Post.Add(CreateDto);
   Check(Id > 0);
   // Get published only (status=1)
-  Doc.InitJson(Context.Post.GetList(1, 10, 1, 0), JSON_FAST_FLOAT);
-  Check(Doc.I['total'] >= 2, 'should have at least 2 published posts');
+  PostList := Context.Post.GetList(1, 10, 1, 0);
+  Check(PostList.Total >= 2, 'should have at least 2 published posts');
   // Filter by author
-  Doc.InitJson(Context.Post.GetList(1, 10, 0, 1), JSON_FAST_FLOAT);
-  Check(Doc.I['total'] >= 3, 'author 1 should have at least 3 posts');
+  PostList := Context.Post.GetList(1, 10, 0, 1);
+  Check(PostList.Total >= 3, 'author 1 should have at least 3 posts');
 end;
 
 procedure TTestPostService.Update;
 var
   Id: TID;
-  Doc: TDocVariantData;
+  PostDto: TPostDto;
+  CreateDto: TPostCreateDto;
 begin
-  Id := Context.Post.Add('{"Title":"To Update","Body":"Original","AuthorId":1,"Status":0}');
+  CreateDto.Title := 'To Update';
+  CreateDto.Body := 'Original';
+  CreateDto.AuthorId := 1;
+  CreateDto.Status := POST_STATUS_DRAFT;
+  Id := Context.Post.Add(CreateDto);
   Check(Id > 0);
   Check(Context.Post.Update(Id, '{"Title":"Updated Title","Status":1}'));
-  Doc.InitJson(Context.Post.Get(Id), JSON_FAST_FLOAT);
-  CheckEqual(Doc.U['Title'], 'Updated Title');
-  CheckEqual(Doc.U['Slug'], 'updated-title');
-  CheckEqual(Doc.I['Status'], POST_STATUS_PUBLISHED);
+  PostDto := Context.Post.Get(Id);
+  CheckEqual(PostDto.Title, 'Updated Title');
+  CheckEqual(PostDto.Slug, 'updated-title');
+  CheckEqual(PostDto.Status, POST_STATUS_PUBLISHED);
 end;
 
 procedure TTestPostService.UpdateNotFound;
@@ -1149,58 +1200,84 @@ end;
 procedure TTestPostService.Remove;
 var
   Id: TID;
+  PostDto: TPostDto;
+  CreateDto: TPostCreateDto;
 begin
-  Id := Context.Post.Add('{"Title":"To Delete","Body":"Gone soon","AuthorId":1,"Status":0}');
+  CreateDto.Title := 'To Delete';
+  CreateDto.Body := 'Gone soon';
+  CreateDto.AuthorId := 1;
+  CreateDto.Status := POST_STATUS_DRAFT;
+  Id := Context.Post.Add(CreateDto);
   Check(Id > 0);
   Check(Context.Post.Remove(Id));
-  CheckEqual(Context.Post.Get(Id), '{}');
+  PostDto := Context.Post.Get(Id);
+  Check(PostDto.ID = 0, 'removed post should return ID=0');
 end;
 
 procedure TTestPostService.RemoveNotFound;
+var
+  PostDto: TPostDto;
 begin
   // mORMot2 ORM returns True even if no row was deleted
   Check(Context.Post.Remove(99999), 'DELETE on non-existent is not an error in mORMot2');
-  CheckEqual(Context.Post.Get(99999), '{}', 'record should still not exist');
+  PostDto := Context.Post.Get(99999);
+  Check(PostDto.ID = 0, 'record should still not exist');
 end;
 
 procedure TTestTagService.AddAndGet;
 var
   Id: TID;
-  Doc: TDocVariantData;
+  TagDto: TTagDto;
+  CreateDto: TTagCreateDto;
 begin
-  Id := Context.Tag.Add('{"Name":"Delphi","Description":"Delphi language"}');
+  CreateDto.Name := 'Delphi';
+  CreateDto.Description := 'Delphi language';
+  Id := Context.Tag.Add(CreateDto);
   Check(Id > 0, 'Tag.Add should return positive ID');
-  Doc.InitJson(Context.Tag.Get(Id), JSON_FAST_FLOAT);
-  CheckEqual(Doc.U['Name'], 'Delphi');
-  CheckEqual(Doc.U['Slug'], 'delphi');
+  TagDto := Context.Tag.Get(Id);
+  CheckEqual(TagDto.Name, 'Delphi');
+  CheckEqual(TagDto.Slug, 'delphi');
 end;
 
 procedure TTestTagService.AddEmptyName;
+var
+  CreateDto: TTagCreateDto;
 begin
-  CheckEqual(Context.Tag.Add('{"Description":"no name"}'), 0, 'empty name should return 0');
+  CreateDto.Name := '';
+  CreateDto.Description := 'no name';
+  CheckEqual(Context.Tag.Add(CreateDto), 0, 'empty name should return 0');
 end;
 
 procedure TTestTagService.AddDuplicateName;
+var
+  CreateDto: TTagCreateDto;
 begin
-  CheckEqual(Context.Tag.Add('{"Name":"Delphi"}'), 0, 'duplicate name should fail (UNIQUE constraint)');
+  CreateDto.Name := 'Delphi';
+  CheckEqual(Context.Tag.Add(CreateDto), 0, 'duplicate name should fail (UNIQUE constraint)');
 end;
 
 procedure TTestTagService.GetNotFound;
+var
+  TagDto: TTagDto;
 begin
-  CheckEqual(Context.Tag.Get(99999), '{}');
+  TagDto := Context.Tag.Get(99999);
+  Check(TagDto.ID = 0, 'not found should return ID=0');
 end;
 
 procedure TTestTagService.GetAll;
 var
   Id: TID;
-  Arr: TDocVariantData;
+  AllTags: TTagDtoArray;
+  CreateDto: TTagCreateDto;
 begin
-  Id := Context.Tag.Add('{"Name":"mORMot2"}');
+  CreateDto.Name := 'mORMot2';
+  Id := Context.Tag.Add(CreateDto);
   Check(Id > 0);
-  Id := Context.Tag.Add('{"Name":"Testing"}');
+  CreateDto.Name := 'Testing';
+  Id := Context.Tag.Add(CreateDto);
   Check(Id > 0);
-  Arr.InitJson(Context.Tag.GetAll, JSON_FAST_FLOAT);
-  Check(Arr.Count >= 3, 'should have at least 3 tags');
+  AllTags := Context.Tag.GetAll;
+  Check(Length(AllTags) >= 3, 'should have at least 3 tags');
 end;
 
 procedure TTestTagService.SetPostTags;
@@ -1216,87 +1293,123 @@ end;
 
 procedure TTestTagService.GetByPost;
 var
-  Arr: TDocVariantData;
+  PostTags: TTagDtoArray;
 begin
-  Arr.InitJson(Context.Tag.GetByPost(1), JSON_FAST_FLOAT);
-  CheckEqual(Arr.Count, 2, 'post 1 should have 2 tags');
+  PostTags := Context.Tag.GetByPost(1);
+  CheckEqual(Length(PostTags), 2, 'post 1 should have 2 tags');
 end;
 
 procedure TTestTagService.GetByPostNoTags;
 var
   PostId: TID;
+  PostTags: TTagDtoArray;
+  CreateDto: TPostCreateDto;
 begin
-  PostId := Context.Post.Add('{"Title":"No Tags Post","Body":"x","AuthorId":1,"Status":0}');
-  CheckEqual(Context.Tag.GetByPost(PostId), '[]', 'post without tags should return empty array');
+  CreateDto.Title := 'No Tags Post';
+  CreateDto.Body := 'x';
+  CreateDto.AuthorId := 1;
+  CreateDto.Status := POST_STATUS_DRAFT;
+  PostId := Context.Post.Add(CreateDto);
+  PostTags := Context.Tag.GetByPost(PostId);
+  Check(Length(PostTags) = 0, 'post without tags should return empty array');
 end;
 
 procedure TTestTagService.GetPostIds;
 var
-  Arr: TDocVariantData;
+  PostIds: TIDDynArray;
 begin
   // Post 1 was assigned 2 tags in SetPostTags -- check reverse lookup
-  Arr.InitJson(Context.Tag.GetPostIds(1), JSON_FAST_FLOAT);
-  Check(Arr.Count > 0, 'tag 1 should have at least one post');
+  PostIds := Context.Tag.GetPostIds(1);
+  Check(Length(PostIds) > 0, 'tag 1 should have at least one post');
 end;
 
 procedure TTestTagService.GetPostIdsNoResults;
+var
+  PostIds: TIDDynArray;
 begin
-  CheckEqual(Context.Tag.GetPostIds(9999), '[]', 'non-existent tag should return empty array');
+  PostIds := Context.Tag.GetPostIds(9999);
+  Check(Length(PostIds) = 0, 'non-existent tag should return empty array');
 end;
 
 procedure TTestTagService.Remove;
 var
   Id: TID;
+  TagDto: TTagDto;
+  CreateDto: TTagCreateDto;
 begin
-  Id := Context.Tag.Add('{"Name":"Temporary"}');
+  CreateDto.Name := 'Temporary';
+  Id := Context.Tag.Add(CreateDto);
   Check(Id > 0);
   Check(Context.Tag.Remove(Id));
-  CheckEqual(Context.Tag.Get(Id), '{}');
+  TagDto := Context.Tag.Get(Id);
+  Check(TagDto.ID = 0, 'removed tag should return ID=0');
 end;
 
 procedure TTestTagService.RemoveCascade;
 var
   TagId, PostId: TID;
-  Arr: TDocVariantData;
+  PostTags: TTagDtoArray;
+  TagCreateDto: TTagCreateDto;
+  PostCreateDto: TPostCreateDto;
 begin
-  TagId := Context.Tag.Add('{"Name":"CascadeTest"}');
-  PostId := Context.Post.Add('{"Title":"Cascade Post","Body":"x","AuthorId":1,"Status":0}');
+  TagCreateDto.Name := 'CascadeTest';
+  TagId := Context.Tag.Add(TagCreateDto);
+  PostCreateDto.Title := 'Cascade Post';
+  PostCreateDto.Body := 'x';
+  PostCreateDto.AuthorId := 1;
+  PostCreateDto.Status := POST_STATUS_DRAFT;
+  PostId := Context.Post.Add(PostCreateDto);
   Context.Tag.SetPostTags(PostId, FormatUtf8('[%]', [TagId]));
   // Verify tag is assigned
-  Arr.InitJson(Context.Tag.GetByPost(PostId), JSON_FAST_FLOAT);
-  Check(Arr.Count = 1, 'should have 1 tag before remove');
-  // Remove tag — PostTag associations should be deleted too
+  PostTags := Context.Tag.GetByPost(PostId);
+  Check(Length(PostTags) = 1, 'should have 1 tag before remove');
+  // Remove tag -- PostTag associations should be deleted too
   Check(Context.Tag.Remove(TagId));
-  Arr.InitJson(Context.Tag.GetByPost(PostId), JSON_FAST_FLOAT);
-  CheckEqual(Arr.Count, 0, 'tag associations should be gone after remove');
+  PostTags := Context.Tag.GetByPost(PostId);
+  CheckEqual(Length(PostTags), 0, 'tag associations should be gone after remove');
 end;
 
 procedure TTestCommentService.AddPending;
 var
   Id: TID;
+  CreateDto: TCommentCreateDto;
 begin
-  Id := Context.Comment.Add(1, '{"AuthorName":"Visitor","AuthorEmail":"v@test.com","Body":"Nice post!"}');
+  CreateDto.AuthorName := 'Visitor';
+  CreateDto.AuthorEmail := 'v@test.com';
+  CreateDto.Body := 'Nice post!';
+  Id := Context.Comment.Add(1, CreateDto);
   Check(Id > 0, 'Comment.Add should return positive ID');
 end;
 
 procedure TTestCommentService.AddEmptyBody;
+var
+  CreateDto: TCommentCreateDto;
 begin
-  CheckEqual(Context.Comment.Add(1, '{"AuthorName":"X","Body":""}'), 0, 'empty body should return 0');
-  CheckEqual(Context.Comment.Add(1, '{"AuthorName":"X"}'), 0, 'missing body should return 0');
+  CreateDto.AuthorName := 'X';
+  CreateDto.Body := '';
+  CheckEqual(Context.Comment.Add(1, CreateDto), 0, 'empty body should return 0');
+  CreateDto.AuthorName := 'X';
+  FillCharFast(CreateDto, SizeOf(CreateDto), 0);
+  CreateDto.AuthorName := 'X';
+  CheckEqual(Context.Comment.Add(1, CreateDto), 0, 'missing body should return 0');
 end;
 
 procedure TTestCommentService.AddInvalidPostId;
+var
+  CreateDto: TCommentCreateDto;
 begin
-  CheckEqual(Context.Comment.Add(0, '{"AuthorName":"X","Body":"text"}'), 0, 'postId=0 should return 0');
-  CheckEqual(Context.Comment.Add(-1, '{"AuthorName":"X","Body":"text"}'), 0, 'negative postId should return 0');
+  CreateDto.AuthorName := 'X';
+  CreateDto.Body := 'text';
+  CheckEqual(Context.Comment.Add(0, CreateDto), 0, 'postId=0 should return 0');
+  CheckEqual(Context.Comment.Add(-1, CreateDto), 0, 'negative postId should return 0');
 end;
 
 procedure TTestCommentService.GetPending;
 var
-  Arr: TDocVariantData;
+  PendingComments: TCommentDtoArray;
 begin
-  Arr.InitJson(Context.Comment.GetPending, JSON_FAST_FLOAT);
-  Check(Arr.Count >= 1, 'should have at least 1 pending comment');
+  PendingComments := Context.Comment.GetPending;
+  Check(Length(PendingComments) >= 1, 'should have at least 1 pending comment');
 end;
 
 procedure TTestCommentService.Approve;
@@ -1312,41 +1425,51 @@ end;
 procedure TTestCommentService.Reject;
 var
   Id: TID;
+  CreateDto: TCommentCreateDto;
 begin
-  Id := Context.Comment.Add(1, '{"AuthorName":"Spammer","Body":"Buy stuff!"}');
+  CreateDto.AuthorName := 'Spammer';
+  CreateDto.Body := 'Buy stuff!';
+  Id := Context.Comment.Add(1, CreateDto);
   Check(Id > 0);
   Check(Context.Comment.Reject(Id, 1), 'Reject should succeed');
 end;
 
 procedure TTestCommentService.GetByPost;
 var
-  Arr: TDocVariantData;
+  PostComments: TCommentDtoArray;
 begin
   // Only approved comments should appear
-  Arr.InitJson(Context.Comment.GetByPost(1), JSON_FAST_FLOAT);
-  Check(Arr.Count >= 1, 'should have at least 1 approved comment');
-  CheckEqual(_Safe(Arr.Values[0])^.U['AuthorName'], 'Visitor');
+  PostComments := Context.Comment.GetByPost(1);
+  Check(Length(PostComments) >= 1, 'should have at least 1 approved comment');
+  CheckEqual(PostComments[0].AuthorName, 'Visitor');
 end;
 
 procedure TTestCommentService.GetByPostNoComments;
 var
   PostId: TID;
+  PostComments: TCommentDtoArray;
+  CreateDto: TPostCreateDto;
 begin
-  PostId := Context.Post.Add('{"Title":"No Comments Post","Body":"x","AuthorId":1,"Status":0}');
-  CheckEqual(Context.Comment.GetByPost(PostId), '[]', 'post without approved comments should return empty array');
+  CreateDto.Title := 'No Comments Post';
+  CreateDto.Body := 'x';
+  CreateDto.AuthorId := 1;
+  CreateDto.Status := POST_STATUS_DRAFT;
+  PostId := Context.Post.Add(CreateDto);
+  PostComments := Context.Comment.GetByPost(PostId);
+  Check(Length(PostComments) = 0, 'post without approved comments should return empty array');
 end;
 
 procedure TTestMediaService.UploadAndGetInfo;
 var
   Id: TID;
-  Doc: TDocVariantData;
+  MediaDto: TMediaInfoDto;
 begin
   Id := Context.Media.Upload('test.png', BinToBase64('fake-png-data'), 'Test image', 1);
   Check(Id > 0, 'Media.Upload should return positive ID');
-  Doc.InitJson(Context.Media.GetInfo(Id), JSON_FAST_FLOAT);
-  CheckEqual(Doc.U['FileName'], 'test.png');
-  CheckEqual(Doc.U['MimeType'], 'image/png');
-  CheckEqual(Doc.U['AltText'], 'Test image');
+  MediaDto := Context.Media.GetInfo(Id);
+  CheckEqual(MediaDto.FileName, 'test.png');
+  CheckEqual(MediaDto.MimeType, 'image/png');
+  CheckEqual(MediaDto.AltText, 'Test image');
 end;
 
 procedure TTestMediaService.UploadEmptyFileName;
@@ -1369,8 +1492,11 @@ begin
 end;
 
 procedure TTestMediaService.GetInfoNotFound;
+var
+  MediaDto: TMediaInfoDto;
 begin
-  CheckEqual(Context.Media.GetInfo(99999), '{}');
+  MediaDto := Context.Media.GetInfo(99999);
+  Check(MediaDto.ID = 0, 'not found should return ID=0');
 end;
 
 procedure TTestMediaService.GetFile;
@@ -1396,11 +1522,13 @@ end;
 procedure TTestMediaService.Remove;
 var
   Id: TID;
+  MediaDto: TMediaInfoDto;
 begin
   Id := Context.Media.Upload('remove.txt', BinToBase64('to delete'), '', 1);
   Check(Id > 0);
   Check(Context.Media.Remove(Id));
-  CheckEqual(Context.Media.GetInfo(Id), '{}');
+  MediaDto := Context.Media.GetInfo(Id);
+  Check(MediaDto.ID = 0, 'removed media should return ID=0');
 end;
 
 procedure TTestMediaService.RemoveNotFound;
@@ -1411,35 +1539,37 @@ end;
 
 procedure TTestBlogAggregation.GetPostFull;
 var
-  Doc: TDocVariantData;
+  PostFullDto: TPostFullDto;
 begin
-  Doc.InitJson(Context.Blog.GetPostFull(1), JSON_FAST_FLOAT);
-  Check(Doc.U['Title'] <> '', 'should have Title');
-  Check(Doc.GetValueIndex('Author') >= 0, 'should have Author');
-  Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags');
-  Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments');
+  PostFullDto := Context.Blog.GetPostFull(1);
+  Check(PostFullDto.Title <> '', 'should have Title');
+  Check(PostFullDto.Author.ID > 0, 'should have Author');
+  Check(PostFullDto.ID > 0, 'should have valid post ID');
 end;
 
 procedure TTestBlogAggregation.GetPostFullNotFound;
+var
+  PostFullDto: TPostFullDto;
 begin
-  CheckEqual(Context.Blog.GetPostFull(99999), '{}');
+  PostFullDto := Context.Blog.GetPostFull(99999);
+  Check(PostFullDto.ID = 0, 'not found should return ID=0');
 end;
 
 procedure TTestBlogAggregation.GetPostsByTag;
 var
-  Doc: TDocVariantData;
-  Posts: PDocVariantData;
+  PostsByTagDto: TPostsByTagDto;
 begin
-  Doc.InitJson(Context.Blog.GetPostsByTag(1), JSON_FAST_FLOAT);
-  Check(Doc.GetValueIndex('Tag') >= 0, 'should have Tag');
-  Check(Doc.GetValueIndex('Posts') >= 0, 'should have Posts');
-  Posts := Doc.A['Posts'];
-  Check(Posts <> nil, 'Posts should be an array');
+  PostsByTagDto := Context.Blog.GetPostsByTag(1);
+  Check(PostsByTagDto.Tag.ID > 0, 'should have Tag');
+  Check(Length(PostsByTagDto.Posts) > 0, 'should have Posts');
 end;
 
 procedure TTestBlogAggregation.GetPostsByTagNotFound;
+var
+  PostsByTagDto: TPostsByTagDto;
 begin
-  CheckEqual(Context.Blog.GetPostsByTag(99999), '{}');
+  PostsByTagDto := Context.Blog.GetPostsByTag(99999);
+  Check(PostsByTagDto.Tag.ID = 0, 'not found should return Tag.ID=0');
 end;
 
 procedure TTestFullWorkflow.EndToEnd;
@@ -1449,44 +1579,57 @@ var
   ClientProof, Token, ServerProof: RawUtf8;
   UserId: TID;
   ClientSignature: THash256;
-  Doc: TDocVariantData;
+  PostFullDto: TPostFullDto;
+  AuthorCreateDto: TAuthorCreateDto;
+  PostCreateDto: TPostCreateDto;
+  TagCreateDto: TTagCreateDto;
+  CommentCreateDto: TCommentCreateDto;
 begin
   // 1. Create author
-  AuthorId := Context.User.Add('{"DisplayName":"Workflow Author","Bio":"E2E test"}');
+  AuthorCreateDto.DisplayName := 'Workflow Author';
+  AuthorCreateDto.Bio := 'E2E test';
+  AuthorId := Context.User.Add(AuthorCreateDto);
   Check(AuthorId > 0, '1. create author');
   // 2. Register auth account
   Check(Context.Auth.Register('workflow@example.com', 'testpass', AuthorId) > 0, '2. register auth');
   // 3. Login via SCRAM
   Context.Auth.Challenge('workflow@example.com', McfInfo, ServerNonce);
   McfHash := ModularCryptHash(McfInfo, 'testpass');
-  ClientProof := ScramClientProof(McfHash, 'workflow@example.com', ClientSignature, ['workflow@example.com', ServerNonce]);
+  ClientProof := ScramClientProof(McfHash, 'workflow@example.com', ClientSignature,
+    ['workflow@example.com', ServerNonce]);
   Check(Context.Auth.Authenticate('workflow@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof),
     '3. SCRAM login');
   // 4. Validate JWT
   Check(Context.Auth.Validate(Token, UserId), '4. validate token');
   // 5. Create post
-  PostId := Context.Post.Add(FormatUtf8(
-    '{"Title":"E2E Test Post","Body":"Full workflow","AuthorId":%,"Status":1}',
-    [AuthorId]));
+  PostCreateDto.Title := 'E2E Test Post';
+  PostCreateDto.Body := 'Full workflow';
+  PostCreateDto.AuthorId := AuthorId;
+  PostCreateDto.Status := POST_STATUS_PUBLISHED;
+  PostId := Context.Post.Add(PostCreateDto);
   Check(PostId > 0, '5. create post');
   // 6. Create tags
-  TagId1 := Context.Tag.Add('{"Name":"E2E-Tag-1"}');
-  TagId2 := Context.Tag.Add('{"Name":"E2E-Tag-2"}');
+  TagCreateDto.Name := 'E2E-Tag-1';
+  TagId1 := Context.Tag.Add(TagCreateDto);
+  TagCreateDto.Name := 'E2E-Tag-2';
+  TagId2 := Context.Tag.Add(TagCreateDto);
   Check(TagId1 > 0, '6a. create tag 1');
   Check(TagId2 > 0, '6b. create tag 2');
   // 7. Assign tags
   Check(Context.Tag.SetPostTags(PostId, FormatUtf8('[%,%]', [TagId1, TagId2])), '7. assign tags');
   // 8. Add comment
-  CommentId := Context.Comment.Add(PostId, '{"AuthorName":"E2E Visitor","Body":"Great workflow!"}');
+  CommentCreateDto.AuthorName := 'E2E Visitor';
+  CommentCreateDto.Body := 'Great workflow!';
+  CommentId := Context.Comment.Add(PostId, CommentCreateDto);
   Check(CommentId > 0, '8. add comment');
   // 9. Approve comment
   Check(Context.Comment.Approve(CommentId, AuthorId), '9. approve');
   // 10. Aggregate via IBlog
-  Doc.InitJson(Context.Blog.GetPostFull(PostId), JSON_FAST_FLOAT);
-  CheckEqual(Doc.U['Title'], 'E2E Test Post', '10a. post title');
-  Check(Doc.GetValueIndex('Author') >= 0, '10b. has author');
-  Check(Doc.A_['Tags']^.Count = 2, '10c. has 2 tags');
-  Check(Doc.A_['Comments']^.Count >= 1, '10d. has comments');
+  PostFullDto := Context.Blog.GetPostFull(PostId);
+  CheckEqual(PostFullDto.Title, 'E2E Test Post', '10a. post title');
+  Check(PostFullDto.Author.ID > 0, '10b. has author');
+  Check(Length(PostFullDto.Tags) = 2, '10c. has 2 tags');
+  Check(Length(PostFullDto.Comments) >= 1, '10d. has comments');
 end;
 
 type
@@ -1497,10 +1640,10 @@ type
   TFailingUser = class(TInterfacedObject, IUser)
     function Get(
       aId: TID
-      ): RawJson;
-    function GetAll: RawJson;
+      ): TAuthorDto;
+    function GetAll: TAuthorDtoArray;
     function Add(
-      const aData: RawJson
+      const aData: TAuthorCreateDto
       ): TID;
     function Update(
       aId: TID;
@@ -1517,16 +1660,16 @@ type
   TFailingPost = class(TInterfacedObject, IPost)
     function Get(
       aId: TID
-      ): RawJson;
+      ): TPostDto;
     function GetBySlug(
       const aSlug: RawUtf8
-      ): RawJson;
+      ): TPostDto;
     function GetList(
       aPage, aLimit, aStatus: integer;
       aAuthorId: TID
-      ): RawJson;
+      ): TPostListDto;
     function Add(
-      const aData: RawJson
+      const aData: TPostCreateDto
       ): TID;
     function Update(
       aId: TID;
@@ -1543,20 +1686,20 @@ type
   TFailingTag = class(TInterfacedObject, ITag)
     function Get(
       aId: TID
-      ): RawJson;
-    function GetAll: RawJson;
+      ): TTagDto;
+    function GetAll: TTagDtoArray;
     function GetByPost(
       aPostId: TID
-      ): RawJson;
+      ): TTagDtoArray;
     function GetPostIds(
       aTagId: TID
-      ): RawJson;
+      ): TIDDynArray;
     function SetPostTags(
       aPostId: TID;
       const aTagIds: RawJson
       ): boolean;
     function Add(
-      const aData: RawJson
+      const aData: TTagCreateDto
       ): TID;
     function Update(
       aId: TID;
@@ -1573,11 +1716,11 @@ type
   TFailingComment = class(TInterfacedObject, IComment)
     function GetByPost(
       aPostId: TID
-      ): RawJson;
-    function GetPending: RawJson;
+      ): TCommentDtoArray;
+    function GetPending: TCommentDtoArray;
     function Add(
       aPostId: TID;
-      const aData: RawJson
+      const aData: TCommentCreateDto
       ): TID;
     function Approve(
       aId, aModeratedBy: TID
@@ -1592,18 +1735,18 @@ type
 
 function TFailingUser.Get(
   aId: TID
-  ): RawJson;
+  ): TAuthorDto;
 begin
   raise Exception.Create('ms.users unavailable');
 end;
 
-function TFailingUser.GetAll: RawJson;
+function TFailingUser.GetAll: TAuthorDtoArray;
 begin
   raise Exception.Create('ms.users unavailable');
 end;
 
 function TFailingUser.Add(
-  const aData: RawJson
+  const aData: TAuthorCreateDto
   ): TID;
 begin
   raise Exception.Create('ms.users unavailable');
@@ -1626,14 +1769,14 @@ end;
 
 function TFailingPost.Get(
   aId: TID
-  ): RawJson;
+  ): TPostDto;
 begin
   raise Exception.Create('ms.posts unavailable');
 end;
 
 function TFailingPost.GetBySlug(
   const aSlug: RawUtf8
-  ): RawJson;
+  ): TPostDto;
 begin
   raise Exception.Create('ms.posts unavailable');
 end;
@@ -1641,13 +1784,13 @@ end;
 function TFailingPost.GetList(
   aPage, aLimit, aStatus: integer;
   aAuthorId: TID
-  ): RawJson;
+  ): TPostListDto;
 begin
   raise Exception.Create('ms.posts unavailable');
 end;
 
 function TFailingPost.Add(
-  const aData: RawJson
+  const aData: TPostCreateDto
   ): TID;
 begin
   raise Exception.Create('ms.posts unavailable');
@@ -1670,26 +1813,26 @@ end;
 
 function TFailingTag.Get(
   aId: TID
-  ): RawJson;
+  ): TTagDto;
 begin
   raise Exception.Create('ms.tags unavailable');
 end;
 
-function TFailingTag.GetAll: RawJson;
+function TFailingTag.GetAll: TTagDtoArray;
 begin
   raise Exception.Create('ms.tags unavailable');
 end;
 
 function TFailingTag.GetByPost(
   aPostId: TID
-  ): RawJson;
+  ): TTagDtoArray;
 begin
   raise Exception.Create('ms.tags unavailable');
 end;
 
 function TFailingTag.GetPostIds(
   aTagId: TID
-  ): RawJson;
+  ): TIDDynArray;
 begin
   raise Exception.Create('ms.tags unavailable');
 end;
@@ -1703,7 +1846,7 @@ begin
 end;
 
 function TFailingTag.Add(
-  const aData: RawJson
+  const aData: TTagCreateDto
   ): TID;
 begin
   raise Exception.Create('ms.tags unavailable');
@@ -1726,19 +1869,19 @@ end;
 
 function TFailingComment.GetByPost(
   aPostId: TID
-  ): RawJson;
+  ): TCommentDtoArray;
 begin
   raise Exception.Create('ms.comments unavailable');
 end;
 
-function TFailingComment.GetPending: RawJson;
+function TFailingComment.GetPending: TCommentDtoArray;
 begin
   raise Exception.Create('ms.comments unavailable');
 end;
 
 function TFailingComment.Add(
   aPostId: TID;
-  const aData: RawJson
+  const aData: TCommentCreateDto
   ): TID;
 begin
   raise Exception.Create('ms.comments unavailable');
@@ -1773,8 +1916,10 @@ var
   UserImpl: TUserService;
   TagImpl: TTagService;
   BlogSvc: TBlogService;
-  Doc: TDocVariantData;
+  PostFullDto: TPostFullDto;
   PostId: TID;
+  AuthorCreateDto: TAuthorCreateDto;
+  PostCreateDto: TPostCreateDto;
 begin
   Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
@@ -1784,18 +1929,21 @@ begin
     PostImpl := TPostService.Create(Server.Orm);
     UserImpl := TUserService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
-    UserImpl.Add('{"DisplayName":"Author"}');
-    PostId := PostImpl.Add('{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
+    AuthorCreateDto.DisplayName := 'Author';
+    UserImpl.Add(AuthorCreateDto);
+    PostCreateDto.Title := 'Test Post';
+    PostCreateDto.Body := 'content';
+    PostCreateDto.AuthorId := 1;
+    PostCreateDto.Status := POST_STATUS_PUBLISHED;
+    PostId := PostImpl.Add(PostCreateDto);
     Check(PostId > 0, 'post created');
     BlogSvc := TBlogService.Create(PostImpl, UserImpl, TagImpl, TFailingComment.Create);
     try
-      Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
-      Check(Doc.U['Title'] = 'Test Post', 'should have Title');
-      Check(Doc.GetValueIndex('Author') >= 0, 'should have Author');
-      Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags');
-      Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments key');
-      CheckEqual(Doc.A['Comments']^.Count, 0, 'Comments should be empty array when service unavailable');
-      Check(Doc.B['CommentsUnavailable'], 'CommentsUnavailable flag should be true');
+      PostFullDto := BlogSvc.GetPostFull(PostId);
+      Check(PostFullDto.Title = 'Test Post', 'should have Title');
+      Check(PostFullDto.Author.ID > 0, 'should have Author');
+      Check(Length(PostFullDto.Comments) = 0, 'Comments should be empty array when service unavailable');
+      Check(PostFullDto.CommentsUnavailable, 'CommentsUnavailable flag should be true');
     finally
       BlogSvc.Free;
     end;
@@ -1813,8 +1961,10 @@ var
   UserImpl: TUserService;
   CommentImpl: TCommentService;
   BlogSvc: TBlogService;
-  Doc: TDocVariantData;
+  PostFullDto: TPostFullDto;
   PostId: TID;
+  AuthorCreateDto: TAuthorCreateDto;
+  PostCreateDto: TPostCreateDto;
 begin
   Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
@@ -1824,18 +1974,21 @@ begin
     PostImpl := TPostService.Create(Server.Orm);
     UserImpl := TUserService.Create(Server.Orm);
     CommentImpl := TCommentService.Create(Server.Orm);
-    UserImpl.Add('{"DisplayName":"Author"}');
-    PostId := PostImpl.Add('{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
+    AuthorCreateDto.DisplayName := 'Author';
+    UserImpl.Add(AuthorCreateDto);
+    PostCreateDto.Title := 'Test Post';
+    PostCreateDto.Body := 'content';
+    PostCreateDto.AuthorId := 1;
+    PostCreateDto.Status := POST_STATUS_PUBLISHED;
+    PostId := PostImpl.Add(PostCreateDto);
     Check(PostId > 0, 'post created');
     BlogSvc := TBlogService.Create(PostImpl, UserImpl, TFailingTag.Create, CommentImpl);
     try
-      Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
-      Check(Doc.U['Title'] = 'Test Post', 'should have Title');
-      Check(Doc.GetValueIndex('Author') >= 0, 'should have Author');
-      Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags key');
-      CheckEqual(Doc.A['Tags']^.Count, 0, 'Tags should be empty array when service unavailable');
-      Check(Doc.B['TagsUnavailable'], 'TagsUnavailable flag should be true');
-      Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments');
+      PostFullDto := BlogSvc.GetPostFull(PostId);
+      Check(PostFullDto.Title = 'Test Post', 'should have Title');
+      Check(PostFullDto.Author.ID > 0, 'should have Author');
+      Check(Length(PostFullDto.Tags) = 0, 'Tags should be empty array when service unavailable');
+      Check(PostFullDto.TagsUnavailable, 'TagsUnavailable flag should be true');
     finally
       BlogSvc.Free;
     end;
@@ -1853,8 +2006,9 @@ var
   TagImpl: TTagService;
   CommentImpl: TCommentService;
   BlogSvc: TBlogService;
-  Doc: TDocVariantData;
+  PostFullDto: TPostFullDto;
   PostId: TID;
+  PostCreateDto: TPostCreateDto;
 begin
   Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
@@ -1864,17 +2018,18 @@ begin
     PostImpl := TPostService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
     CommentImpl := TCommentService.Create(Server.Orm);
-    PostId := PostImpl.Add('{"Title":"Test Post","Body":"content","AuthorId":1,"Status":1}');
+    PostCreateDto.Title := 'Test Post';
+    PostCreateDto.Body := 'content';
+    PostCreateDto.AuthorId := 1;
+    PostCreateDto.Status := POST_STATUS_PUBLISHED;
+    PostId := PostImpl.Add(PostCreateDto);
     Check(PostId > 0, 'post created');
     BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create, TagImpl, CommentImpl);
     try
-      Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
-      Check(Doc.U['Title'] = 'Test Post', 'should have Title');
-      Check(Doc.GetValueIndex('Author') >= 0, 'should have Author key');
-      Check(VarIsNull(Doc.Value['Author']), 'Author should be null when service unavailable');
-      Check(Doc.B['AuthorUnavailable'], 'AuthorUnavailable flag should be true');
-      Check(Doc.GetValueIndex('Tags') >= 0, 'should have Tags');
-      Check(Doc.GetValueIndex('Comments') >= 0, 'should have Comments');
+      PostFullDto := BlogSvc.GetPostFull(PostId);
+      Check(PostFullDto.Title = 'Test Post', 'should have Title');
+      Check(PostFullDto.Author.ID = 0, 'Author should have ID=0 when service unavailable');
+      Check(PostFullDto.AuthorUnavailable, 'AuthorUnavailable flag should be true');
     finally
       BlogSvc.Free;
     end;
@@ -1890,8 +2045,9 @@ var
   Server: TRestServerDB;
   PostImpl: TPostService;
   BlogSvc: TBlogService;
-  Doc: TDocVariantData;
+  PostFullDto: TPostFullDto;
   PostId: TID;
+  PostCreateDto: TPostCreateDto;
 begin
   Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
@@ -1899,18 +2055,22 @@ begin
     Server.DB.Synchronous := smOff;
     Server.Server.CreateMissingTables;
     PostImpl := TPostService.Create(Server.Orm);
-    PostId := PostImpl.Add('{"Title":"Lonely Post","Body":"no services","AuthorId":1,"Status":1}');
+    PostCreateDto.Title := 'Lonely Post';
+    PostCreateDto.Body := 'no services';
+    PostCreateDto.AuthorId := 1;
+    PostCreateDto.Status := POST_STATUS_PUBLISHED;
+    PostId := PostImpl.Add(PostCreateDto);
     Check(PostId > 0, 'post created');
     BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create, TFailingTag.Create, TFailingComment.Create);
     try
-      Doc.InitJson(BlogSvc.GetPostFull(PostId), JSON_FAST_FLOAT);
-      Check(Doc.U['Title'] = 'Lonely Post', 'should still return the post');
-      Check(VarIsNull(Doc.Value['Author']), 'Author should be null');
-      Check(Doc.B['AuthorUnavailable'], 'AuthorUnavailable flag');
-      CheckEqual(Doc.A['Tags']^.Count, 0, 'Tags should be empty');
-      Check(Doc.B['TagsUnavailable'], 'TagsUnavailable flag');
-      CheckEqual(Doc.A['Comments']^.Count, 0, 'Comments should be empty');
-      Check(Doc.B['CommentsUnavailable'], 'CommentsUnavailable flag');
+      PostFullDto := BlogSvc.GetPostFull(PostId);
+      Check(PostFullDto.Title = 'Lonely Post', 'should still return the post');
+      Check(PostFullDto.Author.ID = 0, 'Author should have ID=0');
+      Check(PostFullDto.AuthorUnavailable, 'AuthorUnavailable flag');
+      CheckEqual(Length(PostFullDto.Tags), 0, 'Tags should be empty');
+      Check(PostFullDto.TagsUnavailable, 'TagsUnavailable flag');
+      CheckEqual(Length(PostFullDto.Comments), 0, 'Comments should be empty');
+      Check(PostFullDto.CommentsUnavailable, 'CommentsUnavailable flag');
     finally
       BlogSvc.Free;
     end;
@@ -1927,9 +2087,10 @@ var
   PostImpl: TPostService;
   TagImpl: TTagService;
   BlogSvc: TBlogService;
-  Doc, PostDoc: TDocVariantData;
+  PostsByTagDto: TPostsByTagDto;
   PostId, TagId: TID;
-  Posts: PDocVariantData;
+  PostCreateDto: TPostCreateDto;
+  TagCreateDto: TTagCreateDto;
 begin
   Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
@@ -1938,19 +2099,22 @@ begin
     Server.Server.CreateMissingTables;
     PostImpl := TPostService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
-    PostId := PostImpl.Add('{"Title":"Tagged Post","Body":"content","AuthorId":1,"Status":1}');
-    TagId := TagImpl.Add('{"Name":"TestTag"}');
+    PostCreateDto.Title := 'Tagged Post';
+    PostCreateDto.Body := 'content';
+    PostCreateDto.AuthorId := 1;
+    PostCreateDto.Status := POST_STATUS_PUBLISHED;
+    PostId := PostImpl.Add(PostCreateDto);
+    TagCreateDto.Name := 'TestTag';
+    TagId := TagImpl.Add(TagCreateDto);
     TagImpl.SetPostTags(PostId, FormatUtf8('[%]', [TagId]));
     BlogSvc := TBlogService.Create(PostImpl, TFailingUser.Create, TagImpl, TFailingComment.Create);
     try
-      Doc.InitJson(BlogSvc.GetPostsByTag(TagId), JSON_FAST_FLOAT);
-      Check(Doc.GetValueIndex('Tag') >= 0, 'should have Tag');
-      Posts := Doc.A['Posts'];
-      Check(Posts <> nil, 'should have Posts array');
-      Check(Posts^.Count > 0, 'should have at least one post');
-      PostDoc.InitJson(RawUtf8(Posts^.Values[0]), JSON_FAST_FLOAT);
-      Check(PostDoc.U['Title'] = 'Tagged Post', 'post title intact');
-      Check(VarIsNull(PostDoc.Value['Author']), 'Author should be null when user service unavailable');
+      PostsByTagDto := BlogSvc.GetPostsByTag(TagId);
+      Check(PostsByTagDto.Tag.ID > 0, 'should have Tag');
+      Check(Length(PostsByTagDto.Posts) > 0, 'should have at least one post');
+      Check(PostsByTagDto.Posts[0].Title = 'Tagged Post', 'post title intact');
+      Check(PostsByTagDto.Posts[0].Author.ID = 0, 'Author should have ID=0 when user service unavailable');
+      Check(PostsByTagDto.Posts[0].AuthorUnavailable, 'AuthorUnavailable flag should be true');
     finally
       BlogSvc.Free;
     end;
@@ -1962,85 +2126,76 @@ end;
 
 procedure TTestAnalyticsService.GetOverview;
 var
-  Doc: TDocVariantData;
+  Overview: TOverviewDto;
 begin
-  Doc.InitJson(Context.Analytics.GetOverview, JSON_FAST_FLOAT);
-  Check(Doc.I['posts'] > 0, 'should have posts');
-  Check(Doc.I['authors'] > 0, 'should have authors');
-  Check(Doc.I['tags'] > 0, 'should have tags');
-  Check(Doc.GetValueIndex('pendingComments') >= 0, 'should have pendingComments');
+  Overview := Context.Analytics.GetOverview;
+  Check(Overview.Posts > 0, 'should have posts');
+  Check(Overview.Authors > 0, 'should have authors');
+  Check(Overview.Tags > 0, 'should have tags');
+  Check(Overview.PendingComments >= 0, 'should have pendingComments');
 end;
 
 procedure TTestAnalyticsService.GetAuthorStats;
 var
-  AuthorStatsArray: TDocVariantData;
-  FirstAuthor: PDocVariantData;
+  AuthorStats: TAuthorStatDtoArray;
 begin
-  AuthorStatsArray.InitJson(Context.Analytics.GetAuthorStats, JSON_FAST_FLOAT);
-  Check(AuthorStatsArray.Kind = dvArray, 'should be array');
-  Check(AuthorStatsArray.Count > 0, 'should have at least one author');
-  FirstAuthor := _Safe(AuthorStatsArray.Values[0]);
-  Check(FirstAuthor^.GetValueIndex('authorId') >= 0, 'should have authorId');
-  Check(FirstAuthor^.U['displayName'] <> '', 'should have displayName');
-  Check(FirstAuthor^.GetValueIndex('postCount') >= 0, 'should have postCount');
+  AuthorStats := Context.Analytics.GetAuthorStats;
+  Check(Length(AuthorStats) > 0, 'should have at least one author');
+  Check(AuthorStats[0].AuthorId > 0, 'should have authorId');
+  Check(AuthorStats[0].DisplayName <> '', 'should have displayName');
+  Check(AuthorStats[0].PostCount >= 0, 'should have postCount');
 end;
 
 procedure TTestAnalyticsService.GetTagCloud;
 var
-  TagCloudArray: TDocVariantData;
-  FirstTag: PDocVariantData;
+  TagCloud: TTagCloudItemDtoArray;
 begin
-  TagCloudArray.InitJson(Context.Analytics.GetTagCloud, JSON_FAST_FLOAT);
-  Check(TagCloudArray.Kind = dvArray, 'should be array');
-  Check(TagCloudArray.Count > 0, 'should have at least one tag');
-  FirstTag := _Safe(TagCloudArray.Values[0]);
-  Check(FirstTag^.GetValueIndex('tagId') >= 0, 'should have tagId');
-  Check(FirstTag^.U['name'] <> '', 'should have name');
-  Check(FirstTag^.GetValueIndex('postCount') >= 0, 'should have postCount');
+  TagCloud := Context.Analytics.GetTagCloud;
+  Check(Length(TagCloud) > 0, 'should have at least one tag');
+  Check(TagCloud[0].TagId > 0, 'should have tagId');
+  Check(TagCloud[0].Name <> '', 'should have name');
+  Check(TagCloud[0].PostCount >= 0, 'should have postCount');
 end;
 
 procedure TTestAnalyticsService.GetCommentActivity;
 var
-  Doc: TDocVariantData;
+  Activity: TCommentActivityDto;
 begin
-  Doc.InitJson(Context.Analytics.GetCommentActivity, JSON_FAST_FLOAT);
-  Check(Doc.GetValueIndex('pendingCount') >= 0, 'should have pendingCount');
-  Check(Doc.GetValueIndex('topCommentedPosts') >= 0, 'should have topCommentedPosts');
+  Activity := Context.Analytics.GetCommentActivity;
+  Check(Activity.PendingCount >= 0, 'should have pendingCount');
 end;
 
 procedure TTestAnalyticsService.GetRecentPostsFull;
 var
-  PostsArray: TDocVariantData;
-  FirstPost: PDocVariantData;
+  RecentPosts: TPostFullDtoArray;
 begin
-  PostsArray.InitJson(Context.Analytics.GetRecentPostsFull(5), JSON_FAST_FLOAT);
-  Check(PostsArray.Kind = dvArray, 'should be array');
-  Check(PostsArray.Count > 0, 'should have at least one post');
-  FirstPost := _Safe(PostsArray.Values[0]);
-  Check(FirstPost^.U['Title'] <> '', 'should have Title');
-  Check(FirstPost^.GetValueIndex('Author') >= 0, 'should have Author');
-  Check(FirstPost^.GetValueIndex('Tags') >= 0, 'should have Tags');
-  Check(FirstPost^.GetValueIndex('Comments') >= 0, 'should have Comments');
+  RecentPosts := Context.Analytics.GetRecentPostsFull(5);
+  Check(Length(RecentPosts) > 0, 'should have at least one post');
+  Check(RecentPosts[0].Title <> '', 'should have Title');
+  Check(RecentPosts[0].ID > 0, 'should have valid ID');
 end;
 
 procedure TTestAnalyticsService.GetRecentPostsFullEmpty;
+var
+  RecentPosts: TPostFullDtoArray;
 begin
-  CheckEqual(Context.Analytics.GetRecentPostsFull(0), '[]', 'limit 0 should return empty array');
+  RecentPosts := Context.Analytics.GetRecentPostsFull(0);
+  Check(Length(RecentPosts) = 0, 'limit 0 should return empty array');
 end;
 
 procedure TTestAnalyticsResilience.GetOverviewWithoutPosts;
 var
   AnalyticsSvc: TAnalyticsService;
-  Doc: TDocVariantData;
+  Overview: TOverviewDto;
 begin
   AnalyticsSvc := TAnalyticsService.Create(TFailingPost.Create, TFailingUser.Create, TFailingTag.Create,
     TFailingComment.Create);
   try
-    Doc.InitJson(AnalyticsSvc.GetOverview, JSON_FAST_FLOAT);
-    Check(Doc.B['postsUnavailable'], 'postsUnavailable flag');
-    Check(Doc.B['authorsUnavailable'], 'authorsUnavailable flag');
-    Check(Doc.B['tagsUnavailable'], 'tagsUnavailable flag');
-    Check(Doc.B['commentsUnavailable'], 'commentsUnavailable flag');
+    Overview := AnalyticsSvc.GetOverview;
+    Check(Overview.PostsUnavailable, 'postsUnavailable flag');
+    Check(Overview.AuthorsUnavailable, 'authorsUnavailable flag');
+    Check(Overview.TagsUnavailable, 'tagsUnavailable flag');
+    Check(Overview.CommentsUnavailable, 'commentsUnavailable flag');
   finally
     AnalyticsSvc.Free;
   end;
@@ -2054,7 +2209,8 @@ var
   TagImpl: TTagService;
   CommentImpl: TCommentService;
   AnalyticsSvc: TAnalyticsService;
-  Doc: TDocVariantData;
+  Overview: TOverviewDto;
+  PostCreateDto: TPostCreateDto;
 begin
   Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
@@ -2064,12 +2220,16 @@ begin
     PostImpl := TPostService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
     CommentImpl := TCommentService.Create(Server.Orm);
-    PostImpl.Add('{"Title":"Test","Body":"x","AuthorId":1,"Status":1}');
+    PostCreateDto.Title := 'Test';
+    PostCreateDto.Body := 'x';
+    PostCreateDto.AuthorId := 1;
+    PostCreateDto.Status := POST_STATUS_PUBLISHED;
+    PostImpl.Add(PostCreateDto);
     AnalyticsSvc := TAnalyticsService.Create(PostImpl, TFailingUser.Create, TagImpl, CommentImpl);
     try
-      Doc.InitJson(AnalyticsSvc.GetOverview, JSON_FAST_FLOAT);
-      Check(Doc.I['posts'] > 0, 'posts should be counted');
-      Check(Doc.B['authorsUnavailable'], 'authorsUnavailable flag');
+      Overview := AnalyticsSvc.GetOverview;
+      Check(Overview.Posts > 0, 'posts should be counted');
+      Check(Overview.AuthorsUnavailable, 'authorsUnavailable flag');
     finally
       AnalyticsSvc.Free;
     end;
@@ -2087,8 +2247,9 @@ var
   UserImpl: TUserService;
   TagImpl: TTagService;
   AnalyticsSvc: TAnalyticsService;
-  PostsArray: TDocVariantData;
-  FirstPost: PDocVariantData;
+  RecentPosts: TPostFullDtoArray;
+  AuthorCreateDto: TAuthorCreateDto;
+  PostCreateDto: TPostCreateDto;
 begin
   Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
@@ -2098,15 +2259,19 @@ begin
     PostImpl := TPostService.Create(Server.Orm);
     UserImpl := TUserService.Create(Server.Orm);
     TagImpl := TTagService.Create(Server.Orm);
-    UserImpl.Add('{"DisplayName":"Author"}');
-    PostImpl.Add('{"Title":"Test Post","Body":"x","AuthorId":1,"Status":1}');
+    AuthorCreateDto.DisplayName := 'Author';
+    UserImpl.Add(AuthorCreateDto);
+    PostCreateDto.Title := 'Test Post';
+    PostCreateDto.Body := 'x';
+    PostCreateDto.AuthorId := 1;
+    PostCreateDto.Status := POST_STATUS_PUBLISHED;
+    PostImpl.Add(PostCreateDto);
     AnalyticsSvc := TAnalyticsService.Create(PostImpl, UserImpl, TagImpl, TFailingComment.Create);
     try
-      PostsArray.InitJson(AnalyticsSvc.GetRecentPostsFull(5), JSON_FAST_FLOAT);
-      Check(PostsArray.Count > 0, 'should have posts');
-      FirstPost := _Safe(PostsArray.Values[0]);
-      Check(FirstPost^.U['Title'] = 'Test Post', 'title intact');
-      Check(FirstPost^.B['CommentsUnavailable'], 'CommentsUnavailable flag');
+      RecentPosts := AnalyticsSvc.GetRecentPostsFull(5);
+      Check(Length(RecentPosts) > 0, 'should have posts');
+      Check(RecentPosts[0].Title = 'Test Post', 'title intact');
+      Check(RecentPosts[0].CommentsUnavailable, 'CommentsUnavailable flag');
     finally
       AnalyticsSvc.Free;
     end;
@@ -2124,8 +2289,9 @@ var
   UserImpl: TUserService;
   CommentImpl: TCommentService;
   AnalyticsSvc: TAnalyticsService;
-  PostsArray: TDocVariantData;
-  FirstPost: PDocVariantData;
+  RecentPosts: TPostFullDtoArray;
+  AuthorCreateDto: TAuthorCreateDto;
+  PostCreateDto: TPostCreateDto;
 begin
   Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
@@ -2135,15 +2301,19 @@ begin
     PostImpl := TPostService.Create(Server.Orm);
     UserImpl := TUserService.Create(Server.Orm);
     CommentImpl := TCommentService.Create(Server.Orm);
-    UserImpl.Add('{"DisplayName":"Author"}');
-    PostImpl.Add('{"Title":"Test Post","Body":"x","AuthorId":1,"Status":1}');
+    AuthorCreateDto.DisplayName := 'Author';
+    UserImpl.Add(AuthorCreateDto);
+    PostCreateDto.Title := 'Test Post';
+    PostCreateDto.Body := 'x';
+    PostCreateDto.AuthorId := 1;
+    PostCreateDto.Status := POST_STATUS_PUBLISHED;
+    PostImpl.Add(PostCreateDto);
     AnalyticsSvc := TAnalyticsService.Create(PostImpl, UserImpl, TFailingTag.Create, CommentImpl);
     try
-      PostsArray.InitJson(AnalyticsSvc.GetRecentPostsFull(5), JSON_FAST_FLOAT);
-      Check(PostsArray.Count > 0, 'should have posts');
-      FirstPost := _Safe(PostsArray.Values[0]);
-      Check(FirstPost^.U['Title'] = 'Test Post', 'title intact');
-      Check(FirstPost^.B['TagsUnavailable'], 'TagsUnavailable flag');
+      RecentPosts := AnalyticsSvc.GetRecentPostsFull(5);
+      Check(Length(RecentPosts) > 0, 'should have posts');
+      Check(RecentPosts[0].Title = 'Test Post', 'title intact');
+      Check(RecentPosts[0].TagsUnavailable, 'TagsUnavailable flag');
     finally
       AnalyticsSvc.Free;
     end;

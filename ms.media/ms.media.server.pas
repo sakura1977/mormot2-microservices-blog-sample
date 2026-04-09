@@ -98,17 +98,17 @@ type
       ): TID;
 
     /// <summary>
-    ///   Retrieves the JSON metadata for a media file identified by its ID.
+    ///   Retrieves metadata for a media file identified by its ID.
     /// </summary>
     /// <param name="aId">
     ///   The ID of the media record to retrieve.
     /// </param>
     /// <returns>
-    ///   The JSON representation of the media file record.
+    ///   Media metadata. <c>ID = 0</c> if not found.
     /// </returns>
     function GetInfo(
       aId: TID
-      ): RawJson;
+      ): TMediaInfoDto;
 
     /// <summary>
     ///   Retrieves the binary content and MIME type of a media file identified by its ID.
@@ -207,9 +207,27 @@ end;
 
 function TMediaService.GetInfo(
   aId: TID
-  ): RawJson;
+  ): TMediaInfoDto;
+var
+  Rec: TOrmMediaFile;
 begin
-  Result := OrmGetById(FOrm, TOrmMediaFile, aId);
+  Finalize(Result);
+  FillCharFast(Result, SizeOf(Result), 0);
+  Rec := TOrmMediaFile.Create;
+  try
+    if FOrm.Retrieve(aId, Rec) then
+    begin
+      Result.ID := Rec.IDValue;
+      Result.FileName := Rec.FileName;
+      Result.MimeType := Rec.MimeType;
+      Result.FileSize := Rec.FileSize;
+      Result.AltText := Rec.AltText;
+      Result.UploadedBy := Rec.UploadedBy;
+      Result.CreatedAt := Rec.CreatedAt;
+    end;
+  finally
+    Rec.Free;
+  end;
 end;
 
 function TMediaService.Remove(

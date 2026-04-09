@@ -1,6 +1,6 @@
-/// <summary>
-///   SOA interface definitions for all blog microservices. These interfaces define the service contracts used by both
-///   server implementations and client proxies (gateway).
+﻿/// <summary>
+///   SOA interface definitions and DTO record types for all blog microservices. These interfaces define the service
+///   contracts used by both server implementations and client proxies (gateway).
 ///
 ///   In mORMot2, interface-based services (SOA) are declared as <c>IInvokable</c> descendants with a unique GUID.
 ///   The framework automatically generates JSON serialization for all method parameters, enabling transparent
@@ -8,11 +8,11 @@
 ///
 ///   Key mORMot2 SOA concepts used here:
 ///   - <c>IInvokable</c>: base interface enabling RTTI-based method invocation and JSON marshalling.
-///   - <c>RawJson</c>: a type alias for raw JSON content that mORMot2 passes through without re-encoding. Ideal for
-///     flexible, schema-less data exchange between services.
 ///   - <c>TID</c>: mORMot2's standard 64-bit integer type for ORM record identifiers (maps to SQLite RowID).
 ///   - <c>RawUtf8</c>: mORMot2's preferred string type for all UTF-8 text. More efficient than Delphi's UnicodeString
 ///     for JSON and HTTP operations.
+///   - <c>RawJson</c>: a type alias for raw JSON content that mORMot2 passes through without re-encoding. Used only
+///     where schema-less data exchange is required (Update methods with PATCH semantics, IConfig).
 ///
 ///   URL format: POST /api/{InterfaceName}/{MethodName}
 ///   Request body: JSON array of positional parameters
@@ -29,9 +29,801 @@ interface
 
 uses
   mormot.core.base,
+  mormot.core.rtti,
   mormot.core.text;
 
 type
+
+  // -----------------------------------------------------------------------
+  //  Base DTO Records -- output types for entity retrieval
+  // -----------------------------------------------------------------------
+
+  /// <summary>
+  ///   Data transfer object for author/user profiles. Mirrors the <c>TOrmAuthor</c> fields exposed via the public API.
+  ///   An <c>ID</c> of 0 indicates that no record was found.
+  /// </summary>
+  TAuthorDto = packed record
+  public
+    /// <summary>
+    ///   Unique author identifier (SQLite RowID).
+    /// </summary>
+    ID: TID;
+
+    /// <summary>
+    ///   Author's display name shown on posts and profiles.
+    /// </summary>
+    DisplayName: RawUtf8;
+
+    /// <summary>
+    ///   URL-friendly identifier, auto-generated from <c>DisplayName</c>.
+    /// </summary>
+    Slug: RawUtf8;
+
+    /// <summary>
+    ///   Biographical text for the author profile.
+    /// </summary>
+    Bio: RawUtf8;
+
+    /// <summary>
+    ///   Author's personal or professional website URL.
+    /// </summary>
+    WebsiteUrl: RawUtf8;
+
+    /// <summary>
+    ///   Foreign key to the author's avatar media file.
+    /// </summary>
+    AvatarMediaId: TID;
+
+    /// <summary>
+    ///   Timestamp when the profile was created (UTC, ISO 8601).
+    /// </summary>
+    CreatedAt: TDateTime;
+
+    /// <summary>
+    ///   Timestamp of the last profile update (UTC, ISO 8601).
+    /// </summary>
+    UpdatedAt: TDateTime;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TAuthorDto</c> records.
+  /// </summary>
+  TAuthorDtoArray = array of TAuthorDto;
+
+  /// <summary>
+  ///   Data transfer object for blog posts. Mirrors the <c>TOrmBlogPost</c> fields exposed via the public API.
+  ///   An <c>ID</c> of 0 indicates that no record was found.
+  /// </summary>
+  TPostDto = packed record
+  public
+    /// <summary>
+    ///   Unique post identifier (SQLite RowID).
+    /// </summary>
+    ID: TID;
+
+    /// <summary>
+    ///   Post title.
+    /// </summary>
+    Title: RawUtf8;
+
+    /// <summary>
+    ///   URL-friendly identifier, auto-generated from <c>Title</c>.
+    /// </summary>
+    Slug: RawUtf8;
+
+    /// <summary>
+    ///   Full post content (HTML or plain text).
+    /// </summary>
+    Body: RawUtf8;
+
+    /// <summary>
+    ///   Short teaser text for post listings.
+    /// </summary>
+    Excerpt: RawUtf8;
+
+    /// <summary>
+    ///   Foreign key to the author who wrote this post.
+    /// </summary>
+    AuthorId: TID;
+
+    /// <summary>
+    ///   Foreign key to the featured image media file.
+    /// </summary>
+    FeaturedImageId: TID;
+
+    /// <summary>
+    ///   SEO meta title override.
+    /// </summary>
+    MetaTitle: RawUtf8;
+
+    /// <summary>
+    ///   SEO meta description.
+    /// </summary>
+    MetaDescription: RawUtf8;
+
+    /// <summary>
+    ///   SEO meta keywords (comma-separated).
+    /// </summary>
+    MetaKeywords: RawUtf8;
+
+    /// <summary>
+    ///   Publication status: 0 = draft, 1 = published, 2 = archived.
+    /// </summary>
+    Status: integer;
+
+    /// <summary>
+    ///   Timestamp when the post was first published (UTC, ISO 8601).
+    /// </summary>
+    PublishedAt: TDateTime;
+
+    /// <summary>
+    ///   Timestamp when the post was created (UTC, ISO 8601).
+    /// </summary>
+    CreatedAt: TDateTime;
+
+    /// <summary>
+    ///   Timestamp of the last post update (UTC, ISO 8601).
+    /// </summary>
+    UpdatedAt: TDateTime;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TPostDto</c> records.
+  /// </summary>
+  TPostDtoArray = array of TPostDto;
+
+  /// <summary>
+  ///   Paginated list of blog posts with total count for pagination.
+  /// </summary>
+  TPostListDto = packed record
+  public
+    /// <summary>
+    ///   Array of posts for the current page.
+    /// </summary>
+    Items: TPostDtoArray;
+
+    /// <summary>
+    ///   Total number of posts matching the filter (across all pages).
+    /// </summary>
+    Total: integer;
+
+    /// <summary>
+    ///   Current page number (1-based).
+    /// </summary>
+    Page: integer;
+  end;
+
+  /// <summary>
+  ///   Data transfer object for blog tags. Mirrors the <c>TOrmBlogTag</c> fields exposed via the public API.
+  ///   An <c>ID</c> of 0 indicates that no record was found.
+  /// </summary>
+  TTagDto = packed record
+  public
+    /// <summary>
+    ///   Unique tag identifier (SQLite RowID).
+    /// </summary>
+    ID: TID;
+
+    /// <summary>
+    ///   Tag display name (unique).
+    /// </summary>
+    Name: RawUtf8;
+
+    /// <summary>
+    ///   URL-friendly identifier, auto-generated from <c>Name</c>.
+    /// </summary>
+    Slug: RawUtf8;
+
+    /// <summary>
+    ///   Optional tag description.
+    /// </summary>
+    Description: RawUtf8;
+
+    /// <summary>
+    ///   Timestamp when the tag was created (UTC, ISO 8601).
+    /// </summary>
+    CreatedAt: TDateTime;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TTagDto</c> records.
+  /// </summary>
+  TTagDtoArray = array of TTagDto;
+
+  /// <summary>
+  ///   Data transfer object for blog comments. Mirrors the <c>TOrmBlogComment</c> fields exposed via the public API.
+  ///   An <c>ID</c> of 0 indicates that no record was found.
+  /// </summary>
+  TCommentDto = packed record
+  public
+    /// <summary>
+    ///   Unique comment identifier (SQLite RowID).
+    /// </summary>
+    ID: TID;
+
+    /// <summary>
+    ///   Foreign key to the post this comment belongs to.
+    /// </summary>
+    PostId: TID;
+
+    /// <summary>
+    ///   Display name of the comment author (visitor-supplied).
+    /// </summary>
+    AuthorName: RawUtf8;
+
+    /// <summary>
+    ///   Email address of the comment author (visitor-supplied, optional).
+    /// </summary>
+    AuthorEmail: RawUtf8;
+
+    /// <summary>
+    ///   Comment text content.
+    /// </summary>
+    Body: RawUtf8;
+
+    /// <summary>
+    ///   Moderation status: 0 = pending, 1 = approved, 2 = rejected.
+    /// </summary>
+    Status: integer;
+
+    /// <summary>
+    ///   Foreign key to the author who moderated this comment.
+    /// </summary>
+    ModeratedBy: TID;
+
+    /// <summary>
+    ///   Timestamp when the moderation action occurred (UTC, ISO 8601).
+    /// </summary>
+    ModeratedAt: TDateTime;
+
+    /// <summary>
+    ///   Timestamp when the comment was submitted (UTC, ISO 8601).
+    /// </summary>
+    CreatedAt: TDateTime;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TCommentDto</c> records.
+  /// </summary>
+  TCommentDtoArray = array of TCommentDto;
+
+  /// <summary>
+  ///   Data transfer object for media file metadata. Excludes <c>StoragePath</c> which is an internal implementation
+  ///   detail. An <c>ID</c> of 0 indicates that no record was found.
+  /// </summary>
+  TMediaInfoDto = packed record
+  public
+    /// <summary>
+    ///   Unique media record identifier (SQLite RowID).
+    /// </summary>
+    ID: TID;
+
+    /// <summary>
+    ///   Original file name as uploaded.
+    /// </summary>
+    FileName: RawUtf8;
+
+    /// <summary>
+    ///   MIME type detected from the file extension (e.g. 'image/png').
+    /// </summary>
+    MimeType: RawUtf8;
+
+    /// <summary>
+    ///   File size in bytes.
+    /// </summary>
+    FileSize: Int64;
+
+    /// <summary>
+    ///   Alternative text for accessibility and SEO.
+    /// </summary>
+    AltText: RawUtf8;
+
+    /// <summary>
+    ///   Foreign key to the author who uploaded this file.
+    /// </summary>
+    UploadedBy: TID;
+
+    /// <summary>
+    ///   Timestamp when the file was uploaded (UTC, ISO 8601).
+    /// </summary>
+    CreatedAt: TDateTime;
+  end;
+
+  // -----------------------------------------------------------------------
+  //  Input DTO Records -- for Add/Create methods
+  // -----------------------------------------------------------------------
+
+  /// <summary>
+  ///   Input record for creating a new author profile. <c>DisplayName</c> is required.
+  /// </summary>
+  TAuthorCreateDto = packed record
+  public
+    /// <summary>
+    ///   Author's display name (required, must not be empty).
+    /// </summary>
+    DisplayName: RawUtf8;
+
+    /// <summary>
+    ///   Biographical text (optional).
+    /// </summary>
+    Bio: RawUtf8;
+
+    /// <summary>
+    ///   Website URL (optional).
+    /// </summary>
+    WebsiteUrl: RawUtf8;
+  end;
+
+  /// <summary>
+  ///   Input record for creating a new blog post. <c>Title</c> is required.
+  /// </summary>
+  TPostCreateDto = packed record
+  public
+    /// <summary>
+    ///   Post title (required, must not be empty).
+    /// </summary>
+    Title: RawUtf8;
+
+    /// <summary>
+    ///   Full post content (optional).
+    /// </summary>
+    Body: RawUtf8;
+
+    /// <summary>
+    ///   Short teaser text (optional).
+    /// </summary>
+    Excerpt: RawUtf8;
+
+    /// <summary>
+    ///   Foreign key to the author.
+    /// </summary>
+    AuthorId: TID;
+
+    /// <summary>
+    ///   Foreign key to the featured image.
+    /// </summary>
+    FeaturedImageId: TID;
+
+    /// <summary>
+    ///   SEO meta title (optional).
+    /// </summary>
+    MetaTitle: RawUtf8;
+
+    /// <summary>
+    ///   SEO meta description (optional).
+    /// </summary>
+    MetaDescription: RawUtf8;
+
+    /// <summary>
+    ///   SEO meta keywords (optional, comma-separated).
+    /// </summary>
+    MetaKeywords: RawUtf8;
+
+    /// <summary>
+    ///   Publication status: 0 = draft, 1 = published.
+    /// </summary>
+    Status: integer;
+  end;
+
+  /// <summary>
+  ///   Input record for creating a new tag. <c>Name</c> is required and must be unique.
+  /// </summary>
+  TTagCreateDto = packed record
+  public
+    /// <summary>
+    ///   Tag display name (required, unique).
+    /// </summary>
+    Name: RawUtf8;
+
+    /// <summary>
+    ///   Optional tag description.
+    /// </summary>
+    Description: RawUtf8;
+  end;
+
+  /// <summary>
+  ///   Input record for adding a new comment. <c>Body</c> is required.
+  /// </summary>
+  TCommentCreateDto = packed record
+  public
+    /// <summary>
+    ///   Display name of the comment author (optional).
+    /// </summary>
+    AuthorName: RawUtf8;
+
+    /// <summary>
+    ///   Email address of the comment author (optional).
+    /// </summary>
+    AuthorEmail: RawUtf8;
+
+    /// <summary>
+    ///   Comment text content (required, must not be empty).
+    /// </summary>
+    Body: RawUtf8;
+  end;
+
+  // -----------------------------------------------------------------------
+  //  Composite DTO Records -- enriched/aggregated types
+  // -----------------------------------------------------------------------
+
+  /// <summary>
+  ///   Fully enriched blog post with nested author, tags, and comments. Used by the gateway aggregation service and
+  ///   the analytics service for cross-service JOINs.
+  /// </summary>
+  TPostFullDto = packed record
+  public
+    /// <summary>
+    ///   Unique post identifier.
+    /// </summary>
+    ID: TID;
+
+    /// <summary>
+    ///   Post title.
+    /// </summary>
+    Title: RawUtf8;
+
+    /// <summary>
+    ///   URL-friendly identifier.
+    /// </summary>
+    Slug: RawUtf8;
+
+    /// <summary>
+    ///   Full post content.
+    /// </summary>
+    Body: RawUtf8;
+
+    /// <summary>
+    ///   Short teaser text.
+    /// </summary>
+    Excerpt: RawUtf8;
+
+    /// <summary>
+    ///   Foreign key to the author.
+    /// </summary>
+    AuthorId: TID;
+
+    /// <summary>
+    ///   Foreign key to the featured image.
+    /// </summary>
+    FeaturedImageId: TID;
+
+    /// <summary>
+    ///   SEO meta title.
+    /// </summary>
+    MetaTitle: RawUtf8;
+
+    /// <summary>
+    ///   SEO meta description.
+    /// </summary>
+    MetaDescription: RawUtf8;
+
+    /// <summary>
+    ///   SEO meta keywords.
+    /// </summary>
+    MetaKeywords: RawUtf8;
+
+    /// <summary>
+    ///   Publication status.
+    /// </summary>
+    Status: integer;
+
+    /// <summary>
+    ///   Timestamp when the post was first published.
+    /// </summary>
+    PublishedAt: TDateTime;
+
+    /// <summary>
+    ///   Timestamp when the post was created.
+    /// </summary>
+    CreatedAt: TDateTime;
+
+    /// <summary>
+    ///   Timestamp of the last post update.
+    /// </summary>
+    UpdatedAt: TDateTime;
+
+    /// <summary>
+    ///   Nested author profile. <c>ID = 0</c> if the author was not found.
+    /// </summary>
+    Author: TAuthorDto;
+
+    /// <summary>
+    ///   Tags assigned to this post. Empty array if none.
+    /// </summary>
+    Tags: TTagDtoArray;
+
+    /// <summary>
+    ///   Approved comments on this post (limited to 10 in analytics). Empty array if none.
+    /// </summary>
+    Comments: TCommentDtoArray;
+
+    /// <summary>
+    ///   True if the users service was unreachable when enriching this post.
+    /// </summary>
+    AuthorUnavailable: boolean;
+
+    /// <summary>
+    ///   True if the tags service was unreachable when enriching this post.
+    /// </summary>
+    TagsUnavailable: boolean;
+
+    /// <summary>
+    ///   True if the comments service was unreachable when enriching this post.
+    /// </summary>
+    CommentsUnavailable: boolean;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TPostFullDto</c> records.
+  /// </summary>
+  TPostFullDtoArray = array of TPostFullDto;
+
+  /// <summary>
+  ///   Blog post enriched with author information only (no tags or comments). Used by
+  ///   <c>IBlog.GetPostsByTag</c> where tags are implicit and comments are not needed.
+  /// </summary>
+  TPostWithAuthorDto = packed record
+  public
+    /// <summary>
+    ///   Unique post identifier.
+    /// </summary>
+    ID: TID;
+
+    /// <summary>
+    ///   Post title.
+    /// </summary>
+    Title: RawUtf8;
+
+    /// <summary>
+    ///   URL-friendly identifier.
+    /// </summary>
+    Slug: RawUtf8;
+
+    /// <summary>
+    ///   Full post content.
+    /// </summary>
+    Body: RawUtf8;
+
+    /// <summary>
+    ///   Short teaser text.
+    /// </summary>
+    Excerpt: RawUtf8;
+
+    /// <summary>
+    ///   Foreign key to the author.
+    /// </summary>
+    AuthorId: TID;
+
+    /// <summary>
+    ///   Foreign key to the featured image.
+    /// </summary>
+    FeaturedImageId: TID;
+
+    /// <summary>
+    ///   SEO meta title.
+    /// </summary>
+    MetaTitle: RawUtf8;
+
+    /// <summary>
+    ///   SEO meta description.
+    /// </summary>
+    MetaDescription: RawUtf8;
+
+    /// <summary>
+    ///   SEO meta keywords.
+    /// </summary>
+    MetaKeywords: RawUtf8;
+
+    /// <summary>
+    ///   Publication status.
+    /// </summary>
+    Status: integer;
+
+    /// <summary>
+    ///   Timestamp when the post was first published.
+    /// </summary>
+    PublishedAt: TDateTime;
+
+    /// <summary>
+    ///   Timestamp when the post was created.
+    /// </summary>
+    CreatedAt: TDateTime;
+
+    /// <summary>
+    ///   Timestamp of the last post update.
+    /// </summary>
+    UpdatedAt: TDateTime;
+
+    /// <summary>
+    ///   Nested author profile. <c>ID = 0</c> if the author was not found.
+    /// </summary>
+    Author: TAuthorDto;
+
+    /// <summary>
+    ///   True if the users service was unreachable when enriching this post.
+    /// </summary>
+    AuthorUnavailable: boolean;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TPostWithAuthorDto</c> records.
+  /// </summary>
+  TPostWithAuthorDtoArray = array of TPostWithAuthorDto;
+
+  /// <summary>
+  ///   Result of <c>IBlog.GetPostsByTag</c>: a tag with its associated posts enriched with author data.
+  ///   <c>Tag.ID = 0</c> indicates that the tag was not found.
+  /// </summary>
+  TPostsByTagDto = packed record
+  public
+    /// <summary>
+    ///   The tag that was looked up.
+    /// </summary>
+    Tag: TTagDto;
+
+    /// <summary>
+    ///   Published posts with this tag, each enriched with author data.
+    /// </summary>
+    Posts: TPostWithAuthorDtoArray;
+  end;
+
+  // -----------------------------------------------------------------------
+  //  Analytics DTO Records
+  // -----------------------------------------------------------------------
+
+  /// <summary>
+  ///   Aggregate counts from all services. Fields set to -1 indicate that the corresponding service was unavailable.
+  /// </summary>
+  TOverviewDto = packed record
+  public
+    /// <summary>
+    ///   Total number of blog posts (all statuses).
+    /// </summary>
+    Posts: integer;
+
+    /// <summary>
+    ///   Total number of registered authors.
+    /// </summary>
+    Authors: integer;
+
+    /// <summary>
+    ///   Total number of tags.
+    /// </summary>
+    Tags: integer;
+
+    /// <summary>
+    ///   Number of comments awaiting moderation.
+    /// </summary>
+    PendingComments: integer;
+
+    /// <summary>
+    ///   True if the posts service was unreachable.
+    /// </summary>
+    PostsUnavailable: boolean;
+
+    /// <summary>
+    ///   True if the users service was unreachable.
+    /// </summary>
+    AuthorsUnavailable: boolean;
+
+    /// <summary>
+    ///   True if the tags service was unreachable.
+    /// </summary>
+    TagsUnavailable: boolean;
+
+    /// <summary>
+    ///   True if the comments service was unreachable.
+    /// </summary>
+    CommentsUnavailable: boolean;
+  end;
+
+  /// <summary>
+  ///   Per-author statistics with post count and total comment count across all their posts.
+  /// </summary>
+  TAuthorStatDto = packed record
+  public
+    /// <summary>
+    ///   Author identifier.
+    /// </summary>
+    AuthorId: TID;
+
+    /// <summary>
+    ///   Author's display name.
+    /// </summary>
+    DisplayName: RawUtf8;
+
+    /// <summary>
+    ///   Number of posts by this author.
+    /// </summary>
+    PostCount: integer;
+
+    /// <summary>
+    ///   Total number of approved comments on this author's posts.
+    /// </summary>
+    CommentCount: integer;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TAuthorStatDto</c> records.
+  /// </summary>
+  TAuthorStatDtoArray = array of TAuthorStatDto;
+
+  /// <summary>
+  ///   Tag with usage count for the tag cloud visualization.
+  /// </summary>
+  TTagCloudItemDto = packed record
+  public
+    /// <summary>
+    ///   Tag identifier.
+    /// </summary>
+    TagId: TID;
+
+    /// <summary>
+    ///   Tag display name.
+    /// </summary>
+    Name: RawUtf8;
+
+    /// <summary>
+    ///   URL-friendly tag identifier.
+    /// </summary>
+    Slug: RawUtf8;
+
+    /// <summary>
+    ///   Number of posts using this tag.
+    /// </summary>
+    PostCount: integer;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TTagCloudItemDto</c> records.
+  /// </summary>
+  TTagCloudItemDtoArray = array of TTagCloudItemDto;
+
+  /// <summary>
+  ///   Post ranked by comment count for the "top commented" list.
+  /// </summary>
+  TTopCommentedPostDto = packed record
+  public
+    /// <summary>
+    ///   Post identifier.
+    /// </summary>
+    PostId: TID;
+
+    /// <summary>
+    ///   Post title.
+    /// </summary>
+    Title: RawUtf8;
+
+    /// <summary>
+    ///   Number of approved comments on this post.
+    /// </summary>
+    CommentCount: integer;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TTopCommentedPostDto</c> records.
+  /// </summary>
+  TTopCommentedPostDtoArray = array of TTopCommentedPostDto;
+
+  /// <summary>
+  ///   Comment activity overview: pending comment count and top commented posts.
+  /// </summary>
+  TCommentActivityDto = packed record
+  public
+    /// <summary>
+    ///   Number of comments awaiting moderation.
+    /// </summary>
+    PendingCount: integer;
+
+    /// <summary>
+    ///   Top 10 posts ranked by number of approved comments (descending).
+    /// </summary>
+    TopCommentedPosts: TTopCommentedPostDtoArray;
+  end;
+
+  // -----------------------------------------------------------------------
+  //  Service Interfaces
+  // -----------------------------------------------------------------------
 
   /// <summary>
   ///   Authentication service contract using SCRAM-MCF protocol. Implements a two-phase challenge/authenticate flow
@@ -151,7 +943,6 @@ type
 
   /// <summary>
   ///   User/author profile service. Provides CRUD operations for author profiles (display name, bio, website).
-  ///   Uses <c>RawJson</c> for flexible input/output -- the JSON structure is parsed and validated in the implementation.
   /// </summary>
   IUser = interface(IInvokable)
     ['{A2B3C4D5-6E7F-8A9B-0C1D-2E3F4A5B6C7D}']
@@ -163,31 +954,31 @@ type
     ///   The author's record ID.
     /// </param>
     /// <returns>
-    ///   JSON object with author data, or '{}' if not found.
+    ///   Author profile data. <c>ID = 0</c> if not found.
     /// </returns>
     function Get(
       aId: TID
-      ): RawJson;
+      ): TAuthorDto;
 
     /// <summary>
     ///   Retrieves all author profiles.
     /// </summary>
     /// <returns>
-    ///   JSON array of author objects, or '[]' if empty.
+    ///   Array of all author profiles, or empty array if none exist.
     /// </returns>
-    function GetAll: RawJson;
+    function GetAll: TAuthorDtoArray;
 
     /// <summary>
     ///   Creates a new author profile.
     /// </summary>
     /// <param name="aData">
-    ///   JSON object with at least <c>DisplayName</c> (required).
+    ///   Author data with at least <c>DisplayName</c> (required).
     /// </param>
     /// <returns>
     ///   The new record ID, or 0 if validation failed.
     /// </returns>
     function Add(
-      const aData: RawJson
+      const aData: TAuthorCreateDto
       ): TID;
 
     /// <summary>
@@ -197,7 +988,7 @@ type
     ///   The author's record ID.
     /// </param>
     /// <param name="aData">
-    ///   JSON object with fields to update.
+    ///   JSON object with fields to update (PATCH semantics).
     /// </param>
     /// <returns>
     ///   True if the record was found and updated.
@@ -234,11 +1025,11 @@ type
     ///   The post's record ID.
     /// </param>
     /// <returns>
-    ///   JSON object with post data, or '{}' if not found.
+    ///   Post data. <c>ID = 0</c> if not found.
     /// </returns>
     function Get(
       aId: TID
-      ): RawJson;
+      ): TPostDto;
 
     /// <summary>
     ///   Retrieves a single post by its URL-friendly slug.
@@ -247,11 +1038,11 @@ type
     ///   The slug to look up (e.g. 'my-first-post').
     /// </param>
     /// <returns>
-    ///   JSON object with post data, or '{}' if not found.
+    ///   Post data. <c>ID = 0</c> if not found.
     /// </returns>
     function GetBySlug(
       const aSlug: RawUtf8
-      ): RawJson;
+      ): TPostDto;
 
     /// <summary>
     ///   Retrieves a paginated, filtered list of posts.
@@ -263,30 +1054,30 @@ type
     ///   Items per page (clamped to 1..100).
     /// </param>
     /// <param name="aStatus">
-    ///   Filter by status (0=draft, 1=published, 2=archived). Pass 0 to include all statuses.
+    ///   Filter by status (0=all, 1=published, 2=archived).
     /// </param>
     /// <param name="aAuthorId">
     ///   Filter by author. Pass 0 to include all authors.
     /// </param>
     /// <returns>
-    ///   JSON object: {"items":[...],"total":N,"page":N}.
+    ///   Paginated result with items array, total count, and current page.
     /// </returns>
     function GetList(
       aPage, aLimit, aStatus: integer;
       aAuthorId: TID
-      ): RawJson;
+      ): TPostListDto;
 
     /// <summary>
     ///   Creates a new blog post. The slug is auto-generated from the title via <c>TextToSlug</c>.
     /// </summary>
     /// <param name="aData">
-    ///   JSON object with at least <c>Title</c> (required).
+    ///   Post data with at least <c>Title</c> (required).
     /// </param>
     /// <returns>
     ///   The new record ID, or 0 if validation failed.
     /// </returns>
     function Add(
-      const aData: RawJson
+      const aData: TPostCreateDto
       ): TID;
 
     /// <summary>
@@ -296,7 +1087,7 @@ type
     ///   The post's record ID.
     /// </param>
     /// <param name="aData">
-    ///   JSON object with fields to update.
+    ///   JSON object with fields to update (PATCH semantics).
     /// </param>
     /// <returns>
     ///   True if the record was found and updated.
@@ -333,19 +1124,19 @@ type
     ///   The tag's record ID.
     /// </param>
     /// <returns>
-    ///   JSON object with tag data, or '{}' if not found.
+    ///   Tag data. <c>ID = 0</c> if not found.
     /// </returns>
     function Get(
       aId: TID
-      ): RawJson;
+      ): TTagDto;
 
     /// <summary>
     ///   Retrieves all tags.
     /// </summary>
     /// <returns>
-    ///   JSON array of tag objects, or '[]' if empty.
+    ///   Array of all tags, or empty array if none exist.
     /// </returns>
-    function GetAll: RawJson;
+    function GetAll: TTagDtoArray;
 
     /// <summary>
     ///   Retrieves all tags assigned to a specific post.
@@ -354,11 +1145,11 @@ type
     ///   The post's record ID.
     /// </param>
     /// <returns>
-    ///   JSON array of tag objects, or '[]' if none assigned.
+    ///   Array of tags assigned to the post, or empty array if none.
     /// </returns>
     function GetByPost(
       aPostId: TID
-      ): RawJson;
+      ): TTagDtoArray;
 
     /// <summary>
     ///   Retrieves all post IDs that have a specific tag assigned.
@@ -367,11 +1158,11 @@ type
     ///   The tag's record ID.
     /// </param>
     /// <returns>
-    ///   JSON array of post IDs, e.g. '[1,3,5]', or '[]' if none.
+    ///   Array of post IDs, or empty array if none.
     /// </returns>
     function GetPostIds(
       aTagId: TID
-      ): RawJson;
+      ): TIDDynArray;
 
     /// <summary>
     ///   Replaces all tag assignments for a post. Deletes existing associations and creates new ones from the provided
@@ -381,7 +1172,7 @@ type
     ///   The post to assign tags to.
     /// </param>
     /// <param name="aTagIds">
-    ///   JSON array of tag IDs, e.g. '[1,3,5]'. Passed as <c>RawJson</c> so mORMot2 does not re-encode it.
+    ///   JSON array of tag IDs, e.g. '[1,3,5]'.
     /// </param>
     /// <returns>
     ///   True if the input was valid and assignments were updated.
@@ -395,13 +1186,13 @@ type
     ///   Creates a new tag. The slug is auto-generated from the name.
     /// </summary>
     /// <param name="aData">
-    ///   JSON object with at least <c>Name</c> (required, unique).
+    ///   Tag data with at least <c>Name</c> (required, unique).
     /// </param>
     /// <returns>
     ///   The new record ID, or 0 if validation or UNIQUE constraint failed.
     /// </returns>
     function Add(
-      const aData: RawJson
+      const aData: TTagCreateDto
       ): TID;
 
     /// <summary>
@@ -411,7 +1202,7 @@ type
     ///   The tag's record ID.
     /// </param>
     /// <param name="aData">
-    ///   JSON object with fields to update.
+    ///   JSON object with fields to update (PATCH semantics).
     /// </param>
     /// <returns>
     ///   True if the record was found and updated.
@@ -449,19 +1240,19 @@ type
     ///   The post's record ID.
     /// </param>
     /// <returns>
-    ///   JSON array of approved comment objects, or '[]' if none.
+    ///   Array of approved comments, or empty array if none.
     /// </returns>
     function GetByPost(
       aPostId: TID
-      ): RawJson;
+      ): TCommentDtoArray;
 
     /// <summary>
     ///   Retrieves all comments awaiting moderation.
     /// </summary>
     /// <returns>
-    ///   JSON array of pending comment objects, or '[]' if none.
+    ///   Array of pending comments, or empty array if none.
     /// </returns>
-    function GetPending: RawJson;
+    function GetPending: TCommentDtoArray;
 
     /// <summary>
     ///   Adds a new comment to a post (status: pending). Visitors can comment without authentication.
@@ -470,14 +1261,14 @@ type
     ///   The post to comment on (must be > 0).
     /// </param>
     /// <param name="aData">
-    ///   JSON object with at least <c>Body</c> (required).
+    ///   Comment data with at least <c>Body</c> (required).
     /// </param>
     /// <returns>
     ///   The new comment ID, or 0 if validation failed.
     /// </returns>
     function Add(
       aPostId: TID;
-      const aData: RawJson
+      const aData: TCommentCreateDto
       ): TID;
 
     /// <summary>
@@ -534,7 +1325,8 @@ type
     ['{E6F7A8B9-0C1D-2E3F-4A5B-6C7D8E9FA0B1}']
 
     /// <summary>
-    ///   Uploads a media file. The file data is Base64-encoded and decoded server-side. Maximum size: 3 MB after decoding.
+    ///   Uploads a media file. The file data is Base64-encoded and decoded server-side. Maximum size: 3 MB after
+    ///   decoding.
     /// </summary>
     /// <param name="aFileName">
     ///   Original file name (required, used for MIME type detection).
@@ -563,11 +1355,11 @@ type
     ///   The media record ID.
     /// </param>
     /// <returns>
-    ///   JSON object with metadata, or '{}' if not found.
+    ///   Media metadata. <c>ID = 0</c> if not found.
     /// </returns>
     function GetInfo(
       aId: TID
-      ): RawJson;
+      ): TMediaInfoDto;
 
     /// <summary>
     ///   Retrieves the raw file content and its MIME type.
@@ -602,7 +1394,7 @@ type
 
   /// <summary>
   ///   Gateway aggregation service. Enriches a single post with data from multiple backend services (author profile,
-  ///   tags, approved comments) into one combined JSON response. This is the only service with actual business logic
+  ///   tags, approved comments) into one combined response. This is the only service with actual business logic
   ///   in the gateway -- all other interfaces are proxied directly.
   /// </summary>
   IBlog = interface(IInvokable)
@@ -615,11 +1407,11 @@ type
     ///   The post's record ID.
     /// </param>
     /// <returns>
-    ///   Aggregated JSON object, or '{}' if the post was not found.
+    ///   Aggregated post data. <c>ID = 0</c> if the post was not found.
     /// </returns>
     function GetPostFull(
       aId: TID
-      ): RawJson;
+      ): TPostFullDto;
 
     /// <summary>
     ///   Returns a list of posts that have a specific tag assigned, enriched with author information.
@@ -628,15 +1420,16 @@ type
     ///   The tag's record ID to filter by.
     /// </param>
     /// <returns>
-    ///   JSON object with tag info and posts array, or '{}' if the tag was not found.
+    ///   Tag info and posts array. <c>Tag.ID = 0</c> if the tag was not found.
     /// </returns>
     function GetPostsByTag(
       aTagId: TID
-      ): RawJson;
+      ): TPostsByTagDto;
   end;
 
   /// <summary>
-  ///   Configuration service providing centralized setup options for all other microservices.
+  ///   Configuration service providing centralized setup options for all other microservices. Returns schema-less JSON
+  ///   because the configuration structure varies per service and evolves independently.
   /// </summary>
   IConfig = interface(IInvokable)
     ['{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}']
@@ -682,49 +1475,80 @@ type
     ///   Returns aggregate counts from all services: total posts, authors, tags, and pending comments.
     /// </summary>
     /// <returns>
-    ///   JSON object with count fields and optional <c>*Unavailable</c> flags for unreachable services.
+    ///   Overview with count fields and <c>*Unavailable</c> flags for unreachable services.
     /// </returns>
-    function GetOverview: RawJson;
+    function GetOverview: TOverviewDto;
 
     /// <summary>
     ///   Returns per-author statistics: post count and total comment count on their posts.
     /// </summary>
     /// <returns>
-    ///   JSON array of author stat objects, or '[]' if the users service is unavailable.
+    ///   Array of author stat records, or empty array if the users service is unavailable.
     /// </returns>
-    function GetAuthorStats: RawJson;
+    function GetAuthorStats: TAuthorStatDtoArray;
 
     /// <summary>
     ///   Returns all tags ranked by the number of posts that use them. Demonstrates grouped counting across services.
     /// </summary>
     /// <returns>
-    ///   JSON array of tag objects with <c>postCount</c> field, sorted descending by usage.
+    ///   Array of tag cloud items sorted descending by usage.
     /// </returns>
-    function GetTagCloud: RawJson;
+    function GetTagCloud: TTagCloudItemDtoArray;
 
     /// <summary>
     ///   Returns comment activity: pending count and the top commented posts.
     /// </summary>
     /// <returns>
-    ///   JSON object with <c>pendingCount</c> and <c>topCommentedPosts</c> array.
+    ///   Comment activity overview with pending count and top 10 most-commented posts.
     /// </returns>
-    function GetCommentActivity: RawJson;
+    function GetCommentActivity: TCommentActivityDto;
 
     /// <summary>
     ///   Returns the most recent published posts, each enriched with author, tags, and up to 10 comments. This is the
     ///   cross-service JOIN equivalent -- the key teaching method.
     /// </summary>
     /// <param name="aLimit">
-    ///   Maximum number of posts to return (clamped to 1..50).
+    ///   Maximum number of posts to return (clamped to 1..50). Pass 0 for empty result.
     /// </param>
     /// <returns>
-    ///   JSON array of enriched post objects, or '[]' if the posts service is unavailable.
+    ///   Array of enriched post records, or empty array if unavailable or limit is 0.
     /// </returns>
     function GetRecentPostsFull(
       aLimit: integer
-      ): RawJson;
+      ): TPostFullDtoArray;
   end;
 
 implementation
+
+initialization
+  // Register all DTO record types and their dynamic arrays for mORMot2 RTTI-based JSON serialization.
+  // This is required for SOA interface methods to automatically serialize/deserialize these types.
+  Rtti.RegisterType(TypeInfo(TAuthorDto));
+  Rtti.RegisterType(TypeInfo(TAuthorDtoArray));
+  Rtti.RegisterType(TypeInfo(TPostDto));
+  Rtti.RegisterType(TypeInfo(TPostDtoArray));
+  Rtti.RegisterType(TypeInfo(TPostListDto));
+  Rtti.RegisterType(TypeInfo(TTagDto));
+  Rtti.RegisterType(TypeInfo(TTagDtoArray));
+  Rtti.RegisterType(TypeInfo(TCommentDto));
+  Rtti.RegisterType(TypeInfo(TCommentDtoArray));
+  Rtti.RegisterType(TypeInfo(TMediaInfoDto));
+  Rtti.RegisterType(TypeInfo(TAuthorCreateDto));
+  Rtti.RegisterType(TypeInfo(TPostCreateDto));
+  Rtti.RegisterType(TypeInfo(TTagCreateDto));
+  Rtti.RegisterType(TypeInfo(TCommentCreateDto));
+  Rtti.RegisterType(TypeInfo(TPostFullDto));
+  Rtti.RegisterType(TypeInfo(TPostFullDtoArray));
+  Rtti.RegisterType(TypeInfo(TPostWithAuthorDto));
+  Rtti.RegisterType(TypeInfo(TPostWithAuthorDtoArray));
+  Rtti.RegisterType(TypeInfo(TPostsByTagDto));
+  Rtti.RegisterType(TypeInfo(TOverviewDto));
+  Rtti.RegisterType(TypeInfo(TAuthorStatDto));
+  Rtti.RegisterType(TypeInfo(TAuthorStatDtoArray));
+  Rtti.RegisterType(TypeInfo(TTagCloudItemDto));
+  Rtti.RegisterType(TypeInfo(TTagCloudItemDtoArray));
+  Rtti.RegisterType(TypeInfo(TTopCommentedPostDto));
+  Rtti.RegisterType(TypeInfo(TTopCommentedPostDtoArray));
+  Rtti.RegisterType(TypeInfo(TCommentActivityDto));
 
 end.
