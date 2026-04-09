@@ -243,6 +243,45 @@ sequenceDiagram
     GW-->>B: {Result: true}
 ```
 
+### Correlation ID Propagation
+
+Every HTTP request is tagged with an `X-Correlation-Id` header that
+flows from the browser through the gateway into every backend service
+call. Backend services log the ID alongside each entry, so a single
+`grep` across all log files reveals every step of a single user
+request. The full design is documented in
+[.claude/correlation-ids.md](.claude/correlation-ids.md).
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant GW as Gateway :8080
+    participant P as Posts :8083
+    participant U as Users :8082
+    participant T as Tags :8084
+    participant C as Comments :8085
+
+    B->>GW: POST /api/Blog/GetPostFull [1]<br/>X-Correlation-Id: a8f3c1e9-...
+    Note over GW: Extract header (or generate UUID)<br/>Store in threadvar
+    GW->>P: IPost.Get(1)<br/>X-Correlation-Id: a8f3c1e9-...
+    P->>P: LogWithCorrelation: [a8f3c1e9-...] REQ POST /api/Post/Get
+    P-->>GW: {RowID:1, Title:...}
+    GW->>U: IUser.Get(1)<br/>X-Correlation-Id: a8f3c1e9-...
+    U->>U: LogWithCorrelation: [a8f3c1e9-...] REQ POST /api/User/Get
+    U-->>GW: {DisplayName:...}
+    GW->>T: ITag.GetByPost(1)<br/>X-Correlation-Id: a8f3c1e9-...
+    T-->>GW: [...]
+    GW->>C: IComment.GetByPost(1)<br/>X-Correlation-Id: a8f3c1e9-...
+    C-->>GW: [...]
+    GW-->>B: Response<br/>X-Correlation-Id: a8f3c1e9-... (mirrored)
+```
+
+The ID is propagated via mORMot2's `OnBeforeCall` hook on every
+`TRestHttpClient` in the gateway. On the backend side,
+`TMicroService.HandleRequestWithCorrelation` wraps the HTTP handler
+once in `Run()`, so all services inherit correlation behavior without
+per-service code.
+
 ### Comment Moderation
 
 ```mermaid
@@ -489,3 +528,4 @@ erDiagram
 | Auth | SCRAM-MCF (RFC 5802) + JWT (HMAC-SHA256, 24h) |
 | Frontend | Vanilla JavaScript SPA |
 | IPC | REST/JSON over HTTP (SOA interface-based) |
+| Tracing | `X-Correlation-Id` header propagated end-to-end (threadvar + `OnBeforeCall`) |

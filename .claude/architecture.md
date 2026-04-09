@@ -101,6 +101,29 @@ Every service automatically provides (via `TMicroService` base class):
 4. **Gateway Pattern** -- all browser requests go through the gateway
 5. **Custom Auth** -- SCRAM-MCF instead of mORMot2's built-in REST authentication
 
+## Cross-Cutting Concerns
+
+### Correlation IDs (Distributed Tracing)
+
+Every HTTP request is tagged with an `X-Correlation-Id` header that
+propagates from the browser through the gateway into every backend
+service call. Each service logs the ID alongside its entries so a
+single `grep` across all log files reconstructs one user request.
+
+- **Storage**: per-request `threadvar` in `ms.shared.correlation.pas`
+- **Gateway**: extracts the header (or generates a UUID) in
+  `HandleRequest`; installs `OnBeforeCall` on every `TRestHttpClient`
+  to forward the ID to backend calls
+- **Backend services**: `TMicroService.HandleRequestWithCorrelation`
+  wraps the HTTP handler once in `Run()` and logs every request as
+  `{Service} REQ ...` / `{Service} RSP ... -> {Status}`
+- **Logging helper**: `LogWithCorrelation` prepends `[ID]` to every
+  log line automatically
+
+All services inherit this behavior for free via the `TMicroService`
+base class. See [correlation-ids.md](correlation-ids.md) for the full
+design, rationale, and developer guide.
+
 ## Service Dependencies
 
 ```mermaid

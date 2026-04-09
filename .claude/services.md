@@ -22,6 +22,30 @@ POST   /api/shutdown    Graceful shutdown
 
 ---
 
+## Cross-Service: Correlation IDs
+
+Every HTTP request carries an `X-Correlation-Id` header that
+propagates through every service involved in handling it. This is
+implemented entirely in shared infrastructure, so no service
+implementation has to be modified:
+
+- `ms.shared.correlation.pas` -- threadvar, helper functions,
+  `LogWithCorrelation`
+- `TMicroService.HandleRequestWithCorrelation` -- wraps the HTTP
+  handler for **all backend services** (auth, users, posts, tags,
+  comments, media, analytics, config). Every incoming request is
+  automatically logged as `{Service} REQ {Method} {URL}` and
+  `{Service} RSP {Method} {URL} -> {Status}`
+- `ms.gateway.server.pas` -- extracts the header (or generates a
+  UUID) in `HandleRequest`; installs `OnBeforeCall` on every
+  `TRestHttpClient` to forward the ID to outgoing backend calls
+- `ms.gateway/www/js/api.js` -- browser generates the UUID and
+  reads it back from the response header
+
+See [correlation-ids.md](correlation-ids.md) for the full design.
+
+---
+
 ## SOA Interface Definitions (ms.shared.api.pas)
 
 All interfaces are defined in `ms.shared.api.pas` and used by both

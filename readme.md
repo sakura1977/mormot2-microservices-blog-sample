@@ -181,6 +181,7 @@ mormot2-microservices/
 |   |-- ms.shared.pas              Constants, config loading, slug generation, MIME types
 |   |-- ms.shared.api.pas          SOA interface definitions (IAuth, IUser, ...)
 |   |-- ms.shared.jwt.pas          JWT token creation and validation
+|   |-- ms.shared.correlation.pas  X-Correlation-Id threadvar, helpers, LogWithCorrelation
 |   +-- ms.shared.service.pas      TMicroService base class, RegisterService helper,
 |                                    OrmGetById/OrmGetAll, health + shutdown endpoints
 |
@@ -269,6 +270,17 @@ Every service automatically provides (via `TMicroService` base class):
 
 - `GET /api/health` -- JSON health check (service name, port, version, uptime)
 - `POST /api/shutdown` -- graceful shutdown
+
+### Correlation IDs for Distributed Tracing
+
+Every HTTP request receives a unique `X-Correlation-Id` header that propagates through the gateway and all backend service calls. Each service writes the ID into its log entries, so a single `grep` across all log files immediately reveals every entry belonging to one user request -- an essential debugging tool for distributed systems.
+
+- The browser generates a UUID per call (via `api.js`) and mirrors the ID back from the response
+- The gateway extracts the header (or generates one if missing) and forwards it to every backend via mORMot2's `OnBeforeCall` hook on `TRestHttpClient`
+- All backend services inherit the correlation behavior through `TMicroService` -- no per-service code needed
+- `TMicroService.HandleRequestWithCorrelation` automatically logs every incoming request as `{Service} REQ {Method} {URL}` and `{Service} RSP {Method} {URL} -> {Status}`
+
+See [.claude/correlation-ids.md](.claude/correlation-ids.md) for the full design and rationale.
 
 ---
 

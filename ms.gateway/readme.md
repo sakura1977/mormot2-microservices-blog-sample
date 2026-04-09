@@ -2,7 +2,7 @@
 
 Port **8080** | Interface **IBlog** + 7 proxied interfaces | No own database
 
-Central entry point for all browser requests. Combines three responsibilities: transparent SOA proxying, response aggregation, and static file serving.
+Central entry point for all browser requests. Combines four responsibilities: transparent SOA proxying, response aggregation, static file serving, and correlation ID propagation.
 
 ## Aggregation Interface (IBlog)
 
@@ -55,9 +55,49 @@ Seven backend interfaces are transparently forwarded without manual proxy classe
 | `/*` | Static files from `www/` directory |
 | Fallback | `index.html` (SPA routing) |
 
+## Correlation ID Propagation
+
+The gateway is the origin point for correlation IDs in this architecture. Every request that passes through gets a unique `X-Correlation-Id` that then rides along to every backend service call.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant GW as Gateway HandleRequest
+    participant TV as threadvar
+    participant RC as TRestHttpClient
+    participant BE as Backend Service
+
+    B->>GW: HTTP request (X-Correlation-Id?)
+    alt Header present
+        GW->>GW: ExtractCorrelationIdFromHeaders
+    else Header missing
+        GW->>GW: GenerateCorrelationId (new UUID)
+    end
+    GW->>TV: SetCurrentCorrelationId
+    GW->>GW: OutCustomHeaders += X-Correlation-Id (mirror)
+    GW->>RC: invoke SOA method
+    Note over RC: OnBeforeCall hook fires
+    RC->>TV: GetCurrentCorrelationId
+    RC->>BE: HTTP call with X-Correlation-Id header
+    BE-->>RC: response
+    RC-->>GW: response
+    GW->>TV: ClearCurrentCorrelationId
+    GW-->>B: response (X-Correlation-Id mirrored)
+```
+
+### Implementation points
+
+- **Header extraction**: `HandleRequest` reads `X-Correlation-Id` from `InHeaders` at the top of the method, before any routing or CORS logic. If absent, a new UUID is generated.
+- **Response mirror**: The ID is appended to `OutCustomHeaders` so the browser (and any intermediate proxy) can log it.
+- **Backend forwarding**: `ConnectToBackend` installs `ForwardCorrelationId` as the `OnBeforeCall` handler on every `TRestHttpClient`. This mORMot2 hook fires synchronously on the calling thread before every outgoing request, so reading the threadvar is always safe.
+- **Browser side**: `www/js/api.js` generates a UUID per call, sends it as `X-Correlation-Id`, and reads the mirrored ID from the response headers.
+
+See [.claude/correlation-ids.md](../.claude/correlation-ids.md) for the full design, logging examples, and developer guide.
+
 ## Implementation Details
 
 - **Transparent proxying**: `TRestHttpClient.Services.Resolve` returns `TInterfacedObjectFake` instances that are re-registered as server-side services -- no manual proxy classes needed
 - **Format matching**: both client and server factories use `ResultAsJsonObjectWithoutResult := True`
 - **CORS**: `Access-Control-Allow-Origin: *` on all responses
 - **SPA fallback**: unmatched routes serve `index.html` for client-side routing
+- **Correlation IDs**: `X-Correlation-Id` extracted (or generated) per request, stored in a threadvar, forwarded to every backend via `OnBeforeCall`, and mirrored in the response

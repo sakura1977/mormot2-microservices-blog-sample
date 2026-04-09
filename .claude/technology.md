@@ -28,6 +28,26 @@
 | HTTP client | `mormot.rest.http.client` | `TRestHttpClient` to backend services |
 | SOA client | `mormot.soa.client` | `TServiceFactoryClient` for proxies |
 | Async HTTP | `mormot.net.async` | `THttpAsyncServer` for requests |
+| Per-call hook | `mormot.rest.client` | `OnBeforeCall` on `TRestClientUri` for correlation ID propagation |
+
+## Cross-Cutting Concerns
+
+### Observability: Correlation IDs
+
+Every HTTP request is tagged with an `X-Correlation-Id` header that
+propagates end-to-end across all services. The implementation uses:
+
+- A `threadvar` (`CurrentCorrelationId`) for per-request isolation on
+  mORMot2's `THttpAsyncServer` thread pool
+- `TMicroService.HandleRequestWithCorrelation` to wrap the HTTP
+  handler for all backend services (installed once in `Run`)
+- `OnBeforeCall` on each gateway `TRestHttpClient` to append the ID
+  to outgoing backend calls (synchronous, same-thread, no races)
+- `LogWithCorrelation` helper that prepends `[ID]` to every log entry
+
+This gives us log filtering across all 9 services with a single
+`grep` over `_out/Win32-Debug/APP/logs/*.log`. See
+[correlation-ids.md](correlation-ids.md) for the full design doc.
 
 ## Project Structure
 
@@ -38,6 +58,7 @@ graph LR
         S2[ms.shared.api.pas]
         S3[ms.shared.jwt.pas]
         S4[ms.shared.service.pas]
+        S5[ms.shared.correlation.pas]
     end
 
     subgraph ms.gateway
@@ -93,7 +114,7 @@ graph LR
 
 | Path | Contents |
 |------|----------|
-| `shared/` | Constants, SOA interfaces, JWT, TMicroService base class |
+| `shared/` | Constants, SOA interfaces, JWT, correlation ID helpers, TMicroService base class |
 | `ms.gateway/www/` | SPA frontend (index.html, css/, js/) |
 | `ms.controller/` | Service orchestrator (optional) |
 | `test/` | Integration tests (130+ assertions, all services in-process) |

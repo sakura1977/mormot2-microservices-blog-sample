@@ -21,6 +21,7 @@ Microservice-based blog system with **Delphi 13** and **mORMot2**.
 | [services.md](services.md) | Detailed service definitions with SOA interfaces and data models |
 | [technology.md](technology.md) | mORMot2 modules, project structure, code patterns, configuration |
 | [workflows.md](workflows.md) | Sequence diagrams for all key workflows |
+| [correlation-ids.md](correlation-ids.md) | `X-Correlation-Id` propagation, threadvar, `OnBeforeCall` hook, logging |
 
 ## Architecture
 
@@ -65,12 +66,15 @@ Microservice-based blog system with **Delphi 13** and **mORMot2**.
 BlogMicroservices.groupproj    IDE project group
 start-all.cmd / stop-all.cmd   Operations scripts
 seed-data.cmd / status.cmd     Demo data / health checks
-shared/                        4 shared units
+shared/                        5 shared units
   ms.shared.pas                  Constants, config, slug generation
   ms.shared.api.pas              SOA interface definitions (IAuth, IUser, ...)
   ms.shared.jwt.pas              JWT token creation and validation
+  ms.shared.correlation.pas      X-Correlation-Id threadvar, helpers,
+                                   LogWithCorrelation (see correlation-ids.md)
   ms.shared.service.pas          TMicroService base class, RegisterService,
-                                   OrmGetById, OrmGetAll
+                                   OrmGetById, OrmGetAll,
+                                   HandleRequestWithCorrelation wrapper
 ms.gateway/                    Gateway + www/ frontend
 ms.auth/                       Auth service (model + server)
 ms.users/                      Users service (model + server)

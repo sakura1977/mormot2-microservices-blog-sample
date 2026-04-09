@@ -9,6 +9,21 @@ info:
     Procedures with `out` parameters return them as named JSON keys.
 
     All services are accessible through the API gateway on port 8080.
+
+    ## Correlation IDs (distributed tracing)
+
+    Every endpoint accepts an optional `X-Correlation-Id` request header and returns the
+    same value in the response headers. If the client does not send one, the gateway
+    generates a UUID and forwards it to all backend services. Each service writes the
+    correlation ID into its log entries, so a single `grep` across all log files
+    immediately reveals every entry belonging to one user request.
+
+    The header parameter and response header are defined as reusable components
+    (`CorrelationIdHeader`, `CorrelationIdResponseHeader`). They apply to **every**
+    operation in this spec even though they are not explicitly listed on each one --
+    keeping the schema readable while preserving the contract.
+
+    See [`.claude/correlation-ids.md`](.claude/correlation-ids.md) for the full design.
   version: 1.0.0
   contact:
     name: Blog Microservices Demo
@@ -1082,7 +1097,16 @@ paths:
     post:
       tags: [Blog]
       summary: Get fully enriched post
-      description: Aggregates post data with author profile, tags, and approved comments from 4 backend services. Graceful degradation if sub-services are unavailable.
+      description: |
+        Aggregates post data with author profile, tags, and approved comments from 4 backend
+        services. Graceful degradation if sub-services are unavailable.
+
+        This operation explicitly references the reusable `CorrelationIdHeader` parameter
+        and `CorrelationIdResponseHeader` response header as a representative example --
+        every other endpoint in this spec accepts and returns the same header. See the
+        top-level description for the global correlation-ID convention.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationIdHeader'
       requestBody:
         required: true
         content:
@@ -1098,6 +1122,9 @@ paths:
       responses:
         '200':
           description: Enriched post (ID=0 if not found)
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationIdResponseHeader'
           content:
             application/json:
               schema:
@@ -1377,6 +1404,32 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: JWT token obtained via Auth/Authenticate
+
+  parameters:
+    CorrelationIdHeader:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: |
+        Optional correlation ID for distributed request tracing. If absent, the gateway
+        generates a UUID. The same value is forwarded to every backend service called
+        while handling the request and is mirrored back in the response headers.
+        See `.claude/correlation-ids.md` for details.
+      schema:
+        type: string
+        format: uuid
+        example: "a8f3c1e9-7d24-4b5f-9e1c-2a3b4c5d6e7f"
+
+  headers:
+    CorrelationIdResponseHeader:
+      description: |
+        The correlation ID for this request. Echoes the value sent by the client in the
+        `X-Correlation-Id` request header, or a fresh UUID if none was provided. Useful
+        for grepping across the per-service log files.
+      schema:
+        type: string
+        format: uuid
+        example: "a8f3c1e9-7d24-4b5f-9e1c-2a3b4c5d6e7f"
 
   schemas:
     # --- Base Entity DTOs ---
