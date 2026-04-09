@@ -16,6 +16,8 @@ graph TB
     TAGS["ms.tags :8084<br/>ITag"]
     COMMENTS["ms.comments :8085<br/>IComment"]
     MEDIA["ms.media :8086<br/>IMedia"]
+    ANALYTICS["ms.analytics :8088<br/>IAnalytics"]
+    LOGS["ms.logs :8089<br/>ILogIngestion + ILogQuery"]
 
     DB_AUTH[(auth.db)]
     DB_USERS[(users.db)]
@@ -23,6 +25,7 @@ graph TB
     DB_TAGS[(tags.db)]
     DB_COMMENTS[(comments.db)]
     DB_MEDIA[(media.db)]
+    DB_LOGS[(logs.db<br/>FTS5)]
 
     CONFIG["ms.config :8087<br/>IConfig"] -.-> AUTH
     CONFIG -.-> USERS
@@ -38,6 +41,18 @@ graph TB
     GW --> TAGS
     GW --> COMMENTS
     GW --> MEDIA
+    GW --> ANALYTICS
+    GW -->|ILogQuery| LOGS
+
+    AUTH -. EchoCustom .-> LOGS
+    USERS -. EchoCustom .-> LOGS
+    POSTS -. EchoCustom .-> LOGS
+    TAGS -. EchoCustom .-> LOGS
+    COMMENTS -. EchoCustom .-> LOGS
+    MEDIA -. EchoCustom .-> LOGS
+    ANALYTICS -. EchoCustom .-> LOGS
+    CONFIG -. EchoCustom .-> LOGS
+    GW -. EchoCustom .-> LOGS
 
     AUTH --- DB_AUTH
     USERS --- DB_USERS
@@ -45,6 +60,7 @@ graph TB
     TAGS --- DB_TAGS
     COMMENTS --- DB_COMMENTS
     MEDIA --- DB_MEDIA
+    LOGS --- DB_LOGS
 ```
 
 ## Services at a Glance
@@ -59,6 +75,8 @@ graph TB
 | 6 | **ms.comments** | 8085 | IComment | Comments, moderation workflow |
 | 7 | **ms.media** | 8086 | IMedia | Image upload, storage |
 | 8 | **ms.config** | 8087 | IConfig | Central configuration registry |
+| 9 | **ms.analytics** | 8088 | IAnalytics | Cross-service data aggregation |
+| 10 | **ms.logs** | 8089 | ILogIngestion + ILogQuery | Central log aggregation (SQLite FTS5) |
 
 ## API Style: mORMot2 SOA
 
@@ -124,6 +142,33 @@ All services inherit this behavior for free via the `TMicroService`
 base class. See [correlation-ids.md](correlation-ids.md) for the full
 design, rationale, and developer guide.
 
+### Central Logging (ms.logs)
+
+Correlation IDs are only useful if you can query logs across every
+service from one place. `ms.logs` is a dedicated microservice that
+receives every log line from every other service and persists it in
+SQLite with an FTS5 full-text search index.
+
+- **Shipper**: `TLogShipper` in `shared/ms.shared.logclient.pas` --
+  installed as a `TSynLogFamily.EchoCustom` callback by every service
+  (except `ms.logs` itself), backed by a thread-safe queue and a
+  background flush thread that batches entries into
+  `ILogIngestion.AppendBatch` calls
+- **Store**: `TOrmLogEntry` + `TOrmLogEntryFts` in
+  `ms.logs/ms.logs.model.pas`
+- **Query**: `ILogQuery` with `ByCorrelationId`, `Recent`, `Search`
+  (FTS5) and `Stats` -- proxied through the gateway so the browser
+  UI at `/logs` can filter by service, level, correlation ID or text
+- **Wiring**: `TMicroService` creates and attaches a `TLogShipper` in
+  every service automatically -- no per-service code needed
+- **Best effort**: if `ms.logs` is down, the queue drops oldest
+  entries; local `TSynLog` file logging keeps running unchanged
+
+This is the full payoff for correlation IDs: one click on an ID in
+the log viewer reveals every entry from every service that belongs
+to one user request. See [central-logging.md](central-logging.md)
+for the full design.
+
 ## Service Dependencies
 
 ```mermaid
@@ -135,6 +180,17 @@ graph LR
     GW --> TAGS[ms.tags]
     GW --> COMMENTS[ms.comments]
     GW --> MEDIA[ms.media]
+    GW --> ANALYTICS[ms.analytics]
+    GW -->|ILogQuery| LOGS[ms.logs]
+    AUTH -. EchoCustom .-> LOGS
+    USERS -. EchoCustom .-> LOGS
+    POSTS -. EchoCustom .-> LOGS
+    TAGS -. EchoCustom .-> LOGS
+    COMMENTS -. EchoCustom .-> LOGS
+    MEDIA -. EchoCustom .-> LOGS
+    ANALYTICS -. EchoCustom .-> LOGS
+    CONFIG -. EchoCustom .-> LOGS
+    GW -. EchoCustom .-> LOGS
 ```
 
 All backend services are independent of each other.

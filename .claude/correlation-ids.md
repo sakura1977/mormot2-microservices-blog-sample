@@ -238,3 +238,27 @@ grep "my-test-id-123" _out/Win32-Debug/APP/logs/*.log
      _out/Win32-Debug/APP/logs/*.log | sort
    ```
 5. All entries belonging to the same request share the same ID
+
+## Querying correlation IDs from the browser
+
+Grepping per-service `.log` files works, but there is a much more
+convenient path: the `ms.logs` service (port 8089) ingests every log
+line from every service and indexes the correlation ID as a
+first-class column. The SOA method `ILogQuery.ByCorrelationId(id)`
+returns every entry belonging to one request in one call, and the
+browser UI at [http://localhost:8080/logs](http://localhost:8080/logs)
+turns this into a click-through experience:
+
+- Paste or click a correlation ID -- the UI renders a timeline
+  across every service that touched the request
+- Full-text search (`ILogQuery.Search`) uses SQLite FTS5 for fast
+  substring / MATCH queries
+- Filter by service, level or time range via `ILogQuery.Recent`
+
+The gateway proxies `ILogQuery` exactly like the other backend
+services, so no extra authentication plumbing is required.
+
+See [central-logging.md](central-logging.md) for the full design of
+the logging service, the mORMot2 primitives it uses (`EchoCustom`,
+`TOrmFts5`) and how each service ships its log lines without
+blocking the producing thread.

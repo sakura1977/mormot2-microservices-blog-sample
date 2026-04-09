@@ -33,8 +33,8 @@ implementation has to be modified:
   `LogWithCorrelation`
 - `TMicroService.HandleRequestWithCorrelation` -- wraps the HTTP
   handler for **all backend services** (auth, users, posts, tags,
-  comments, media, analytics, config). Every incoming request is
-  automatically logged as `{Service} REQ {Method} {URL}` and
+  comments, media, analytics, config, logs). Every incoming request
+  is automatically logged as `{Service} REQ {Method} {URL}` and
   `{Service} RSP {Method} {URL} -> {Status}`
 - `ms.gateway.server.pas` -- extracts the header (or generates a
   UUID) in `HandleRequest`; installs `OnBeforeCall` on every
@@ -367,6 +367,64 @@ Connects directly to ms.posts, ms.users, ms.tags, ms.comments (same pattern as g
 
 ---
 
+## 10. ms.logs (Port 8089)
+
+### Responsibility
+Central log aggregation. Receives log entries from every other service via `ILogIngestion`, stores them in SQLite with an FTS5 full-text search index, and exposes the typed `ILogQuery` interface for retrieval. See [central-logging.md](central-logging.md) for the full design.
+
+### Data Model
+
+```pascal
+TOrmLogEntry = class(TOrm)
+  property Timestamp: TDateTime    // stored, indexed
+  property ServiceName: RawUtf8    // e.g. "ms.posts"
+  property Level: integer          // TSynLogLevel ordinal
+  property CorrelationId: RawUtf8  // parsed from Message text
+  property Message: RawUtf8        // full log line
+end;
+
+TOrmLogEntryFts = class(TOrmFts5)
+  property Message: RawUtf8        // FTS5 virtual table, parallel to TOrmLogEntry
+end;
+```
+
+### SOA Interface: ILogIngestion (write path, called by every service)
+
+```pascal
+ILogIngestion = interface(IInvokable)
+  ['{C2D3E4F5-A6B7-8C9D-0E1F-2A3B4C5D6E7F}']
+  procedure AppendBatch(const aEntries: TLogEntryIngestDtoArray);
+end;
+```
+
+Each `TLogEntryIngestDto` carries `ServiceName`, `Timestamp`, `Level`, `Message`. The server parses out the correlation ID from the message text using the `[uuid]` prefix emitted by `LogWithCorrelation`.
+
+### SOA Interface: ILogQuery (read path, proxied through the gateway)
+
+```pascal
+ILogQuery = interface(IInvokable)
+  ['{D3E4F5A6-B7C8-9D0E-1F2A-3B4C5D6E7F8A}']
+  function ByCorrelationId(const aId: RawUtf8): TLogEntryDtoArray;
+  function Recent(const aFilter: TLogQueryFilter): TLogEntryDtoArray;
+  function Search(const aText: RawUtf8; aLimit: integer): TLogEntryDtoArray;
+  function Stats: TLogStatsDto;
+end;
+```
+
+`TLogQueryFilter` carries optional `ServiceName`, `MinLevel`, `Since`, `UntilTime`, `Limit` fields. `TLogStatsDto` returns `TotalEntries`, `OldestEntry`, `NewestEntry` and a per-service breakdown.
+
+### Ingestion Flow
+1. Producer services install a `TLogShipper` (`shared/ms.shared.logclient.pas`) as a `TSynLogFamily.EchoCustom` callback
+2. Each log line is enqueued into a thread-safe queue (cap 10 000, drops oldest on overflow)
+3. A background thread drains the queue every 250 ms (or sooner if 100 entries pending) and calls `ILogIngestion.AppendBatch`
+4. `TLogIngestionService` parses the correlation ID and writes both the regular row and the FTS5 row inside one SQLite transaction
+
+### Storage
+- Own SQLite database (`logs.db`)
+- FTS5 virtual table `LogEntryFts` mirrors the `Message` column for `MATCH` queries
+
+---
+
 ## Service Dependencies
 
 ```
@@ -383,6 +441,10 @@ ms.gateway  -->  ms.posts      (blog posts)
 ms.gateway  -->  ms.tags       (tags)
 ms.gateway  -->  ms.comments   (comments)
 ms.gateway  -->  ms.media      (media files)
+ms.gateway  -->  ms.logs       (ILogQuery proxy for browser UI)
+
+all services (except ms.logs)
+            -->  ms.logs       (ILogIngestion via TLogShipper / EchoCustom)
 
 ms.auth     -->  (none -- stores only UserId as reference)
 ms.posts    -->  (none -- stores only IDs)
@@ -390,4 +452,5 @@ ms.tags     -->  (none -- stores only IDs)
 ms.comments -->  (none -- stores only IDs)
 ms.media    -->  (none -- stores only IDs)
 ms.users    -->  (none -- stores only IDs)
+ms.logs     -->  (none -- write-only target of log shippers)
 ```

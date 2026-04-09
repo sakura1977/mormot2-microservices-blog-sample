@@ -30,6 +30,20 @@
 | Async HTTP | `mormot.net.async` | `THttpAsyncServer` for requests |
 | Per-call hook | `mormot.rest.client` | `OnBeforeCall` on `TRestClientUri` for correlation ID propagation |
 
+### ms.logs (additional)
+
+| Purpose | mORMot2 Unit | Usage |
+|---------|--------------|-------|
+| Custom log echo | `mormot.core.log` | `TSynLogFamily.EchoCustom` callback per log line |
+| FTS5 full-text search | `mormot.orm.core` | `TOrmFts5` virtual table paired with `TOrmLogEntry` |
+| Batched inserts | `mormot.orm.core` | `TransactionBegin` / `Commit` around per-batch `Add` calls |
+
+### All Services (log shipping)
+
+| Purpose | mORMot2 Unit | Usage |
+|---------|--------------|-------|
+| Log shipper | `mormot.core.log` + `mormot.rest.http.client` | `TLogShipper` (in `shared/ms.shared.logclient.pas`) installs an `EchoCustom` hook and ships entries via `TRestHttpClient` + `TServiceFactoryClient` on a background thread |
+
 ## Cross-Cutting Concerns
 
 ### Observability: Correlation IDs
@@ -45,9 +59,31 @@ propagates end-to-end across all services. The implementation uses:
   to outgoing backend calls (synchronous, same-thread, no races)
 - `LogWithCorrelation` helper that prepends `[ID]` to every log entry
 
-This gives us log filtering across all 9 services with a single
+This gives us log filtering across all 10 services with a single
 `grep` over `_out/Win32-Debug/APP/logs/*.log`. See
 [correlation-ids.md](correlation-ids.md) for the full design doc.
+
+### Observability: Central Logging (ms.logs)
+
+Grep over local files works -- but doesn't scale. The `ms.logs`
+service collects log lines from every other service in a queryable
+SQLite store with an FTS5 full-text index:
+
+- `shared/ms.shared.logclient.pas` -- `TLogShipper` installs a
+  `TSynLogFamily.EchoCustom` callback, queues entries, and ships them
+  via `ILogIngestion.AppendBatch` on a background thread (batch size
+  100, flush interval 250 ms)
+- `TMicroService` creates and attaches a `TLogShipper` in every
+  service except `ms.logs` itself, so the cross-cutting concern is
+  implemented once
+- `ms.logs` parses the correlation ID from each message and stores
+  it indexed, enabling the `ILogQuery.ByCorrelationId` pivot
+- The gateway proxies `ILogQuery` so the browser UI at `/logs` can
+  filter by service, level, correlation ID, time range or FTS5 text
+
+See [central-logging.md](central-logging.md) for the full design,
+including the mORMot2 primitives considered and the per-line
+lifecycle diagram.
 
 ## Project Structure
 
@@ -59,6 +95,7 @@ graph LR
         S3[ms.shared.jwt.pas]
         S4[ms.shared.service.pas]
         S5[ms.shared.correlation.pas]
+        S6[ms.shared.logclient.pas]
     end
 
     subgraph ms.gateway
@@ -96,6 +133,11 @@ graph LR
         M2[ms.media.server.pas]
     end
 
+    subgraph ms.logs
+        L1[ms.logs.model.pas]
+        L2[ms.logs.server.pas]
+    end
+
     subgraph test
         TE[ms.testCases.pas]
     end
@@ -107,6 +149,7 @@ graph LR
     shared --> ms.tags
     shared --> ms.comments
     shared --> ms.media
+    shared --> ms.logs
     shared --> test
 ```
 
@@ -206,3 +249,5 @@ the TOrm/I prefixes), as mORMot2 would report a routing conflict.
 | ms.tags | -- | TOrmPostTag | PostTag |
 | ms.comments | IComment | TOrmBlogComment | BlogComment |
 | ms.media | IMedia | TOrmMediaFile | MediaFile |
+| ms.logs | ILogIngestion + ILogQuery | TOrmLogEntry | LogEntry |
+| ms.logs | -- | TOrmLogEntryFts | LogEntryFts (FTS5) |

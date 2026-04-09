@@ -52,6 +52,15 @@ tags:
     description: Cross-service data aggregation and statistics
   - name: Config
     description: Central configuration registry (internal)
+  - name: Logs
+    description: |
+      Central log aggregation. Every other service ships its log lines to `ms.logs` via
+      an internal `ILogIngestion` SOA interface (not documented here -- it is not
+      reachable through the gateway). The gateway exposes the read path `ILogQuery` so
+      the browser UI at `/logs` can query by correlation ID, time range, service/level
+      filter, or full-text SQLite FTS5 search.
+
+      See [`.claude/central-logging.md`](.claude/central-logging.md) for the full design.
 
 paths:
   # =====================================================================
@@ -1394,6 +1403,141 @@ paths:
                     type: object
                     description: "JSON object: {serviceName: {Host, Port}}"
 
+  # =====================================================================
+  #  Logs (central log aggregation via ms.logs, proxied by the gateway)
+  # =====================================================================
+  /api/LogQuery/ByCorrelationId:
+    post:
+      tags: [Logs]
+      summary: Get all log entries for one correlation ID
+      description: |
+        Returns every log entry that was produced while handling a single user request,
+        across every service that participated. Results are ordered by timestamp
+        ascending, so the array reads like a timeline. Returns an empty array if the
+        correlation ID is empty or unknown.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: ["a8f3c1e9-7d24-4b5f-9e1c-2a3b4c5d6e7f"]
+      responses:
+        '200':
+          description: Entries for this correlation ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LogEntryDto'
+
+  /api/LogQuery/Recent:
+    post:
+      tags: [Logs]
+      summary: Recent log entries with optional filters
+      description: |
+        Returns the most recent log entries matching the supplied filter, ordered by
+        timestamp descending. Each filter field is optional: empty `ServiceName`, zero
+        `MinLevel`, zero `Since`/`UntilTime` and zero `Limit` disable the corresponding
+        filter. `Limit` is clamped server-side to 1..1000 (default 100).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 1
+              maxItems: 1
+            examples:
+              default:
+                value: [{"ServiceName":"ms.posts","MinLevel":4,"Limit":200}]
+      responses:
+        '200':
+          description: Matching entries (most recent first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LogEntryDto'
+
+  /api/LogQuery/Search:
+    post:
+      tags: [Logs]
+      summary: Full-text search over log messages (SQLite FTS5)
+      description: |
+        Performs a SQLite FTS5 `MATCH` query against the `Message` column of the log
+        store. The query string uses standard FTS5 syntax (e.g. `timeout`,
+        `"connection timeout"`, `connection AND timeout`, `timeout*`). Results are
+        ordered by timestamp descending. `aLimit` is clamped to 1..1000 (default 100).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              minItems: 2
+              maxItems: 2
+            examples:
+              default:
+                value: ["connection AND timeout", 100]
+      responses:
+        '200':
+          description: Matching entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LogEntryDto'
+
+  /api/LogQuery/Stats:
+    post:
+      tags: [Logs]
+      summary: Aggregate log store statistics
+      description: |
+        Returns a snapshot of the central log store: total entry count, oldest and
+        newest timestamps, and a per-service breakdown of total/warning/error counts.
+        Intended for a dashboard tile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {}
+              maxItems: 0
+            examples:
+              default:
+                value: []
+      responses:
+        '200':
+          description: Log store statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Result:
+                    $ref: '#/components/schemas/LogStatsDto'
+
 # =======================================================================
 #  Schemas
 # =======================================================================
@@ -1797,3 +1941,94 @@ components:
           items:
             $ref: '#/components/schemas/TopCommentedPostDto'
           description: Top 10 posts by comment count (descending)
+
+    # --- Central Logging DTOs (ms.logs) ---
+
+    LogEntryDto:
+      type: object
+      description: |
+        Single log entry returned by `ILogQuery`. The correlation ID is parsed
+        server-side from the message text (extracted from the `[uuid]` prefix that
+        `LogWithCorrelation` produces).
+      properties:
+        ID:
+          type: integer
+          format: int64
+          description: Persistent record identifier
+        ServiceName:
+          type: string
+          description: Producing service name (e.g. `ms.posts`)
+        Timestamp:
+          type: string
+          format: date-time
+          description: When the log line was emitted (UTC)
+        Level:
+          type: integer
+          description: "TSynLogLevel ordinal: 0=none, 1=info, 2=debug, 3=trace, 4=warn, 5=error, ..."
+        CorrelationId:
+          type: string
+          description: Correlation ID parsed from the message text, or empty if none present
+        Message:
+          type: string
+          description: Full log line text
+
+    LogQueryFilter:
+      type: object
+      description: |
+        Filter parameters for `ILogQuery.Recent`. All fields are optional -- empty
+        strings and zero values disable the corresponding filter.
+      properties:
+        ServiceName:
+          type: string
+          description: Exact service name to filter by (empty = all services)
+        MinLevel:
+          type: integer
+          description: Inclusive minimum TSynLogLevel ordinal (0 = no filter)
+        Since:
+          type: string
+          format: date-time
+          description: Lower bound on timestamp, UTC (0 = no lower bound)
+        UntilTime:
+          type: string
+          format: date-time
+          description: Upper bound on timestamp, UTC (0 = no upper bound)
+        Limit:
+          type: integer
+          description: Maximum rows to return. Clamped server-side to 1..1000 (default 100)
+
+    LogServiceStatDto:
+      type: object
+      description: Per-service counts for the stats dashboard tile
+      properties:
+        ServiceName:
+          type: string
+        TotalCount:
+          type: integer
+          description: Total entries from this service
+        WarningCount:
+          type: integer
+          description: Number of warning entries
+        ErrorCount:
+          type: integer
+          description: Number of error entries
+
+    LogStatsDto:
+      type: object
+      description: Snapshot of the central log store
+      properties:
+        TotalEntries:
+          type: integer
+          description: Total number of stored log entries
+        OldestEntry:
+          type: string
+          format: date-time
+          description: Timestamp of the oldest entry, or 0 if empty
+        NewestEntry:
+          type: string
+          format: date-time
+          description: Timestamp of the most recent entry, or 0 if empty
+        Services:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogServiceStatDto'
+          description: Per-service breakdown

@@ -27,6 +27,8 @@ graph TB
         TAGS[ms.tags :8084]
         COMMENTS[ms.comments :8085]
         MEDIA[ms.media :8086]
+        ANALYTICS[ms.analytics :8088]
+        LOGS[ms.logs :8089]
     end
 
     subgraph Databases
@@ -36,6 +38,7 @@ graph TB
         DB_TAGS[(tags.db)]
         DB_COMMENTS[(comments.db)]
         DB_MEDIA[(media.db)]
+        DB_LOGS[(logs.db)]
     end
 
     Browser -->|HTTP :8080| GW
@@ -53,6 +56,18 @@ graph TB
     GW -->|REST/JSON| TAGS
     GW -->|REST/JSON| COMMENTS
     GW -->|REST/JSON| MEDIA
+    GW -->|REST/JSON| ANALYTICS
+    GW -->|ILogQuery| LOGS
+
+    AUTH -. EchoCustom .-> LOGS
+    USERS -. EchoCustom .-> LOGS
+    POSTS -. EchoCustom .-> LOGS
+    TAGS -. EchoCustom .-> LOGS
+    COMMENTS -. EchoCustom .-> LOGS
+    MEDIA -. EchoCustom .-> LOGS
+    ANALYTICS -. EchoCustom .-> LOGS
+    CONFIG -. EchoCustom .-> LOGS
+    GW -. EchoCustom .-> LOGS
 
     AUTH --- DB_AUTH
     USERS --- DB_USERS
@@ -60,6 +75,7 @@ graph TB
     TAGS --- DB_TAGS
     COMMENTS --- DB_COMMENTS
     MEDIA --- DB_MEDIA
+    LOGS --- DB_LOGS
 
     Controller -.->|start/stop/monitor| CONFIG
     Controller -.->|start/stop/monitor| AUTH
@@ -68,6 +84,8 @@ graph TB
     Controller -.->|start/stop/monitor| TAGS
     Controller -.->|start/stop/monitor| COMMENTS
     Controller -.->|start/stop/monitor| MEDIA
+    Controller -.->|start/stop/monitor| ANALYTICS
+    Controller -.->|start/stop/monitor| LOGS
     Controller -.->|start/stop/monitor| GW
 ```
 
@@ -86,6 +104,7 @@ graph TB
 | ms.media | 8086 | File Uploads |
 | ms.config | 8087 | Central Configuration Registry |
 | ms.analytics | 8088 | Cross-Service Data Aggregation |
+| ms.logs | 8089 | Central Log Aggregation (FTS5) |
 | ms.controller | 8090 | Service Orchestrator |
 
 ---
@@ -282,6 +301,44 @@ The ID is propagated via mORMot2's `OnBeforeCall` hook on every
 once in `Run()`, so all services inherit correlation behavior without
 per-service code.
 
+### Central Logging
+
+Every service (except `ms.logs` itself) attaches a background log
+shipper that ships every TSynLog line to `ms.logs` via the
+`ILogIngestion` SOA interface. `ms.logs` stores entries in a SQLite
+database with an FTS5 full-text search index and exposes `ILogQuery`
+for retrieval. The gateway proxies `ILogQuery` so the browser UI at
+`/logs` can filter by service, level, correlation ID, time range or
+full-text match.
+
+See [.claude/central-logging.md](.claude/central-logging.md) for the
+full design, the mORMot2 primitives considered, and the schema.
+
+```mermaid
+sequenceDiagram
+    participant Svc as Any service<br/>(TSynLog)
+    participant Echo as EchoCustom callback
+    participant Q as TLogShipper queue
+    participant Bg as Background thread
+    participant Logs as ms.logs :8089
+    participant DB as logs.db<br/>(FTS5)
+    participant Browser
+    participant GW as ms.gateway :8080
+
+    Svc->>Echo: formatted log line
+    Echo->>Q: enqueue (non-blocking)
+    Note over Bg: every 250 ms or<br/>when 100 entries pending
+    Bg->>Logs: ILogIngestion.AppendBatch(entries)
+    Logs->>Logs: parse correlation ID
+    Logs->>DB: insert TOrmLogEntry + FTS5 row
+
+    Browser->>GW: POST /api/LogQuery/Search ["timeout", 100]
+    GW->>Logs: ILogQuery.Search
+    Logs->>DB: FTS5 MATCH query
+    Logs-->>GW: TLogEntryDtoArray
+    GW-->>Browser: results (click a correlation ID<br/>to pivot across services)
+```
+
 ### Comment Moderation
 
 ```mermaid
@@ -357,14 +414,15 @@ graph LR
 Services start in dependency order:
 
 1. **ms.config** (8087) -- starts first, health-checked before proceeding
-2. **ms.media** (8086) -- no dependencies
-3. **ms.users** (8082) -- no dependencies
-4. **ms.auth** (8081) -- references users
-5. **ms.posts** (8083) -- no dependencies
-6. **ms.tags** (8084) -- no dependencies
-7. **ms.comments** (8085) -- no dependencies
-8. **ms.analytics** (8088) -- depends on backend services
-9. **ms.gateway** (8080) -- depends on all others
+2. **ms.logs** (8089) -- starts early so other services can ship logs from the first line
+3. **ms.media** (8086) -- no dependencies
+4. **ms.users** (8082) -- no dependencies
+5. **ms.auth** (8081) -- references users
+6. **ms.posts** (8083) -- no dependencies
+7. **ms.tags** (8084) -- no dependencies
+8. **ms.comments** (8085) -- no dependencies
+9. **ms.analytics** (8088) -- depends on backend services
+10. **ms.gateway** (8080) -- depends on all others
 
 Shutdown happens in **reverse order** (gateway first, config last).
 
@@ -397,6 +455,7 @@ The gateway combines three responsibilities:
 | ITag | ms.tags :8084 | Get, GetAll, GetByPost, GetPostIds, SetPostTags, Add, Update, Remove |
 | IComment | ms.comments :8085 | GetByPost, GetPending, Add, Approve, Reject, Remove |
 | IMedia | ms.media :8086 | Upload, GetInfo, GetFile, Remove |
+| ILogQuery | ms.logs :8089 | ByCorrelationId, Recent, Search, Stats |
 
 ### Configuration Service
 
@@ -529,3 +588,4 @@ erDiagram
 | Frontend | Vanilla JavaScript SPA |
 | IPC | REST/JSON over HTTP (SOA interface-based) |
 | Tracing | `X-Correlation-Id` header propagated end-to-end (threadvar + `OnBeforeCall`) |
+| Logging | Local `TSynLog` file rotation + central `ms.logs` ingestion (`EchoCustom` + background thread + SQLite FTS5) |

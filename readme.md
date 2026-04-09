@@ -48,6 +48,7 @@ graph TB
     GW --> COMMENTS[ms.comments :8085]
     GW --> MEDIA[ms.media :8086]
     GW --> ANALYTICS[ms.analytics :8088]
+    GW --> LOGS[ms.logs :8089]
     ANALYTICS --> POSTS
     ANALYTICS --> USERS
     ANALYTICS --> TAGS
@@ -59,15 +60,25 @@ graph TB
     CONFIG -.-> COMMENTS
     CONFIG -.-> MEDIA
     CONFIG -.-> GW
+    AUTH -. EchoCustom .-> LOGS
+    USERS -. EchoCustom .-> LOGS
+    POSTS -. EchoCustom .-> LOGS
+    TAGS -. EchoCustom .-> LOGS
+    COMMENTS -. EchoCustom .-> LOGS
+    MEDIA -. EchoCustom .-> LOGS
+    ANALYTICS -. EchoCustom .-> LOGS
+    CONFIG -. EchoCustom .-> LOGS
+    GW -. EchoCustom .-> LOGS
     AUTH --- DB1[(auth.db)]
     USERS --- DB2[(users.db)]
     POSTS --- DB3[(posts.db)]
     TAGS --- DB4[(tags.db)]
     COMMENTS --- DB5[(comments.db)]
     MEDIA --- DB6[(media.db)]
+    LOGS --- DB7[(logs.db)]
 ```
 
-Nine independent services, each a standalone console application:
+Ten independent services, each a standalone console application:
 
 | Service | Port | SOA Interface | Responsibility |
 |---------|------|---------------|----------------|
@@ -80,6 +91,7 @@ Nine independent services, each a standalone console application:
 | **ms.comments** | 8085 | IComment | Comments with moderation workflow |
 | **ms.media** | 8086 | IMedia | File uploads with Base64 encoding |
 | **ms.analytics** | 8088 | IAnalytics | Cross-service data aggregation and statistics |
+| **ms.logs** | 8089 | ILogIngestion + ILogQuery | Central log aggregation with FTS5 full-text search |
 
 For detailed diagrams (request flows, data model, routing map), see [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -179,9 +191,11 @@ mormot2-microservices/
 |
 |-- shared/                      Shared units (used by all services)
 |   |-- ms.shared.pas              Constants, config loading, slug generation, MIME types
-|   |-- ms.shared.api.pas          SOA interface definitions (IAuth, IUser, ...)
+|   |-- ms.shared.api.pas          SOA interface definitions (IAuth, IUser, ...,
+|   |                                ILogIngestion, ILogQuery, TLogEntryDto, ...)
 |   |-- ms.shared.jwt.pas          JWT token creation and validation
 |   |-- ms.shared.correlation.pas  X-Correlation-Id threadvar, helpers, LogWithCorrelation
+|   |-- ms.shared.logclient.pas    Background log shipper (EchoCustom + queue + thread)
 |   +-- ms.shared.service.pas      TMicroService base class, RegisterService helper,
 |                                    OrmGetById/OrmGetAll, health + shutdown endpoints
 |
@@ -204,6 +218,11 @@ mormot2-microservices/
 |-- ms.config/                   Central configuration registry
 |   |-- ms.config.server.pas       TConfigService (IConfig), TConfigServer
 |   +-- ms.config.master.json      Master config for all services
+|
+|-- ms.logs/                     Central logging service
+|   |-- ms.logs.dpr                Entry point
+|   |-- ms.logs.model.pas          TOrmLogEntry + TOrmLogEntryFts (FTS5)
+|   +-- ms.logs.server.pas         TLogIngestionService, TLogQueryService
 |
 |-- ms.gateway/                  API Gateway
 |   |-- ms.gateway.dpr
@@ -282,6 +301,20 @@ Every HTTP request receives a unique `X-Correlation-Id` header that propagates t
 
 See [.claude/correlation-ids.md](.claude/correlation-ids.md) for the full design and rationale.
 
+### Central Logging with `ms.logs`
+
+Correlation IDs are only half the story -- you still need a place to query logs across all services. `ms.logs` (port 8089) is a dedicated microservice that ingests every log line from every other service and stores it in a SQLite database with **FTS5 full-text search**.
+
+- Every service attaches a `TLogShipper` (from `shared/ms.shared.logclient.pas`) via mORMot2's `TSynLogFamily.EchoCustom` hook
+- A background thread batches entries and ships them through the `ILogIngestion` SOA interface -- non-blocking for the producing service
+- `ms.logs` parses out the correlation ID from each message and stores it indexed
+- The `ILogQuery` interface exposes `ByCorrelationId`, `Recent`, `Search` (FTS5) and `Stats` -- proxied through the gateway
+- A browser UI at [http://localhost:8080/logs](http://localhost:8080/logs) turns a correlation ID into a clickable cross-service timeline
+
+One click on a correlation ID reveals every entry from every service that belongs to one user request. The local file logging keeps running unchanged, so the log shipper is purely additive.
+
+See [.claude/central-logging.md](.claude/central-logging.md) for the full design, the mORMot2 primitives considered, and the schema details.
+
 ---
 
 ## Configuration
@@ -335,7 +368,7 @@ Example (`ms.gateway.config.json`):
 
 ### Testing with mORMot2
 
-- **In-process integration tests** -- all 9 services run in a single process with in-memory SQLite (`:memory:`) -- no HTTP, no ports, no separate processes
+- **In-process integration tests** -- the backend services run in a single process with in-memory SQLite (`:memory:`) -- no HTTP, no ports, no separate processes
 - **TSynTestCase** -- mORMot2's test framework with `Check`, `CheckEqual` assertions
 - **130+ assertions** covering happy paths, validation errors, not-found cases, SCRAM authentication, cascading deletes, and upload limits
 - **Constructor injection** -- service implementations receive `IRestOrm` for easy test wiring

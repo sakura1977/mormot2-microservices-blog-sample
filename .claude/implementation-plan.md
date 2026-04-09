@@ -5,9 +5,11 @@ Status: **Implementation complete** (as of 2026-04-08)
 ## Phase 1: Foundation (Shared Code) -- DONE
 
 - `ms.shared.pas` -- Constants, config loading, TextToSlug, GuessMimeType
-- `ms.shared.api.pas` -- SOA interface definitions (IAuth, IUser, IPost, ITag, IComment, IMedia, IBlog)
+- `ms.shared.api.pas` -- SOA interface definitions (IAuth, IUser, IPost, ITag, IComment, IMedia, IBlog, IAnalytics, IConfig, ILogIngestion, ILogQuery)
 - `ms.shared.jwt.pas` -- JWT token creation and validation
-- `ms.shared.service.pas` -- TMicroService base class (run loop, health, shutdown), RegisterService, OrmGetById, OrmGetAll
+- `ms.shared.correlation.pas` -- X-Correlation-Id threadvar + helpers (`LogWithCorrelation`)
+- `ms.shared.logclient.pas` -- `TLogShipper` (EchoCustom + queue + background thread)
+- `ms.shared.service.pas` -- TMicroService base class (run loop, health, shutdown, correlation wrapper, log shipper), RegisterService, OrmGetById, OrmGetAll
 
 ## Phase 2: Backend Services -- DONE
 
@@ -19,6 +21,9 @@ Status: **Implementation complete** (as of 2026-04-08)
 | ms.tags | TOrmBlogTag, TOrmPostTag | ITag | Done |
 | ms.comments | TOrmBlogComment | IComment | Done |
 | ms.media | TOrmMediaFile | IMedia | Done |
+| ms.config | -- | IConfig | Done |
+| ms.analytics | -- | IAnalytics | Done |
+| ms.logs | TOrmLogEntry, TOrmLogEntryFts | ILogIngestion + ILogQuery | Done |
 
 ## Phase 3: Gateway -- DONE
 
@@ -50,6 +55,15 @@ Status: **Implementation complete** (as of 2026-04-08)
 - Operations scripts: start-all.cmd, stop-all.cmd, status.cmd, seed-data.cmd
 - Input validation on all Add methods
 - Upload size limit (3 MB)
+
+## Phase 7: Observability -- DONE
+
+- `X-Correlation-Id` propagation (threadvar + `OnBeforeCall`) -- see [correlation-ids.md](correlation-ids.md)
+- Central logging service `ms.logs` (port 8089) -- see [central-logging.md](central-logging.md)
+  - `TLogShipper` in `ms.shared.logclient.pas` ships every log line via `ILogIngestion`
+  - SQLite FTS5 (`TOrmFts5`) for full-text search over log messages
+  - `ILogQuery` proxied through the gateway
+  - Browser UI at `/logs` with service/level/correlation-ID pivots
 
 ## Notes for Future Work
 
