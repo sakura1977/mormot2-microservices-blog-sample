@@ -145,7 +145,7 @@ flowchart TD
   A[SetupServices] --> B{PostCount > 0<br/>and<br/>FtsCount &lt; PostCount?}
   B -- no --> D[done]
   B -- yes --> C[BackfillFtsIndex:<br/>iterate BlogPost,<br/>insert BlogPostFts<br/>in one transaction]
-  C --> E[log 'indexed N post(s)']
+  C --> E[log 'indexed N posts']
   E --> D
 ```
 
