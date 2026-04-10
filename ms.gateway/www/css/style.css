@@ -71,6 +71,16 @@ main { flex: 1; padding: 2rem 0; }
 .post-full h1 { font-size: 2rem; margin-bottom: .5rem; }
 .post-full .post-meta { margin-bottom: 1.5rem; }
 .post-full .post-body { line-height: 1.8; }
+.post-body p { margin: 0 0 1rem; }
+.post-body h1 { font-size: 1.8rem; margin: 1.5rem 0 .75rem; }
+.post-body h2 { font-size: 1.5rem; margin: 1.4rem 0 .7rem; }
+.post-body h3 { font-size: 1.3rem; margin: 1.3rem 0 .65rem; }
+.post-body h4 { font-size: 1.15rem; margin: 1.2rem 0 .6rem; }
+.post-body h5 { font-size: 1.05rem; margin: 1.1rem 0 .55rem; }
+.post-body h6 { font-size: 1rem; margin: 1rem 0 .5rem; color: var(--text-light); }
+.post-body strong { font-weight: 600; }
+.post-body em { font-style: italic; }
+.post-body .md-img { max-width: 100%; height: auto; display: block; margin: 1rem auto; border-radius: var(--radius); box-shadow: var(--shadow); }
 
 /* === Tags === */
 .tag { display: inline-block; background: #e0e7ff; color: var(--primary-dark); padding: .15rem .6rem; border-radius: 1rem; font-size: .8rem; margin-right: .3rem; text-decoration: none; cursor: pointer; }
@@ -184,6 +194,10 @@ button.btn-outline:hover { background: var(--primary); color: #fff; }
   overflow-y: auto;
 }
 .modal-wide { max-width: 720px; }
+.editor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .3rem 0; }
+.editor-toolbar button { margin-top: 0; }
+.editor-hint { font-size: .75rem; color: var(--text-light); margin-left: auto; }
+.editor-hint code { background: #f3f4f6; padding: 0 .25rem; border-radius: 3px; font-size: .75rem; }
 .modal-close {
   position: absolute;
   top: .75rem;

@@ -571,6 +571,22 @@ type
     function HandleStaticFile(
       aCtxt: THttpServerRequestAbstract
       ): cardinal;
+
+    /// <summary>
+    ///   Handles <c>GET /media/:id</c> by streaming the binary content of a media file through
+    ///   the <c>IMedia</c> backend service, with the correct <c>Content-Type</c> header. Used
+    ///   by the SPA to render <c>&lt;img src="/media/42"&gt;</c> tags without a JSON/Base64 hop.
+    /// </summary>
+    /// <param name="aCtxt">
+    ///   The HTTP request context. The URL must match <c>/media/:id</c> where <c>:id</c> is a
+    ///   positive integer.
+    /// </param>
+    /// <returns>
+    ///   <c>HTTP_SUCCESS</c> if the media record exists, <c>HTTP_NOTFOUND</c> otherwise.
+    /// </returns>
+    function HandleMediaFile(
+      aCtxt: THttpServerRequestAbstract
+      ): cardinal;
   protected
     /// <summary>
     ///   Creates the ORM model for the gateway REST server.
@@ -1215,6 +1231,31 @@ begin
   FreeAndNil(FAuthClient);
 end;
 
+function TGatewayServer.HandleMediaFile(
+  aCtxt: THttpServerRequestAbstract
+  ): cardinal;
+// Entry: aCtxt.Url starts with '/media/'. The rest of the path must be a positive integer.
+var
+  IdText: RawUtf8;
+  MediaId: TID;
+  Content: RawByteString;
+  ContentType: RawUtf8;
+begin
+  // /media/ is 7 chars; skip the prefix and take the remainder as the ID.
+  IdText := Copy(aCtxt.Url, 8, MaxInt);
+  MediaId := GetInt64(pointer(IdText));
+  if MediaId <= 0 then
+    Exit(HTTP_NOTFOUND);
+  Content := FMedia.GetFile(MediaId, ContentType);
+  if (Content = '') or (ContentType = '') then
+    Exit(HTTP_NOTFOUND);
+  aCtxt.OutContent := Content;
+  aCtxt.OutContentType := ContentType;
+  // Browsers aggressively cache by URL -- media IDs are immutable, so tell them so.
+  aCtxt.OutCustomHeaders := aCtxt.OutCustomHeaders + #13#10 + 'Cache-Control: public, max-age=31536000, immutable';
+  Result := HTTP_SUCCESS;
+end;
+
 function TGatewayServer.HandleRequest(
   aCtxt: THttpServerRequestAbstract
   ): cardinal;
@@ -1245,6 +1286,14 @@ begin
     // API calls go to the REST server (interface-based services). The base wrapper logs them.
     if IdemPChar(pointer(aCtxt.Url), '/API/') or IdemPChar(pointer(aCtxt.Url), '/API') then
       Result := FOriginalHandler(aCtxt)
+    else if IdemPChar(pointer(aCtxt.Url), '/MEDIA/') then
+    begin
+      // Media binary passthrough -- streams image bytes from ms.media with the right Content-Type
+      // so the SPA can render <img src="/media/42"> without a JSON/Base64 detour.
+      LogWithCorrelation(sllInfo, '% MEDIA %', [ServiceName, aCtxt.Url], self);
+      Result := HandleMediaFile(aCtxt);
+      LogWithCorrelation(sllInfo, '% MEDIA % -> %', [ServiceName, aCtxt.Url, Result], self);
+    end
     else
     begin
       // Non-API calls serve static files (SPA frontend) -- not logged by the inner wrapper.

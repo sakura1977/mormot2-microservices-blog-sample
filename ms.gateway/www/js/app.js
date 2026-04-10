@@ -205,7 +205,7 @@ async function loadPost(id) {
         ${date}${authorHtml}
       </div>
       ${tagsHtml}
-      <div class="post-body">${esc(p.Body)}</div>
+      <div class="post-body">${renderMarkdown(p.Body)}</div>
     </article>
 
     <section class="comments-section">
@@ -525,6 +525,61 @@ async function deletePostConfirm(id) {
   if (!confirm('Really delete this post?')) return;
   await API.deletePost(id);
   loadDashboard();
+}
+
+// === Editor Markdown helpers ===
+// Wraps the current selection (or inserts a placeholder) with the given prefix/suffix,
+// then restores focus and caret to the end of the inserted text so the user can keep typing.
+function insertMarkdown(prefix, suffix, placeholder) {
+  const ta = $('#editor-body');
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const before = ta.value.substring(0, start);
+  const middle = ta.value.substring(start, end) || placeholder;
+  const after = ta.value.substring(end);
+  ta.value = before + prefix + middle + suffix + after;
+  const caret = before.length + prefix.length + middle.length + suffix.length;
+  ta.focus();
+  ta.setSelectionRange(caret, caret);
+}
+
+function insertAtCursor(text) {
+  const ta = $('#editor-body');
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  ta.value = ta.value.substring(0, start) + text + ta.value.substring(end);
+  const caret = start + text.length;
+  ta.focus();
+  ta.setSelectionRange(caret, caret);
+}
+
+// Reads the selected file as a data URL, strips the 'data:<mime>;base64,' prefix,
+// uploads via IMedia.Upload, and inserts the resulting markdown image tag at the cursor.
+async function handleImageUpload(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  if (!file) return;
+  // Reset the input immediately so the same file can be picked twice in a row.
+  input.value = '';
+  if (file.size > 3 * 1024 * 1024) {
+    alert('Image too large. Maximum size is 3 MB.');
+    return;
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const base64 = String(dataUrl).replace(/^data:[^;]+;base64,/, '');
+  const altText = file.name.replace(/\.[^.]+$/, '');
+  const r = await API.uploadMedia(file.name, base64, altText);
+  const mediaId = r.ok ? r.data?.Result : 0;
+  if (!mediaId) {
+    alert('Image upload failed.');
+    return;
+  }
+  insertAtCursor(`\n\n![${altText}](/media/${mediaId})\n\n`);
 }
 
 // === Comment Moderation ===
@@ -1021,4 +1076,64 @@ function esc(str) {
   const div = document.createElement('div');
   div.textContent = String(str);
   return div.innerHTML;
+}
+
+// === Markdown subset renderer ===
+// Supports only: h1-h6 (#), bold (**), italic (*), and images limited to our
+// own /media/:id endpoint. Everything else is treated as plain text. The input
+// is HTML-escaped *first*, so no raw HTML can slip through -- the transforms
+// below only re-introduce the specific tags we whitelist.
+//
+// Why hand-rolled instead of a markdown library? This is a demo repo with a
+// strict "no external JS dependencies" rule. The supported surface is tiny,
+// so a handful of regexes over escaped text is both safer and smaller than
+// pulling in a parser.
+function renderMarkdown(src) {
+  if (!src) return '';
+  const escaped = esc(src);
+  const lines = escaped.split(/\r?\n/);
+  const out = [];
+  let paragraph = [];
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    const joined = paragraph.join(' ');
+    out.push('<p>' + applyInline(joined) + '</p>');
+    paragraph = [];
+  };
+
+  for (const line of lines) {
+    if (line.trim() === '') {
+      flushParagraph();
+      continue;
+    }
+    // # Heading, ## Heading, ... ###### Heading (1-6 hashes, then at least one space)
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      flushParagraph();
+      const level = heading[1].length;
+      out.push(`<h${level}>${applyInline(heading[2])}</h${level}>`);
+      continue;
+    }
+    paragraph.push(line);
+  }
+  flushParagraph();
+  return out.join('\n');
+}
+
+// Inline transforms run on already-escaped text. Order matters: images first
+// (they contain parentheses that could confuse bold/italic), then bold (**)
+// before italic (*) because ** would otherwise be read as two * markers.
+function applyInline(text) {
+  // ![alt](/media/42) -- only our own media endpoint is allowed; anything else
+  // is left as plain escaped text. The alt text was already escaped.
+  text = text.replace(
+    /!\[([^\]]*)\]\(\/media\/(\d+)\)/g,
+    (_m, alt, id) => `<img src="/media/${id}" alt="${alt}" class="md-img">`
+  );
+  // **bold**
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // *italic*
+  text = text.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+  return text;
 }

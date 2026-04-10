@@ -56,6 +56,14 @@
         <label for="editor-excerpt">Excerpt</label>
         <textarea id="editor-excerpt" rows="2"></textarea>
         <label for="editor-body">Content</label>
+        <div class="editor-toolbar">
+          <button type="button" class="btn-sm btn-outline" onclick="insertMarkdown('**', '**', 'bold text')">B</button>
+          <button type="button" class="btn-sm btn-outline" onclick="insertMarkdown('*', '*', 'italic')">I</button>
+          <button type="button" class="btn-sm btn-outline" onclick="insertMarkdown('## ', '', 'Heading')">H</button>
+          <button type="button" class="btn-sm btn-outline" onclick="document.getElementById('editor-image-input').click()">Insert Image</button>
+          <input type="file" id="editor-image-input" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
+          <span class="editor-hint">Markdown: <code>#</code>-<code>######</code>, <code>**bold**</code>, <code>*italic*</code>, <code>![alt](/media/id)</code></span>
+        </div>
         <textarea id="editor-body" rows="12" required></textarea>
         <div class="form-row">
           <div>
