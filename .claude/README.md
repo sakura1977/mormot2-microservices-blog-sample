@@ -27,6 +27,7 @@ Microservice-based blog system with **Delphi 13** and **mORMot2**.
 | [spa-routing.md](spa-routing.md) | Client-side routing via the History API, SPA fallback in the gateway, route table, link interceptor for shareable URLs |
 | [media-and-markdown.md](media-and-markdown.md) | Media upload flow, `GET /media/:id` binary passthrough route, safe Markdown subset renderer (headings, bold, italic, images) |
 | [posts-search.md](posts-search.md) | SQLite FTS5 full-text search on posts: parallel virtual table, transactional write sync, backfill, frontend search bar and `/search?q=...` route |
+| [circuit-breaker.md](circuit-breaker.md) | `TCircuitBreaker` (Closed/Open/HalfOpen state machine), where it is used (`TBlogService`, `TAnalyticsService`), tuning, tests, and the manual reproduction steps |
 
 ## Architecture
 

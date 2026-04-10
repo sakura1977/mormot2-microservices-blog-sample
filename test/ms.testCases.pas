@@ -67,6 +67,7 @@ uses
   mormot.soa.server,
   ms.shared,
   ms.shared.api,
+  ms.shared.circuitbreaker,
   ms.shared.correlation,
   ms.shared.jwt,
   ms.shared.service,
@@ -700,6 +701,75 @@ type
     ///   Verifies that <c>GetPostsByTag</c> returns empty JSON for a non-existent tag.
     /// </summary>
     procedure GetPostsByTagNotFound;
+  end;
+
+  /// <summary>
+  ///   Unit-level and integration tests for <c>TCircuitBreaker</c>: state machine, threshold tripping,
+  ///   cooldown, half-open probing, and integration with <c>TBlogService</c>.
+  /// </summary>
+  TTestCircuitBreaker = class(TSynTestCase)
+  published
+    /// <summary>
+    ///   A freshly created breaker is in the <c>Closed</c> state and allows requests.
+    /// </summary>
+    procedure InitialStateIsClosedAndAllows;
+
+    /// <summary>
+    ///   Failures below the configured threshold do not trip the breaker.
+    /// </summary>
+    procedure FailuresBelowThresholdKeepClosed;
+
+    /// <summary>
+    ///   Reaching the configured number of consecutive failures trips the breaker to <c>Open</c>.
+    /// </summary>
+    procedure ConsecutiveFailuresTripBreaker;
+
+    /// <summary>
+    ///   A success in the <c>Closed</c> state resets the consecutive-failure counter, so the breaker
+    ///   does not trip on subsequent isolated failures.
+    /// </summary>
+    procedure SuccessResetsFailureCount;
+
+    /// <summary>
+    ///   While the breaker is <c>Open</c>, <c>AllowRequest</c> rejects every call without paying any
+    ///   upstream cost.
+    /// </summary>
+    procedure OpenRejectsRequests;
+
+    /// <summary>
+    ///   Once the cooldown period elapses, the next <c>AllowRequest</c> transitions the breaker into
+    ///   <c>HalfOpen</c> and lets a single probe through.
+    /// </summary>
+    procedure OpenTransitionsToHalfOpenAfterCooldown;
+
+    /// <summary>
+    ///   In <c>HalfOpen</c>, only one probe call is permitted at a time.
+    /// </summary>
+    procedure HalfOpenAllowsOnlyOneProbe;
+
+    /// <summary>
+    ///   A successful probe in <c>HalfOpen</c> closes the breaker.
+    /// </summary>
+    procedure HalfOpenSuccessClosesBreaker;
+
+    /// <summary>
+    ///   A failed probe in <c>HalfOpen</c> bounces the breaker back to <c>Open</c>.
+    /// </summary>
+    procedure HalfOpenFailureReopensBreaker;
+
+    /// <summary>
+    ///   Integration: with a <c>TBlogService</c> wired to a counting failing user backend, exactly
+    ///   <c>DEFAULT_FAILURE_THRESHOLD</c> upstream calls are observed before the breaker trips and
+    ///   subsequent calls fast-fail without ever reaching the upstream.
+    /// </summary>
+    procedure IntegrationFastFailsAfterTrip;
+
+    /// <summary>
+    ///   Integration: <c>TAnalyticsService.GetRecentPostsFull</c> with a counting failing comments
+    ///   backend. With more posts than the failure threshold, the breaker must trip mid-aggregation
+    ///   and the remaining posts must not trigger any further <c>FComments.GetByPost</c> calls.
+    /// </summary>
+    procedure AnalyticsBreakerTripsAndStopsCalls;
   end;
 
   /// <summary>
@@ -2294,6 +2364,66 @@ type
   end;
 
   /// <summary>
+  ///   Mock <c>IUser</c> implementation that always raises in <c>Get</c> and counts how often it was
+  ///   actually called. Used by the circuit-breaker integration test to assert that calls stop being
+  ///   made once the breaker has tripped.
+  /// </summary>
+  TCountingFailUser = class(TInterfacedObject, IUser)
+  public
+    /// <summary>
+    ///   Number of times <c>Get</c> was actually invoked. The circuit-breaker integration test asserts
+    ///   that this never exceeds <c>DEFAULT_FAILURE_THRESHOLD</c>, no matter how many enrichment calls
+    ///   the gateway makes.
+    /// </summary>
+    CallCount: Integer;
+
+    function Get(
+      aId: TID
+      ): TAuthorDto;
+    function GetAll: TAuthorDtoArray;
+    function Add(
+      const aData: TAuthorCreateDto
+      ): TID;
+    function Update(
+      aId: TID;
+      const aData: RawJson
+      ): boolean;
+    function Remove(
+      aId: TID
+      ): boolean;
+  end;
+
+  /// <summary>
+  ///   Mock <c>IComment</c> implementation that always raises in <c>GetByPost</c> and counts how often
+  ///   it was actually called. Used by the analytics circuit-breaker integration test.
+  /// </summary>
+  TCountingFailComment = class(TInterfacedObject, IComment)
+  public
+    /// <summary>
+    ///   Number of times <c>GetByPost</c> was actually invoked.
+    /// </summary>
+    GetByPostCount: Integer;
+
+    function GetByPost(
+      aPostId: TID
+      ): TCommentDtoArray;
+    function GetPending: TCommentDtoArray;
+    function Add(
+      aPostId: TID;
+      const aData: TCommentCreateDto
+      ): TID;
+    function Approve(
+      aId, aModeratedBy: TID
+      ): boolean;
+    function Reject(
+      aId, aModeratedBy: TID
+      ): boolean;
+    function Remove(
+      aId: TID
+      ): boolean;
+  end;
+
+  /// <summary>
   ///   Mock <c>IPost</c> implementation that raises exceptions for resilience testing.
   /// </summary>
   TFailingPost = class(TInterfacedObject, IPost)
@@ -2559,6 +2689,83 @@ begin
   raise Exception.Create('ms.comments unavailable');
 end;
 
+function TCountingFailUser.Get(
+  aId: TID
+  ): TAuthorDto;
+begin
+  Inc(CallCount);
+  raise Exception.Create('ms.users unavailable');
+end;
+
+function TCountingFailUser.GetAll: TAuthorDtoArray;
+begin
+  raise Exception.Create('ms.users unavailable');
+end;
+
+function TCountingFailUser.Add(
+  const aData: TAuthorCreateDto
+  ): TID;
+begin
+  raise Exception.Create('ms.users unavailable');
+end;
+
+function TCountingFailUser.Update(
+  aId: TID;
+  const aData: RawJson
+  ): boolean;
+begin
+  raise Exception.Create('ms.users unavailable');
+end;
+
+function TCountingFailUser.Remove(
+  aId: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.users unavailable');
+end;
+
+function TCountingFailComment.GetByPost(
+  aPostId: TID
+  ): TCommentDtoArray;
+begin
+  Inc(GetByPostCount);
+  raise Exception.Create('ms.comments unavailable');
+end;
+
+function TCountingFailComment.GetPending: TCommentDtoArray;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
+function TCountingFailComment.Add(
+  aPostId: TID;
+  const aData: TCommentCreateDto
+  ): TID;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
+function TCountingFailComment.Approve(
+  aId, aModeratedBy: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
+function TCountingFailComment.Reject(
+  aId, aModeratedBy: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
+function TCountingFailComment.Remove(
+  aId: TID
+  ): boolean;
+begin
+  raise Exception.Create('ms.comments unavailable');
+end;
+
 procedure TTestBlogResilience.GetPostFullWithoutComments;
 var
   Model: TOrmModel;
@@ -2782,6 +2989,275 @@ begin
   finally
     Server.Free;
     Model.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.AnalyticsBreakerTripsAndStopsCalls;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  UserImpl: TUserService;
+  TagImpl: TTagService;
+  CountingComment: TCountingFailComment;
+  AnalyticsSvc: TAnalyticsService;
+  RecentPosts: TPostFullDtoArray;
+  PostIdx: Integer;
+  PostCount: Integer;
+  PostCreateDto: TPostCreateDto;
+  AuthorCreateDto: TAuthorCreateDto;
+begin
+  // Drive the comments breaker past its threshold from a single GetRecentPostsFull call: more posts
+  // than DEFAULT_FAILURE_THRESHOLD means the per-post FComments.GetByPost call will trip the breaker
+  // mid-loop, and remaining posts must not invoke the upstream at all.
+  PostCount := DEFAULT_FAILURE_THRESHOLD * 2;
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    UserImpl := TUserService.Create(Server.Orm);
+    TagImpl := TTagService.Create(Server.Orm);
+    AuthorCreateDto.DisplayName := 'Author';
+    UserImpl.Add(AuthorCreateDto);
+    for PostIdx := 1 to PostCount do
+    begin
+      PostCreateDto.Title := FormatUtf8('Post %', [PostIdx]);
+      PostCreateDto.Body := 'x';
+      PostCreateDto.AuthorId := 1;
+      PostCreateDto.Status := POST_STATUS_PUBLISHED;
+      PostImpl.Add(PostCreateDto);
+    end;
+    CountingComment := TCountingFailComment.Create;
+    AnalyticsSvc := TAnalyticsService.Create(PostImpl, UserImpl, TagImpl, CountingComment);
+    try
+      RecentPosts := AnalyticsSvc.GetRecentPostsFull(PostCount);
+      CheckEqual(Length(RecentPosts), PostCount, 'all posts should still be returned');
+      for PostIdx := 0 to High(RecentPosts) do
+        Check(RecentPosts[PostIdx].CommentsUnavailable, 'every post must carry CommentsUnavailable');
+      CheckEqual(CountingComment.GetByPostCount, DEFAULT_FAILURE_THRESHOLD,
+        'after threshold trip the breaker must short-circuit further FComments.GetByPost calls');
+    finally
+      AnalyticsSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.ConsecutiveFailuresTripBreaker;
+var
+  Breaker: TCircuitBreaker;
+  FailureIdx: Integer;
+begin
+  Breaker := TCircuitBreaker.Create('test.trip', 3, 1000);
+  try
+    Check(Breaker.CurrentState = TCircuitBreakerState.Closed, 'initial state Closed');
+    for FailureIdx := 1 to 3 do
+      Breaker.RecordFailure;
+    Check(Breaker.CurrentState = TCircuitBreakerState.Open, 'should be Open after 3 failures');
+  finally
+    Breaker.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.FailuresBelowThresholdKeepClosed;
+var
+  Breaker: TCircuitBreaker;
+  FailureIdx: Integer;
+begin
+  Breaker := TCircuitBreaker.Create('test.belowthreshold', 5, 1000);
+  try
+    for FailureIdx := 1 to 4 do
+      Breaker.RecordFailure;
+    Check(Breaker.CurrentState = TCircuitBreakerState.Closed, '4 of 5 failures should keep Closed');
+    Check(Breaker.AllowRequest, 'AllowRequest should still return True');
+  finally
+    Breaker.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.HalfOpenAllowsOnlyOneProbe;
+var
+  Breaker: TCircuitBreaker;
+  FailureIdx: Integer;
+begin
+  Breaker := TCircuitBreaker.Create('test.singleprobe', 2, 50);
+  try
+    for FailureIdx := 1 to 2 do
+      Breaker.RecordFailure;
+    Check(Breaker.CurrentState = TCircuitBreakerState.Open, 'tripped to Open');
+    SleepHiRes(80);
+    Check(Breaker.AllowRequest, 'first call after cooldown is the probe -> True');
+    Check(Breaker.CurrentState = TCircuitBreakerState.HalfOpen, 'state is now HalfOpen');
+    Check(not Breaker.AllowRequest, 'second concurrent call must be rejected (one probe at a time)');
+    Check(not Breaker.AllowRequest, 'further calls also rejected while probe in flight');
+  finally
+    Breaker.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.HalfOpenFailureReopensBreaker;
+var
+  Breaker: TCircuitBreaker;
+  FailureIdx: Integer;
+begin
+  Breaker := TCircuitBreaker.Create('test.reopens', 2, 50);
+  try
+    for FailureIdx := 1 to 2 do
+      Breaker.RecordFailure;
+    SleepHiRes(80);
+    Check(Breaker.AllowRequest, 'probe slot acquired');
+    Check(Breaker.CurrentState = TCircuitBreakerState.HalfOpen, 'now HalfOpen');
+    Breaker.RecordFailure;
+    Check(Breaker.CurrentState = TCircuitBreakerState.Open, 'failed probe re-opens the breaker');
+    Check(not Breaker.AllowRequest, 'reopened breaker rejects requests immediately');
+  finally
+    Breaker.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.HalfOpenSuccessClosesBreaker;
+var
+  Breaker: TCircuitBreaker;
+  FailureIdx: Integer;
+begin
+  Breaker := TCircuitBreaker.Create('test.recovers', 2, 50);
+  try
+    for FailureIdx := 1 to 2 do
+      Breaker.RecordFailure;
+    SleepHiRes(80);
+    Check(Breaker.AllowRequest, 'probe slot acquired');
+    Check(Breaker.CurrentState = TCircuitBreakerState.HalfOpen, 'now HalfOpen');
+    Breaker.RecordSuccess;
+    Check(Breaker.CurrentState = TCircuitBreakerState.Closed, 'successful probe closes the breaker');
+    Check(Breaker.AllowRequest, 'closed breaker allows the next request');
+  finally
+    Breaker.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.InitialStateIsClosedAndAllows;
+var
+  Breaker: TCircuitBreaker;
+begin
+  Breaker := TCircuitBreaker.Create('test.initial');
+  try
+    Check(Breaker.CurrentState = TCircuitBreakerState.Closed, 'initial state Closed');
+    Check(Breaker.AllowRequest, 'fresh breaker allows requests');
+    CheckEqual(Breaker.Name, 'test.initial', 'name property exposes constructor argument');
+  finally
+    Breaker.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.IntegrationFastFailsAfterTrip;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  PostImpl: TPostService;
+  CountingUser: TCountingFailUser;
+  BlogSvc: TBlogService;
+  PostFullDto: TPostFullDto;
+  PostId: TID;
+  PostCreateDto: TPostCreateDto;
+  CallIdx: Integer;
+begin
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    PostImpl := TPostService.Create(Server.Orm);
+    PostCreateDto.Title := 'Trip Post';
+    PostCreateDto.Body := 'content';
+    PostCreateDto.AuthorId := 1;
+    PostCreateDto.Status := POST_STATUS_PUBLISHED;
+    PostId := PostImpl.Add(PostCreateDto);
+    Check(PostId > 0, 'post created');
+    CountingUser := TCountingFailUser.Create;
+    BlogSvc := TBlogService.Create(PostImpl, CountingUser, TFailingTag.Create, TFailingComment.Create);
+    try
+      // Drive the breaker past its default threshold; subsequent calls must not reach FUsers.Get.
+      for CallIdx := 1 to DEFAULT_FAILURE_THRESHOLD * 2 do
+      begin
+        PostFullDto := BlogSvc.GetPostFull(PostId);
+        Check(PostFullDto.AuthorUnavailable, 'every call yields AuthorUnavailable');
+      end;
+      CheckEqual(CountingUser.CallCount, DEFAULT_FAILURE_THRESHOLD,
+        'after threshold trip the breaker must short-circuit further FUsers.Get calls');
+    finally
+      BlogSvc.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.OpenRejectsRequests;
+var
+  Breaker: TCircuitBreaker;
+  FailureIdx: Integer;
+  RejectIdx: Integer;
+begin
+  Breaker := TCircuitBreaker.Create('test.openrejects', 2, 5000);
+  try
+    for FailureIdx := 1 to 2 do
+      Breaker.RecordFailure;
+    Check(Breaker.CurrentState = TCircuitBreakerState.Open, 'should be Open');
+    for RejectIdx := 1 to 10 do
+      Check(not Breaker.AllowRequest, 'every call in Open state must be rejected');
+  finally
+    Breaker.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.OpenTransitionsToHalfOpenAfterCooldown;
+var
+  Breaker: TCircuitBreaker;
+  FailureIdx: Integer;
+begin
+  Breaker := TCircuitBreaker.Create('test.cooldown', 2, 50);
+  try
+    for FailureIdx := 1 to 2 do
+      Breaker.RecordFailure;
+    Check(Breaker.CurrentState = TCircuitBreakerState.Open, 'tripped to Open');
+    Check(not Breaker.AllowRequest, 'still Open before cooldown elapses');
+    SleepHiRes(80);
+    Check(Breaker.AllowRequest, 'probe permitted after cooldown');
+    Check(Breaker.CurrentState = TCircuitBreakerState.HalfOpen, 'state moved to HalfOpen');
+  finally
+    Breaker.Free;
+  end;
+end;
+
+procedure TTestCircuitBreaker.SuccessResetsFailureCount;
+var
+  Breaker: TCircuitBreaker;
+begin
+  Breaker := TCircuitBreaker.Create('test.reset', 3, 1000);
+  try
+    Breaker.RecordFailure;
+    Breaker.RecordFailure;
+    Breaker.RecordSuccess;
+    // Counter is reset; two more failures alone must NOT trip the breaker.
+    Breaker.RecordFailure;
+    Breaker.RecordFailure;
+    Check(Breaker.CurrentState = TCircuitBreakerState.Closed,
+      'success between failures should reset the consecutive-failure counter');
+    // The third consecutive failure now does trip it.
+    Breaker.RecordFailure;
+    Check(Breaker.CurrentState = TCircuitBreakerState.Open,
+      'three consecutive failures after the reset should trip the breaker');
+  finally
+    Breaker.Free;
   end;
 end;
 
@@ -3764,6 +4240,7 @@ begin
   AddCase(TTestMediaService);
   AddCase(TTestBlogAggregation);
   AddCase(TTestBlogResilience);
+  AddCase(TTestCircuitBreaker);
   AddCase(TTestAnalyticsService);
   AddCase(TTestAnalyticsResilience);
   AddCase(TTestConfigService);

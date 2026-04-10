@@ -61,6 +61,7 @@ uses
   mormot.soa.server,
   ms.shared,
   ms.shared.api,
+  ms.shared.circuitbreaker,
   ms.shared.correlation,
   ms.shared.jwt,
   ms.shared.service,
@@ -93,6 +94,30 @@ type
     ///   Client interface for the Comments backend service.
     /// </summary>
     FComments: IComment;
+
+    /// <summary>
+    ///   Circuit breaker protecting per-post calls to the Posts backend (used by <c>GetPostsByTag</c>).
+    ///   When Open, those calls are skipped without paying the upstream timeout.
+    /// </summary>
+    FPostsBreaker: TCircuitBreaker;
+
+    /// <summary>
+    ///   Circuit breaker protecting author enrichment calls to the Users backend.
+    ///   When Open, the enrichment is skipped and <c>AuthorUnavailable</c> is set immediately.
+    /// </summary>
+    FUsersBreaker: TCircuitBreaker;
+
+    /// <summary>
+    ///   Circuit breaker protecting tag enrichment calls to the Tags backend.
+    ///   When Open, the enrichment is skipped and <c>TagsUnavailable</c> is set immediately.
+    /// </summary>
+    FTagsBreaker: TCircuitBreaker;
+
+    /// <summary>
+    ///   Circuit breaker protecting comment enrichment calls to the Comments backend.
+    ///   When Open, the enrichment is skipped and <c>CommentsUnavailable</c> is set immediately.
+    /// </summary>
+    FCommentsBreaker: TCircuitBreaker;
   public
     /// <summary>
     ///   Creates a new blog aggregation service with the given backend interfaces.
@@ -115,6 +140,11 @@ type
       const aTags: ITag;
       const aComments: IComment
       );
+
+    /// <summary>
+    ///   Releases the per-backend circuit breakers.
+    /// </summary>
+    destructor Destroy; override;
 
     /// <summary>
     ///   Returns a fully enriched post with author, tags, and comments as a typed record.
@@ -626,6 +656,19 @@ begin
   FUsers := aUsers;
   FTags := aTags;
   FComments := aComments;
+  FPostsBreaker := TCircuitBreaker.Create('ms.posts');
+  FUsersBreaker := TCircuitBreaker.Create('ms.users');
+  FTagsBreaker := TCircuitBreaker.Create('ms.tags');
+  FCommentsBreaker := TCircuitBreaker.Create('ms.comments');
+end;
+
+destructor TBlogService.Destroy;
+begin
+  FreeAndNil(FCommentsBreaker);
+  FreeAndNil(FTagsBreaker);
+  FreeAndNil(FUsersBreaker);
+  FreeAndNil(FPostsBreaker);
+  inherited Destroy;
 end;
 
 function PostDtoToFull(
@@ -685,25 +728,40 @@ begin
   if Post.ID = 0 then
     Exit;
   Result := PostDtoToFull(Post);
-  // Enrich with author (graceful degradation)
-  try
-    Author := FUsers.Get(Post.AuthorId);
-    Result.Author := Author;
-  except
+  // Author enrichment: circuit breaker fast-fails when ms.users is known down.
+  if FUsersBreaker.AllowRequest then
+    try
+      Author := FUsers.Get(Post.AuthorId);
+      Result.Author := Author;
+      FUsersBreaker.RecordSuccess;
+    except
+      FUsersBreaker.RecordFailure;
+      Result.AuthorUnavailable := True;
+    end
+  else
     Result.AuthorUnavailable := True;
-  end;
-  // Enrich with tags (graceful degradation)
-  try
-    Result.Tags := FTags.GetByPost(Post.ID);
-  except
+  // Tag enrichment: circuit breaker fast-fails when ms.tags is known down.
+  if FTagsBreaker.AllowRequest then
+    try
+      Result.Tags := FTags.GetByPost(Post.ID);
+      FTagsBreaker.RecordSuccess;
+    except
+      FTagsBreaker.RecordFailure;
+      Result.TagsUnavailable := True;
+    end
+  else
     Result.TagsUnavailable := True;
-  end;
-  // Enrich with comments (graceful degradation)
-  try
-    Result.Comments := FComments.GetByPost(Post.ID);
-  except
+  // Comment enrichment: circuit breaker fast-fails when ms.comments is known down.
+  if FCommentsBreaker.AllowRequest then
+    try
+      Result.Comments := FComments.GetByPost(Post.ID);
+      FCommentsBreaker.RecordSuccess;
+    except
+      FCommentsBreaker.RecordFailure;
+      Result.CommentsUnavailable := True;
+    end
+  else
     Result.CommentsUnavailable := True;
-  end;
 end;
 
 function TBlogService.GetPostsByTag(
@@ -715,6 +773,7 @@ var
   Post: TPostDto;
   Author: TAuthorDto;
   PostWithAuthor: TPostWithAuthorDto;
+  PostFetched: Boolean;
   PostIdx: PtrInt;
 begin
   Finalize(Result);
@@ -728,24 +787,35 @@ begin
     Exit;
   for PostIdx := 0 to High(PostIds) do
   begin
-    // Post service unavailable -> skip this post
-    try
-      Post := FPosts.Get(PostIds[PostIdx]);
-    except
+    // Post lookup: circuit breaker fast-fails when ms.posts is known down -> skip this post.
+    PostFetched := False;
+    if FPostsBreaker.AllowRequest then
+      try
+        Post := FPosts.Get(PostIds[PostIdx]);
+        FPostsBreaker.RecordSuccess;
+        PostFetched := True;
+      except
+        FPostsBreaker.RecordFailure;
+      end;
+    if not PostFetched then
       continue;
-    end;
     if Post.ID = 0 then
       continue;
     if Post.Status <> POST_STATUS_PUBLISHED then
       continue;
     PostWithAuthor := PostDtoToWithAuthor(Post);
-    // Author service unavailable -> post without author
-    try
-      Author := FUsers.Get(Post.AuthorId);
-      PostWithAuthor.Author := Author;
-    except
+    // Author enrichment: circuit breaker fast-fails when ms.users is known down.
+    if FUsersBreaker.AllowRequest then
+      try
+        Author := FUsers.Get(Post.AuthorId);
+        PostWithAuthor.Author := Author;
+        FUsersBreaker.RecordSuccess;
+      except
+        FUsersBreaker.RecordFailure;
+        PostWithAuthor.AuthorUnavailable := True;
+      end
+    else
       PostWithAuthor.AuthorUnavailable := True;
-    end;
     SetLength(Result.Posts, Length(Result.Posts) + 1);
     Result.Posts[High(Result.Posts)] := PostWithAuthor;
   end;

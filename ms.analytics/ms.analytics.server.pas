@@ -38,6 +38,7 @@ uses
   mormot.soa.server,
   ms.shared,
   ms.shared.api,
+  ms.shared.circuitbreaker,
   ms.shared.service;
 
 type
@@ -68,6 +69,27 @@ type
     ///   Interface to the comments backend service.
     /// </summary>
     FComments: IComment;
+
+    /// <summary>
+    ///   Circuit breaker protecting calls to the Posts backend. When Open, posts-related queries
+    ///   short-circuit immediately and the corresponding <c>*Unavailable</c> flag is set.
+    /// </summary>
+    FPostsBreaker: TCircuitBreaker;
+
+    /// <summary>
+    ///   Circuit breaker protecting calls to the Users backend.
+    /// </summary>
+    FUsersBreaker: TCircuitBreaker;
+
+    /// <summary>
+    ///   Circuit breaker protecting calls to the Tags backend.
+    /// </summary>
+    FTagsBreaker: TCircuitBreaker;
+
+    /// <summary>
+    ///   Circuit breaker protecting calls to the Comments backend.
+    /// </summary>
+    FCommentsBreaker: TCircuitBreaker;
 
     /// <summary>
     ///   Copies all scalar fields from a <c>TPostDto</c> into a <c>TPostFullDto</c>. The nested Author, Tags,
@@ -105,6 +127,11 @@ type
       const aTags: ITag;
       const aComments: IComment
       );
+
+    /// <summary>
+    ///   Releases the per-backend circuit breakers.
+    /// </summary>
+    destructor Destroy; override;
 
     /// <summary>
     ///   Returns aggregate counts from all services.
@@ -282,6 +309,19 @@ begin
   FUsers := aUsers;
   FTags := aTags;
   FComments := aComments;
+  FPostsBreaker := TCircuitBreaker.Create('ms.posts');
+  FUsersBreaker := TCircuitBreaker.Create('ms.users');
+  FTagsBreaker := TCircuitBreaker.Create('ms.tags');
+  FCommentsBreaker := TCircuitBreaker.Create('ms.comments');
+end;
+
+destructor TAnalyticsService.Destroy;
+begin
+  FreeAndNil(FCommentsBreaker);
+  FreeAndNil(FTagsBreaker);
+  FreeAndNil(FUsersBreaker);
+  FreeAndNil(FPostsBreaker);
+  inherited Destroy;
 end;
 
 function TAnalyticsService.PostDtoToFull(
@@ -313,11 +353,17 @@ var
   PostComments: TCommentDtoArray;
   AuthorIdx, PostIdx: PtrInt;
   CommentTotal: integer;
+  PostsFetched: Boolean;
 begin
   Result := nil;
+  Authors := nil;
+  if not FUsersBreaker.AllowRequest then
+    Exit(nil);
   try
     Authors := FUsers.GetAll;
+    FUsersBreaker.RecordSuccess;
   except
+    FUsersBreaker.RecordFailure;
     Exit(nil);
   end;
   if Length(Authors) = 0 then
@@ -329,22 +375,33 @@ begin
     Result[AuthorIdx].DisplayName := Authors[AuthorIdx].DisplayName;
     // Count posts for this author
     CommentTotal := 0;
-    try
-      PostList := FPosts.GetList(1, 100, 0, Authors[AuthorIdx].ID);
+    PostsFetched := False;
+    if FPostsBreaker.AllowRequest then
+      try
+        PostList := FPosts.GetList(1, 100, 0, Authors[AuthorIdx].ID);
+        FPostsBreaker.RecordSuccess;
+        PostsFetched := True;
+      except
+        FPostsBreaker.RecordFailure;
+      end;
+    if PostsFetched then
+    begin
       Result[AuthorIdx].PostCount := PostList.Total;
-      // Count comments on each post
       for PostIdx := 0 to High(PostList.Items) do
       begin
+        if not FCommentsBreaker.AllowRequest then
+          continue;
         try
           PostComments := FComments.GetByPost(PostList.Items[PostIdx].ID);
+          FCommentsBreaker.RecordSuccess;
           CommentTotal := CommentTotal + Length(PostComments);
         except
-          // Comments service unavailable for this post
+          FCommentsBreaker.RecordFailure;
         end;
       end;
-    except
+    end
+    else
       Result[AuthorIdx].PostCount := -1;
-    end;
     Result[AuthorIdx].CommentCount := CommentTotal;
   end;
 end;
@@ -357,29 +414,46 @@ var
   PostIdx, SortIdx, SwapIdx, EntryCount, TopLimit: PtrInt;
   BestCount, CurrentCount: integer;
   SwapEntry: TTopCommentedPostDto;
+  PostsFetched: Boolean;
 begin
   Finalize(Result);
   FillCharFast(Result, SizeOf(Result), 0);
   // Count pending comments
-  try
-    Result.PendingCount := Length(FComments.GetPending);
-  except
+  if FCommentsBreaker.AllowRequest then
+    try
+      Result.PendingCount := Length(FComments.GetPending);
+      FCommentsBreaker.RecordSuccess;
+    except
+      FCommentsBreaker.RecordFailure;
+      Result.PendingCount := -1;
+    end
+  else
     Result.PendingCount := -1;
-  end;
   // Find top commented posts
   EntryCount := 0;
-  try
-    PostList := FPosts.GetList(1, 50, POST_STATUS_PUBLISHED, 0);
+  PostsFetched := False;
+  if FPostsBreaker.AllowRequest then
+    try
+      PostList := FPosts.GetList(1, 50, POST_STATUS_PUBLISHED, 0);
+      FPostsBreaker.RecordSuccess;
+      PostsFetched := True;
+    except
+      FPostsBreaker.RecordFailure;
+    end;
+  if PostsFetched then
+  begin
     SetLength(Result.TopCommentedPosts, Length(PostList.Items));
     for PostIdx := 0 to High(PostList.Items) do
     begin
       CommentCount := 0;
-      try
-        PostComments := FComments.GetByPost(PostList.Items[PostIdx].ID);
-        CommentCount := Length(PostComments);
-      except
-        // Comments unavailable for this post
-      end;
+      if FCommentsBreaker.AllowRequest then
+        try
+          PostComments := FComments.GetByPost(PostList.Items[PostIdx].ID);
+          FCommentsBreaker.RecordSuccess;
+          CommentCount := Length(PostComments);
+        except
+          FCommentsBreaker.RecordFailure;
+        end;
       if CommentCount > 0 then
       begin
         Result.TopCommentedPosts[EntryCount].PostId := PostList.Items[PostIdx].ID;
@@ -389,8 +463,6 @@ begin
       end;
     end;
     SetLength(Result.TopCommentedPosts, EntryCount);
-  except
-    // Posts service unavailable
   end;
   // Sort by CommentCount descending (selection sort, small data)
   for SortIdx := 0 to EntryCount - 2 do
@@ -425,31 +497,63 @@ var
 begin
   FillCharFast(Result, SizeOf(Result), 0);
   // Posts count -- GetList returns Total without loading all items
-  try
-    PostList := FPosts.GetList(1, 1, 0, 0);
-    Result.Posts := PostList.Total;
-  except
+  if FPostsBreaker.AllowRequest then
+    try
+      PostList := FPosts.GetList(1, 1, 0, 0);
+      Result.Posts := PostList.Total;
+      FPostsBreaker.RecordSuccess;
+    except
+      FPostsBreaker.RecordFailure;
+      Result.Posts := -1;
+      Result.PostsUnavailable := True;
+    end
+  else
+  begin
     Result.Posts := -1;
     Result.PostsUnavailable := True;
   end;
   // Authors count
-  try
-    Result.Authors := Length(FUsers.GetAll);
-  except
+  if FUsersBreaker.AllowRequest then
+    try
+      Result.Authors := Length(FUsers.GetAll);
+      FUsersBreaker.RecordSuccess;
+    except
+      FUsersBreaker.RecordFailure;
+      Result.Authors := -1;
+      Result.AuthorsUnavailable := True;
+    end
+  else
+  begin
     Result.Authors := -1;
     Result.AuthorsUnavailable := True;
   end;
   // Tags count
-  try
-    Result.Tags := Length(FTags.GetAll);
-  except
+  if FTagsBreaker.AllowRequest then
+    try
+      Result.Tags := Length(FTags.GetAll);
+      FTagsBreaker.RecordSuccess;
+    except
+      FTagsBreaker.RecordFailure;
+      Result.Tags := -1;
+      Result.TagsUnavailable := True;
+    end
+  else
+  begin
     Result.Tags := -1;
     Result.TagsUnavailable := True;
   end;
   // Pending comments count
-  try
-    Result.PendingComments := Length(FComments.GetPending);
-  except
+  if FCommentsBreaker.AllowRequest then
+    try
+      Result.PendingComments := Length(FComments.GetPending);
+      FCommentsBreaker.RecordSuccess;
+    except
+      FCommentsBreaker.RecordFailure;
+      Result.PendingComments := -1;
+      Result.CommentsUnavailable := True;
+    end
+  else
+  begin
     Result.PendingComments := -1;
     Result.CommentsUnavailable := True;
   end;
@@ -477,9 +581,13 @@ begin
   if aLimit > 50 then
     aLimit := 50;
   // Step 1: fetch recent published posts
+  if not FPostsBreaker.AllowRequest then
+    Exit(nil);
   try
     PostList := FPosts.GetList(1, aLimit, POST_STATUS_PUBLISHED, 0);
+    FPostsBreaker.RecordSuccess;
   except
+    FPostsBreaker.RecordFailure;
     Exit(nil);
   end;
   if Length(PostList.Items) = 0 then
@@ -502,11 +610,13 @@ begin
     begin
       Finalize(AuthorDto);
       FillCharFast(AuthorDto, SizeOf(AuthorDto), 0);
-      try
-        AuthorDto := FUsers.Get(PostList.Items[PostIdx].AuthorId);
-      except
-        // Author service unavailable -- AuthorDto.ID stays 0
-      end;
+      if FUsersBreaker.AllowRequest then
+        try
+          AuthorDto := FUsers.Get(PostList.Items[PostIdx].AuthorId);
+          FUsersBreaker.RecordSuccess;
+        except
+          FUsersBreaker.RecordFailure;
+        end;
       SetLength(AuthorCache, Length(AuthorCache) + 1);
       AuthorCache[High(AuthorCache)] := AuthorDto;
       SetLength(AuthorCacheIds, Length(AuthorCacheIds) + 1);
@@ -529,27 +639,43 @@ begin
         Break;
       end;
     end;
-    // Tags (graceful degradation)
-    try
-      Result[PostIdx].Tags := FTags.GetByPost(PostList.Items[PostIdx].ID);
-    except
+    // Tags (breaker-protected)
+    if FTagsBreaker.AllowRequest then
+      try
+        Result[PostIdx].Tags := FTags.GetByPost(PostList.Items[PostIdx].ID);
+        FTagsBreaker.RecordSuccess;
+      except
+        FTagsBreaker.RecordFailure;
+        Result[PostIdx].Tags := nil;
+        Result[PostIdx].TagsUnavailable := True;
+      end
+    else
+    begin
       Result[PostIdx].Tags := nil;
       Result[PostIdx].TagsUnavailable := True;
     end;
-    // Comments with limit (graceful degradation)
-    try
-      AllComments := FComments.GetByPost(PostList.Items[PostIdx].ID);
-      if Length(AllComments) > MAX_COMMENTS_PER_POST then
-      begin
-        // Take only the last MAX_COMMENTS_PER_POST entries
-        CommentStart := Length(AllComments) - MAX_COMMENTS_PER_POST;
-        SetLength(Result[PostIdx].Comments, MAX_COMMENTS_PER_POST);
-        for CommentIdx := 0 to MAX_COMMENTS_PER_POST - 1 do
-          Result[PostIdx].Comments[CommentIdx] := AllComments[CommentStart + CommentIdx];
+    // Comments with limit (breaker-protected)
+    if FCommentsBreaker.AllowRequest then
+      try
+        AllComments := FComments.GetByPost(PostList.Items[PostIdx].ID);
+        FCommentsBreaker.RecordSuccess;
+        if Length(AllComments) > MAX_COMMENTS_PER_POST then
+        begin
+          // Take only the last MAX_COMMENTS_PER_POST entries
+          CommentStart := Length(AllComments) - MAX_COMMENTS_PER_POST;
+          SetLength(Result[PostIdx].Comments, MAX_COMMENTS_PER_POST);
+          for CommentIdx := 0 to MAX_COMMENTS_PER_POST - 1 do
+            Result[PostIdx].Comments[CommentIdx] := AllComments[CommentStart + CommentIdx];
+        end
+        else
+          Result[PostIdx].Comments := AllComments;
+      except
+        FCommentsBreaker.RecordFailure;
+        Result[PostIdx].Comments := nil;
+        Result[PostIdx].CommentsUnavailable := True;
       end
-      else
-        Result[PostIdx].Comments := AllComments;
-    except
+    else
+    begin
       Result[PostIdx].Comments := nil;
       Result[PostIdx].CommentsUnavailable := True;
     end;
@@ -565,9 +691,14 @@ var
   SwapEntry: TTagCloudItemDto;
 begin
   Result := nil;
+  AllTags := nil;
+  if not FTagsBreaker.AllowRequest then
+    Exit(nil);
   try
     AllTags := FTags.GetAll;
+    FTagsBreaker.RecordSuccess;
   except
+    FTagsBreaker.RecordFailure;
     Exit(nil);
   end;
   if Length(AllTags) = 0 then
@@ -578,11 +709,14 @@ begin
     Result[TagIdx].TagId := AllTags[TagIdx].ID;
     Result[TagIdx].Name := AllTags[TagIdx].Name;
     Result[TagIdx].Slug := AllTags[TagIdx].Slug;
+    if not FTagsBreaker.AllowRequest then
+      continue;
     try
       PostIds := FTags.GetPostIds(AllTags[TagIdx].ID);
+      FTagsBreaker.RecordSuccess;
       Result[TagIdx].PostCount := Length(PostIds);
     except
-      // Tag post count unavailable
+      FTagsBreaker.RecordFailure;
     end;
   end;
   // Sort by PostCount descending (selection sort)
