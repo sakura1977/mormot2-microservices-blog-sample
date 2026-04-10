@@ -742,6 +742,32 @@ type
     ///   Verifies that the service registry excludes sensitive fields.
     /// </summary>
     procedure GetServiceRegistryNoSecrets;
+
+    /// <summary>
+    ///   Verifies that fields from the <c>defaults</c> block are inherited by services that do not override them.
+    /// </summary>
+    procedure DefaultsAppliedWhenNotOverridden;
+
+    /// <summary>
+    ///   Verifies that per-service fields override matching keys from the <c>defaults</c> block.
+    /// </summary>
+    procedure ServiceOverridesDefaults;
+
+    /// <summary>
+    ///   Verifies that <c>GetServiceConfig('defaults')</c> returns '{}' since defaults is not a real service.
+    /// </summary>
+    procedure DefaultsKeyIsNotAService;
+
+    /// <summary>
+    ///   Verifies that <c>GetAllConfigs</c> excludes the <c>defaults</c> block from the result.
+    /// </summary>
+    procedure GetAllConfigsExcludesDefaults;
+
+    /// <summary>
+    ///   Verifies that <c>GetServiceRegistry</c> excludes the <c>defaults</c> block from the result and that the
+    ///   registry's Host falls back to the value from the <c>defaults</c> block when the service does not set it.
+    /// </summary>
+    procedure GetServiceRegistryUsesDefaultsForHost;
   end;
 
   /// <summary>
@@ -2577,6 +2603,50 @@ const
     '"LogLevel":"info","ModelRoot":"api","HttpThreads":2,' +
     '"HttpSecurity":"secNone","HttpBind":"+"}}';
 
+  /// <summary>
+  ///   Test master JSON exercising the <c>defaults</c> merging behavior. ms.auth inherits Host/LogLevel from
+  ///   defaults but overrides Port. ms.users overrides LogLevel and Port but still inherits Host.
+  /// </summary>
+  TEST_MASTER_JSON_WITH_DEFAULTS: RawUtf8 =
+    '{"defaults":{"Host":"localhost","LogLevel":"debug","ModelRoot":"api",' +
+    '"HttpThreads":4,"HttpSecurity":"secNone","HttpBind":"+"},' +
+    '"ms.auth":{"Port":"8081","Database":"auth.db","JwtSecret":"secret123"},' +
+    '"ms.users":{"Port":"8082","Database":"users.db","LogLevel":"info"}}';
+
+procedure TTestConfigService.DefaultsAppliedWhenNotOverridden;
+var
+  Svc: TConfigService;
+  Doc: TDocVariantData;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON_WITH_DEFAULTS);
+  try
+    Doc.InitJson(Svc.GetServiceConfig('ms.auth'), JSON_FAST_FLOAT);
+    // Inherited from defaults
+    CheckEqual(Doc.U['Host'], 'localhost', 'Host inherited from defaults');
+    CheckEqual(Doc.U['LogLevel'], 'debug', 'LogLevel inherited from defaults');
+    CheckEqual(Doc.U['ModelRoot'], 'api', 'ModelRoot inherited from defaults');
+    CheckEqual(Doc.I['HttpThreads'], 4, 'HttpThreads inherited from defaults');
+    // Per-service fields are still present
+    CheckEqual(Doc.U['Port'], '8081', 'service-specific Port present');
+    CheckEqual(Doc.U['Database'], 'auth.db', 'service-specific Database present');
+    CheckEqual(Doc.U['JwtSecret'], 'secret123', 'service-specific JwtSecret present');
+  finally
+    Svc.Free;
+  end;
+end;
+
+procedure TTestConfigService.DefaultsKeyIsNotAService;
+var
+  Svc: TConfigService;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON_WITH_DEFAULTS);
+  try
+    CheckEqual(Svc.GetServiceConfig('defaults'), '{}', 'defaults must not be served as a service');
+  finally
+    Svc.Free;
+  end;
+end;
+
 procedure TTestConfigService.GetServiceConfigKnown;
 var
   Svc: TConfigService;
@@ -2621,6 +2691,28 @@ begin
   end;
 end;
 
+procedure TTestConfigService.GetAllConfigsExcludesDefaults;
+var
+  Svc: TConfigService;
+  Doc: TDocVariantData;
+  AuthEntry: PDocVariantData;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON_WITH_DEFAULTS);
+  try
+    Doc.InitJson(Svc.GetAllConfigs, JSON_FAST_FLOAT);
+    CheckEqual(Doc.GetValueIndex('defaults'), -1, 'defaults block must be excluded from GetAllConfigs');
+    Check(Doc.GetValueIndex('ms.auth') >= 0, 'ms.auth should be present');
+    Check(Doc.GetValueIndex('ms.users') >= 0, 'ms.users should be present');
+    // Each entry must already be the merged effective configuration, so inherited fields are visible.
+    AuthEntry := Doc.O['ms.auth'];
+    Check(AuthEntry <> nil, 'ms.auth entry should exist');
+    CheckEqual(AuthEntry^.U['Host'], 'localhost', 'merged Host visible in GetAllConfigs');
+    CheckEqual(AuthEntry^.U['LogLevel'], 'debug', 'merged LogLevel visible in GetAllConfigs');
+  finally
+    Svc.Free;
+  end;
+end;
+
 procedure TTestConfigService.GetServiceRegistry;
 var
   Svc: TConfigService;
@@ -2653,6 +2745,44 @@ begin
     Check(AuthEntry <> nil, 'auth entry should exist');
     CheckEqual(AuthEntry^.GetValueIndex('JwtSecret'), -1, 'JwtSecret must not be in registry');
     CheckEqual(AuthEntry^.GetValueIndex('Database'), -1, 'Database must not be in registry');
+  finally
+    Svc.Free;
+  end;
+end;
+
+procedure TTestConfigService.GetServiceRegistryUsesDefaultsForHost;
+var
+  Svc: TConfigService;
+  Doc: TDocVariantData;
+  AuthEntry: PDocVariantData;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON_WITH_DEFAULTS);
+  try
+    Doc.InitJson(Svc.GetServiceRegistry, JSON_FAST_FLOAT);
+    CheckEqual(Doc.GetValueIndex('defaults'), -1, 'defaults block must be excluded from registry');
+    AuthEntry := Doc.O['ms.auth'];
+    Check(AuthEntry <> nil, 'ms.auth entry should exist');
+    // Host is not on the per-service block; the registry must fall back to the defaults block.
+    CheckEqual(AuthEntry^.U['Host'], 'localhost', 'Host inherited from defaults block');
+    CheckEqual(AuthEntry^.U['Port'], '8081', 'Port from per-service block');
+  finally
+    Svc.Free;
+  end;
+end;
+
+procedure TTestConfigService.ServiceOverridesDefaults;
+var
+  Svc: TConfigService;
+  Doc: TDocVariantData;
+begin
+  Svc := TConfigService.Create(TEST_MASTER_JSON_WITH_DEFAULTS);
+  try
+    Doc.InitJson(Svc.GetServiceConfig('ms.users'), JSON_FAST_FLOAT);
+    // ms.users overrides LogLevel = 'info' (defaults says 'debug')
+    CheckEqual(Doc.U['LogLevel'], 'info', 'per-service LogLevel must override defaults');
+    // Non-overridden fields still inherit from defaults
+    CheckEqual(Doc.U['Host'], 'localhost', 'Host still inherited from defaults');
+    CheckEqual(Doc.U['ModelRoot'], 'api', 'ModelRoot still inherited from defaults');
   finally
     Svc.Free;
   end;

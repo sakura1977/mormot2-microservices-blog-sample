@@ -1,85 +1,6 @@
 {
-  "ms.config": {
+  "defaults": {
     "Host": "localhost",
-    "Port": "8087",
-    "LogLevel": "debug",
-    "LogPath": "logs",
-    "LogRotateCount": 5,
-    "LogRotateSizeKB": 5120,
-    "HttpThreads": 4,
-    "HttpSecurity": "secNone",
-    "HttpBind": "+"
-  },
-  "ms.auth": {
-    "Host": "localhost",
-    "Port": "8081",
-    "Database": "ms.auth.db",
-    "LogLevel": "debug",
-    "LogPath": "logs",
-    "LogRotateCount": 5,
-    "LogRotateSizeKB": 5120,
-    "JwtSecret": "blog-microservices-change-me-in-production",
-    "ModelRoot": "api",
-    "HttpThreads": 4,
-    "HttpSecurity": "secNone",
-    "HttpBind": "+"
-  },
-  "ms.users": {
-    "Host": "localhost",
-    "Port": "8082",
-    "Database": "ms.users.db",
-    "LogLevel": "debug",
-    "LogPath": "logs",
-    "LogRotateCount": 5,
-    "LogRotateSizeKB": 5120,
-    "ModelRoot": "api",
-    "HttpThreads": 4,
-    "HttpSecurity": "secNone",
-    "HttpBind": "+"
-  },
-  "ms.posts": {
-    "Host": "localhost",
-    "Port": "8083",
-    "Database": "ms.posts.db",
-    "LogLevel": "debug",
-    "LogPath": "logs",
-    "LogRotateCount": 5,
-    "LogRotateSizeKB": 5120,
-    "ModelRoot": "api",
-    "HttpThreads": 4,
-    "HttpSecurity": "secNone",
-    "HttpBind": "+"
-  },
-  "ms.tags": {
-    "Host": "localhost",
-    "Port": "8084",
-    "Database": "ms.tags.db",
-    "LogLevel": "debug",
-    "LogPath": "logs",
-    "LogRotateCount": 5,
-    "LogRotateSizeKB": 5120,
-    "ModelRoot": "api",
-    "HttpThreads": 4,
-    "HttpSecurity": "secNone",
-    "HttpBind": "+"
-  },
-  "ms.comments": {
-    "Host": "localhost",
-    "Port": "8085",
-    "Database": "ms.comments.db",
-    "LogLevel": "debug",
-    "LogPath": "logs",
-    "LogRotateCount": 5,
-    "LogRotateSizeKB": 5120,
-    "ModelRoot": "api",
-    "HttpThreads": 4,
-    "HttpSecurity": "secNone",
-    "HttpBind": "+"
-  },
-  "ms.media": {
-    "Host": "localhost",
-    "Port": "8086",
-    "Database": "ms.media.db",
     "LogLevel": "debug",
     "LogPath": "logs",
     "LogRotateCount": 5,
@@ -88,45 +9,48 @@
     "HttpThreads": 4,
     "HttpSecurity": "secNone",
     "HttpBind": "+",
+    "JwtSecret": "blog-microservices-change-me-in-production"
+  },
+  "ms.config": {
+    "Port": "8087"
+  },
+  "ms.auth": {
+    "Port": "8081",
+    "Database": "ms.auth.db"
+  },
+  "ms.users": {
+    "Port": "8082",
+    "Database": "ms.users.db"
+  },
+  "ms.posts": {
+    "Port": "8083",
+    "Database": "ms.posts.db"
+  },
+  "ms.tags": {
+    "Port": "8084",
+    "Database": "ms.tags.db"
+  },
+  "ms.comments": {
+    "Port": "8085",
+    "Database": "ms.comments.db"
+  },
+  "ms.media": {
+    "Port": "8086",
+    "Database": "ms.media.db",
     "MaxUploadSize": 3145728
   },
   "ms.gateway": {
-    "Host": "localhost",
     "Port": "8080",
-    "LogLevel": "debug",
-    "LogPath": "logs",
-    "LogRotateCount": 5,
-    "LogRotateSizeKB": 5120,
-    "ModelRoot": "api",
-    "HttpThreads": 4,
-    "HttpSecurity": "secNone",
-    "HttpBind": "+",
-    "CorsOrigin": "*",
-    "JwtSecret": "blog-microservices-change-me-in-production"
+    "CorsOrigin": "*"
   },
   "ms.analytics": {
-    "Host": "localhost",
-    "Port": "8088",
-    "LogLevel": "debug",
-    "LogPath": "logs",
-    "LogRotateCount": 5,
-    "LogRotateSizeKB": 5120,
-    "ModelRoot": "api",
-    "HttpThreads": 4,
-    "HttpSecurity": "secNone",
-    "HttpBind": "+"
+    "Port": "8088"
   },
   "ms.logs": {
-    "Host": "localhost",
     "Port": "8089",
     "Database": "ms.logs.db",
     "LogLevel": "info",
-    "LogPath": "logs",
     "LogRotateCount": 10,
-    "LogRotateSizeKB": 10240,
-    "ModelRoot": "api",
-    "HttpThreads": 4,
-    "HttpSecurity": "secNone",
-    "HttpBind": "+"
+    "LogRotateSizeKB": 10240
   }
 }

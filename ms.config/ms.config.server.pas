@@ -36,41 +36,64 @@ type
 
   /// <summary>
   ///   Implements <c>IConfig</c> by serving configuration from an in-memory <c>TDocVariantData</c> loaded from the master
-  ///   JSON file. No database is needed.
+  ///   JSON file. The master file may contain a special <c>defaults</c> block whose fields are merged into every
+  ///   service's effective configuration. Per-service blocks override matching keys from <c>defaults</c>. No database
+  ///   is needed.
   /// </summary>
   TConfigService = class(TInterfacedObject, IConfig)
   strict private
     /// <summary>
-    ///   Parsed master configuration holding all service blocks.
+    ///   Parsed master configuration holding all service blocks (and the optional <c>defaults</c> block).
     /// </summary>
     FMasterDoc: TDocVariantData;
+
+    /// <summary>
+    ///   Builds the effective configuration for one service by starting from the <c>defaults</c> block (if present)
+    ///   and overlaying the per-service block on top. Per-service keys win over default keys.
+    /// </summary>
+    /// <param name="aServiceName">
+    ///   Service identifier to merge.
+    /// </param>
+    /// <param name="aMerged">
+    ///   Output: the merged configuration document, ready to serialize.
+    /// </param>
+    /// <returns>
+    ///   <c>True</c> if the service exists in the master document, <c>False</c> otherwise.
+    /// </returns>
+    function BuildMergedConfig(
+      const aServiceName: RawUtf8;
+      out aMerged: TDocVariantData
+      ): boolean;
   public
 
     /// <summary>
     ///   Creates the config service and parses the master JSON.
     /// </summary>
     /// <param name="aMasterJson">
-    ///   Complete master configuration as a JSON object keyed by service name.
+    ///   Complete master configuration as a JSON object keyed by service name. May contain an additional
+    ///   <c>defaults</c> object with shared baseline values.
     /// </param>
     constructor Create(
       const aMasterJson: RawUtf8
       );
 
     /// <summary>
-    ///   Returns the configuration for a specific service.
+    ///   Returns the effective configuration for a specific service: the <c>defaults</c> block merged with the
+    ///   per-service overrides.
     /// </summary>
     /// <param name="aServiceName">
-    ///   Service identifier (e.g. 'ms.auth').
+    ///   Service identifier (e.g. 'ms.auth'). Asking for <c>defaults</c> returns '{}' since it is not a service.
     /// </param>
     /// <returns>
-    ///   JSON object with all config fields, or '{}' if the service name is unknown.
+    ///   JSON object with all merged config fields, or '{}' if the service name is unknown.
     /// </returns>
     function GetServiceConfig(
       const aServiceName: RawUtf8
       ): RawJson;
 
     /// <summary>
-    ///   Returns the complete configuration for all services.
+    ///   Returns the complete merged configuration for all services. The <c>defaults</c> block itself is not included
+    ///   in the result -- only the effective per-service configurations are.
     /// </summary>
     /// <returns>
     ///   JSON object keyed by service name.
@@ -78,7 +101,9 @@ type
     function GetAllConfigs: RawJson;
 
     /// <summary>
-    ///   Returns the service registry containing only Host and Port per service. Secrets and database paths are excluded.
+    ///   Returns the service registry containing only Host and Port per service. The <c>defaults</c> block is
+    ///   excluded; Host falls back to the defaults block when a service does not override it. Secrets and database
+    ///   paths are excluded.
     /// </summary>
     /// <returns>
     ///   JSON object keyed by service name, each entry containing only <c>Host</c> and <c>Port</c>.
@@ -113,6 +138,13 @@ type
 
 implementation
 
+const
+  /// <summary>
+  ///   Reserved key in the master JSON whose contents are merged into every service's effective configuration.
+  ///   Per-service blocks override matching keys from this block.
+  /// </summary>
+  DEFAULTS_KEY = 'defaults';
+
 constructor TConfigService.Create(
   const aMasterJson: RawUtf8
   );
@@ -123,41 +155,84 @@ begin
     FMasterDoc.InitObject([], JSON_FAST);
 end;
 
-function TConfigService.GetAllConfigs: RawJson;
+function TConfigService.BuildMergedConfig(
+  const aServiceName: RawUtf8;
+  out aMerged: TDocVariantData
+  ): boolean;
+var
+  ServiceIdx, DefaultsIdx: PtrInt;
+  ServiceDoc: PDocVariantData;
 begin
-  Result := FMasterDoc.ToJson;
+  // The defaults key itself is not a service -- callers must not see it as one.
+  if aServiceName = DEFAULTS_KEY then
+    Exit(False);
+  ServiceIdx := FMasterDoc.GetValueIndex(aServiceName);
+  if ServiceIdx < 0 then
+    Exit(False);
+  // Start from a copy of the defaults block (if present), then overlay the per-service block on top.
+  // AddOrUpdateFrom replaces existing keys with the values from the source document, so per-service keys win.
+  DefaultsIdx := FMasterDoc.GetValueIndex(DEFAULTS_KEY);
+  if DefaultsIdx >= 0 then
+    aMerged.InitCopy(FMasterDoc.Values[DefaultsIdx], JSON_FAST)
+  else
+    aMerged.InitObject([], JSON_FAST);
+  ServiceDoc := _Safe(FMasterDoc.Values[ServiceIdx]);
+  if ServiceDoc^.Kind = dvObject then
+    aMerged.AddOrUpdateFrom(variant(ServiceDoc^));
+  Result := True;
+end;
+
+function TConfigService.GetAllConfigs: RawJson;
+var
+  Result_, Merged: TDocVariantData;
+  ServiceIdx: PtrInt;
+  ServiceName: RawUtf8;
+begin
+  // Walk every key in the master document, skip the defaults block, and emit the merged effective config
+  // for each real service. Consumers see exactly what they would get from GetServiceConfig.
+  Result_.InitObject([], JSON_FAST);
+  for ServiceIdx := 0 to FMasterDoc.Count - 1 do
+  begin
+    ServiceName := FMasterDoc.Names[ServiceIdx];
+    if ServiceName = DEFAULTS_KEY then
+      Continue;
+    if BuildMergedConfig(ServiceName, Merged) then
+      Result_.AddValue(ServiceName, variant(Merged));
+  end;
+  Result := Result_.ToJson;
 end;
 
 function TConfigService.GetServiceConfig(
   const aServiceName: RawUtf8
   ): RawJson;
 var
-  ValueIdx: PtrInt;
+  Merged: TDocVariantData;
 begin
-  ValueIdx := FMasterDoc.GetValueIndex(aServiceName);
-  if ValueIdx < 0 then
+  if not BuildMergedConfig(aServiceName, Merged) then
     Exit('{}');
-  Result := VariantToUtf8(FMasterDoc.Values[ValueIdx]);
+  Result := Merged.ToJson;
 end;
 
 function TConfigService.GetServiceRegistry: RawJson;
 var
-  Registry, Entry: TDocVariantData;
+  Registry, Entry, Merged: TDocVariantData;
   ServiceIdx: PtrInt;
-  ServiceDoc: PDocVariantData;
+  ServiceName: RawUtf8;
 begin
   Registry.InitObject([], JSON_FAST);
   for ServiceIdx := 0 to FMasterDoc.Count - 1 do
   begin
-    ServiceDoc := _Safe(FMasterDoc.Values[ServiceIdx]);
-    if ServiceDoc^.Kind = dvObject then
-    begin
-      Entry.InitObject([
-        'Host', ServiceDoc^.U['Host'],
-        'Port', ServiceDoc^.U['Port']
-      ], JSON_FAST);
-      Registry.AddValue(FMasterDoc.Names[ServiceIdx], variant(Entry));
-    end;
+    ServiceName := FMasterDoc.Names[ServiceIdx];
+    if ServiceName = DEFAULTS_KEY then
+      Continue;
+    // Use the merged view so Host can come from the defaults block when the service does not override it.
+    if not BuildMergedConfig(ServiceName, Merged) then
+      Continue;
+    Entry.InitObject([
+      'Host', Merged.U['Host'],
+      'Port', Merged.U['Port']
+    ], JSON_FAST);
+    Registry.AddValue(ServiceName, variant(Entry));
   end;
   Result := Registry.ToJson;
 end;

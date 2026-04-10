@@ -349,6 +349,33 @@ end;
 - Master config: `ms.config.master.json` (loaded into memory at startup)
 - No database
 
+### Inheritance via `defaults` block
+
+The master JSON may contain a special `defaults` object whose fields are inherited by every service. Per-service blocks only need to declare keys that differ from the defaults; matching keys override the inherited value. Example:
+
+```json
+{
+  "defaults": {
+    "Host": "localhost",
+    "LogLevel": "debug",
+    "LogPath": "logs",
+    "LogRotateCount": 5,
+    "LogRotateSizeKB": 5120,
+    "ModelRoot": "api",
+    "HttpThreads": 4,
+    "HttpSecurity": "secNone",
+    "HttpBind": "+",
+    "JwtSecret": "blog-microservices-change-me-in-production"
+  },
+  "ms.auth":  { "Port": "8081", "Database": "ms.auth.db" },
+  "ms.users": { "Port": "8082", "Database": "ms.users.db" },
+  "ms.logs":  { "Port": "8089", "Database": "ms.logs.db",
+                "LogLevel": "info", "LogRotateCount": 10, "LogRotateSizeKB": 10240 }
+}
+```
+
+The merging happens server-side in `TConfigService.GetServiceConfig` -- clients still receive a single complete configuration block via the same SOA call. The `defaults` key itself is excluded from `GetAllConfigs` and `GetServiceRegistry`.
+
 ---
 
 ## 9. ms.analytics (Port 8088)
