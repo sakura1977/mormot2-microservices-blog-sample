@@ -64,6 +64,7 @@ uses
   ms.shared.circuitbreaker,
   ms.shared.correlation,
   ms.shared.jwt,
+  ms.shared.ratelimiter,
   ms.shared.service,
   mormot.core.interfaces;
 
@@ -438,6 +439,13 @@ type
     ///   Original HTTP request handler from <c>TRestHttpServer</c>, used for API route delegation.
     /// </summary>
     FOriginalHandler: TOnHttpServerRequest;
+
+    /// <summary>
+    ///   Per-IP token-bucket rate limiter for the <c>/api/Auth/*</c> endpoints. First line of defence
+    ///   against brute-force login attempts: blocks abusive IPs at the gateway before any backend call is
+    ///   issued. The auth service runs a complementary per-email limiter, see <c>TAuthService</c>.
+    /// </summary>
+    FAuthRateLimiter: TRateLimiter;
 
     /// <summary>
     ///   Resolved remote interface for the Auth backend service.
@@ -1140,6 +1148,11 @@ begin
   FWwwPath := Executable.ProgramFilePath + 'www' + PathDelim;
   if not DirectoryExists(FWwwPath) then
     CreateDir(FWwwPath);
+  // Per-IP rate limiter for /api/Auth/* endpoints. Burst of 20 requests per IP, refilling at 0.5/sec
+  // (one extra slot every 2 seconds). A single honest login spends 2-3 tokens (Challenge + Authenticate
+  // and possibly Register), well below the burst, while a brute-force attacker is throttled to ~30/min
+  // per IP regardless of which auth endpoint is hit.
+  FAuthRateLimiter := TRateLimiter.Create('gateway.auth', 20.0, 0.5);
   // Load service registry from ms.config (fallback to defaults)
   LoadServiceRegistry;
   // Connect to backend services using registry or defaults
@@ -1299,6 +1312,7 @@ begin
   FreeAndNil(FPostsClient);
   FreeAndNil(FUsersClient);
   FreeAndNil(FAuthClient);
+  FreeAndNil(FAuthRateLimiter);
 end;
 
 function TGatewayServer.HandleMediaFile(
@@ -1352,6 +1366,17 @@ begin
       LogWithCorrelation(sllInfo, '% OPTIONS %', [ServiceName, aCtxt.Url], self);
       aCtxt.OutContent := '';
       Exit(HTTP_NOCONTENT);
+    end;
+    // /api/Auth/* is brute-forceable: enforce a per-client-IP token bucket before delegating to the
+    // REST server. The auth service applies a complementary per-email limiter on Authenticate failures.
+    if IdemPChar(pointer(aCtxt.Url), '/API/AUTH/')
+      and (FAuthRateLimiter <> nil)
+      and not FAuthRateLimiter.TryAcquire(aCtxt.RemoteIP) then
+    begin
+      LogWithCorrelation(sllWarning, '% AUTH rate-limit hit ip=% url=%', [ServiceName, aCtxt.RemoteIP, aCtxt.Url], self);
+      aCtxt.OutContent := '{"errorText":"too many requests"}';
+      aCtxt.OutContentType := JSON_CONTENT_TYPE;
+      Exit(HTTP_TOO_MANY_REQUESTS);
     end;
     // API calls go to the REST server (interface-based services). The base wrapper logs them.
     if IdemPChar(pointer(aCtxt.Url), '/API/') or IdemPChar(pointer(aCtxt.Url), '/API') then

@@ -70,6 +70,7 @@ uses
   ms.shared.circuitbreaker,
   ms.shared.correlation,
   ms.shared.jwt,
+  ms.shared.ratelimiter,
   ms.shared.service,
   ms.auth.model,
   ms.auth.server,
@@ -344,6 +345,14 @@ type
     ///   Verifies that a replayed nonce is rejected.
     /// </summary>
     procedure AuthenticateReplayedNonce;
+
+    /// <summary>
+    ///   Verifies that the per-email rate limiter throttles repeated failed proofs: after the bucket
+    ///   is exhausted, even a correct password is rejected for the throttled email, while a different
+    ///   email keeps working. Refunding via a successful login is implicitly verified by the surrounding
+    ///   tests that share the same auth service instance.
+    /// </summary>
+    procedure LoginThrottlesAfterRepeatedFailures;
 
     /// <summary>
     ///   Verifies JWT token validation after successful login.
@@ -770,6 +779,62 @@ type
     ///   and the remaining posts must not trigger any further <c>FComments.GetByPost</c> calls.
     /// </summary>
     procedure AnalyticsBreakerTripsAndStopsCalls;
+  end;
+
+  /// <summary>
+  ///   Unit tests for <c>TRateLimiter</c>: bucket creation, burst behaviour, refill, per-key isolation,
+  ///   refund on success, and idle eviction.
+  /// </summary>
+  TTestRateLimiter = class(TSynTestCase)
+  published
+
+    /// <summary>
+    ///   A freshly created limiter starts with no buckets and the very first <c>TryAcquire</c> for any
+    ///   key succeeds because new buckets are seeded at full capacity.
+    /// </summary>
+    procedure FirstAcquireOnNewKeyAlwaysSucceeds;
+
+    /// <summary>
+    ///   A burst of <c>Capacity</c> back-to-back acquires on the same key all succeed; the next one is
+    ///   rejected because the bucket is empty.
+    /// </summary>
+    procedure BurstAllowsExactlyCapacityRequests;
+
+    /// <summary>
+    ///   Exhausting the bucket of one key must not affect any other key. Each client gets its own
+    ///   independent budget.
+    /// </summary>
+    procedure BucketsAreIsolatedPerKey;
+
+    /// <summary>
+    ///   After the bucket is empty, waiting long enough for the configured refill rate to add tokens
+    ///   makes <c>TryAcquire</c> succeed again.
+    /// </summary>
+    procedure RefillRestoresTokensOverTime;
+
+    /// <summary>
+    ///   <c>Reset</c> on an exhausted bucket restores it to full capacity, so the same key can issue a
+    ///   new full burst immediately.
+    /// </summary>
+    procedure ResetRestoresFullCapacity;
+
+    /// <summary>
+    ///   <c>Reset</c> on a key that has never been seen is a no-op and must not crash or create a
+    ///   spurious bucket.
+    /// </summary>
+    procedure ResetIsNoopForUnknownKey;
+
+    /// <summary>
+    ///   <c>TryAcquireN</c> with a cost greater than one decrements the bucket by that many tokens and
+    ///   rejects requests once the remaining tokens are insufficient.
+    /// </summary>
+    procedure TryAcquireNRespectsCost;
+
+    /// <summary>
+    ///   Buckets that have been idle for longer than the configured TTL are evicted on the next
+    ///   acquire, so the storage does not grow without bound under churn.
+    /// </summary>
+    procedure IdleEvictionRemovesUnusedBuckets;
   end;
 
   /// <summary>
@@ -1450,6 +1515,57 @@ begin
   // Replay with same nonce should fail
   Check(not Context.Auth.Authenticate('test@example.com', ServerNonce, ClientProof, Token, UserId, ServerProof),
     'replayed nonce should fail');
+end;
+
+procedure TTestAuthService.LoginThrottlesAfterRepeatedFailures;
+const
+  THROTTLED_EMAIL: RawUtf8 = 'throttle@example.com';
+  CONTROL_EMAIL: RawUtf8 = 'control@example.com';
+  PASSWORD: RawUtf8 = 'rightpass';
+var
+  CreateDto: TAuthorCreateDto;
+  ThrottledUserId, ControlUserId: TID;
+  McfInfo, ServerNonce, McfHash: RawUtf8;
+  RealProof, Token, ServerProof: RawUtf8;
+  AttemptIdx: Integer;
+  ClientSignature: THash256;
+  AuthOk: Boolean;
+begin
+  // Set up two independent accounts so the test can compare a throttled key against an untouched one.
+  CreateDto.DisplayName := 'Throttle Victim';
+  ThrottledUserId := Context.User.Add(CreateDto);
+  Check(ThrottledUserId > 0, 'create throttled author');
+  Check(Context.Auth.Register(THROTTLED_EMAIL, PASSWORD, ThrottledUserId) > 0,
+    'register throttled account');
+  CreateDto.DisplayName := 'Control';
+  ControlUserId := Context.User.Add(CreateDto);
+  Check(ControlUserId > 0, 'create control author');
+  Check(Context.Auth.Register(CONTROL_EMAIL, PASSWORD, ControlUserId) > 0, 'register control account');
+  // Drain the per-email bucket: capacity is 10 reachable failed proofs. Each iteration grabs a fresh
+  // challenge and submits a non-empty garbage proof so ScramServerProof fails after TryAcquire spent a
+  // token. The 11th attempt then must be denied by the limiter rather than by the proof check.
+  for AttemptIdx := 1 to 10 do
+  begin
+    Context.Auth.Challenge(THROTTLED_EMAIL, McfInfo, ServerNonce);
+    Check(not Context.Auth.Authenticate(THROTTLED_EMAIL, ServerNonce, 'garbage-proof', Token,
+      ThrottledUserId, ServerProof), 'failed proof must not authenticate');
+  end;
+  // Now build a CORRECT proof for the throttled email. Without the limiter this would succeed; with
+  // the bucket exhausted it must still be rejected.
+  Context.Auth.Challenge(THROTTLED_EMAIL, McfInfo, ServerNonce);
+  McfHash := ModularCryptHash(McfInfo, PASSWORD);
+  RealProof := ScramClientProof(McfHash, THROTTLED_EMAIL, ClientSignature, [THROTTLED_EMAIL, ServerNonce]);
+  AuthOk := Context.Auth.Authenticate(THROTTLED_EMAIL, ServerNonce, RealProof, Token,
+    ThrottledUserId, ServerProof);
+  Check(not AuthOk, 'rate limiter must reject the correct password once the bucket is empty');
+  CheckEqual(Token, '', 'no token must be issued for a throttled login');
+  // The control email shares the auth service but has its own bucket and must remain usable.
+  Context.Auth.Challenge(CONTROL_EMAIL, McfInfo, ServerNonce);
+  McfHash := ModularCryptHash(McfInfo, PASSWORD);
+  RealProof := ScramClientProof(McfHash, CONTROL_EMAIL, ClientSignature, [CONTROL_EMAIL, ServerNonce]);
+  Check(Context.Auth.Authenticate(CONTROL_EMAIL, ServerNonce, RealProof, Token, ControlUserId,
+    ServerProof), 'unrelated email must remain authenticatable');
+  Check(Token <> '', 'control login must yield a token');
 end;
 
 procedure TTestAuthService.ValidateToken;
@@ -3261,6 +3377,148 @@ begin
   end;
 end;
 
+procedure TTestRateLimiter.BucketsAreIsolatedPerKey;
+var
+  Limiter: TRateLimiter;
+  AcquireIdx: Integer;
+begin
+  Limiter := TRateLimiter.Create('test.isolation', 3.0, 0.0);
+  try
+    // Drain key 'a' completely.
+    for AcquireIdx := 1 to 3 do
+      Check(Limiter.TryAcquire('a'), 'a within burst');
+    Check(not Limiter.TryAcquire('a'), 'a exhausted');
+    // Key 'b' is untouched and must still serve a full burst.
+    for AcquireIdx := 1 to 3 do
+      Check(Limiter.TryAcquire('b'), 'b within burst, isolated from a');
+    Check(not Limiter.TryAcquire('b'), 'b exhausted independently');
+    CheckEqual(Limiter.BucketCount, 2, 'one bucket per distinct key');
+  finally
+    Limiter.Free;
+  end;
+end;
+
+procedure TTestRateLimiter.BurstAllowsExactlyCapacityRequests;
+var
+  Limiter: TRateLimiter;
+  AcquireIdx: Integer;
+begin
+  // Refill rate of 0 isolates the test from wall-clock noise: only the burst is exercised.
+  Limiter := TRateLimiter.Create('test.burst', 5.0, 0.0);
+  try
+    for AcquireIdx := 1 to 5 do
+      Check(Limiter.TryAcquire('client'), Format('acquire %d within burst', [AcquireIdx]));
+    Check(not Limiter.TryAcquire('client'), 'acquire beyond burst must be denied');
+    Check(not Limiter.TryAcquire('client'), 'still denied on the next call');
+  finally
+    Limiter.Free;
+  end;
+end;
+
+procedure TTestRateLimiter.FirstAcquireOnNewKeyAlwaysSucceeds;
+var
+  Limiter: TRateLimiter;
+begin
+  Limiter := TRateLimiter.Create('test.first', 1.0, 0.0);
+  try
+    CheckEqual(Limiter.BucketCount, 0, 'fresh limiter has no buckets');
+    Check(Limiter.TryAcquire('alpha'), 'first acquire seeds a full bucket');
+    CheckEqual(Limiter.BucketCount, 1, 'one bucket created');
+    Check(Limiter.TryAcquire('beta'), 'distinct key also seeds a full bucket');
+    CheckEqual(Limiter.BucketCount, 2, 'second bucket created');
+  finally
+    Limiter.Free;
+  end;
+end;
+
+procedure TTestRateLimiter.IdleEvictionRemovesUnusedBuckets;
+var
+  Limiter: TRateLimiter;
+begin
+  // 50 ms idle TTL: easy to exceed deterministically with SleepHiRes.
+  Limiter := TRateLimiter.Create('test.evict', 2.0, 0.0, 50);
+  try
+    Check(Limiter.TryAcquire('stale-a'), 'create stale-a bucket');
+    Check(Limiter.TryAcquire('stale-b'), 'create stale-b bucket');
+    CheckEqual(Limiter.BucketCount, 2, 'two buckets registered');
+    SleepHiRes(120);
+    // Touching a fresh key triggers the amortised eviction sweep, which must drop both stale buckets
+    // and leave only the new one.
+    Check(Limiter.TryAcquire('fresh'), 'fresh key acquired after idle window');
+    CheckEqual(Limiter.BucketCount, 1, 'idle buckets evicted on next acquire');
+  finally
+    Limiter.Free;
+  end;
+end;
+
+procedure TTestRateLimiter.RefillRestoresTokensOverTime;
+var
+  Limiter: TRateLimiter;
+begin
+  // Capacity 2, refill 20/sec -> one token every 50 ms. SleepHiRes(120) yields ~2 tokens.
+  Limiter := TRateLimiter.Create('test.refill', 2.0, 20.0);
+  try
+    Check(Limiter.TryAcquire('client'), 'first burst slot');
+    Check(Limiter.TryAcquire('client'), 'second burst slot');
+    Check(not Limiter.TryAcquire('client'), 'bucket empty after burst');
+    SleepHiRes(120);
+    Check(Limiter.TryAcquire('client'), 'refilled token available after wait');
+  finally
+    Limiter.Free;
+  end;
+end;
+
+procedure TTestRateLimiter.ResetIsNoopForUnknownKey;
+var
+  Limiter: TRateLimiter;
+begin
+  Limiter := TRateLimiter.Create('test.reset-unknown', 3.0, 0.0);
+  try
+    Limiter.Reset('never-seen');
+    CheckEqual(Limiter.BucketCount, 0, 'Reset must not create a spurious bucket');
+    // The key still works on first contact like any other.
+    Check(Limiter.TryAcquire('never-seen'), 'first acquire after no-op Reset');
+    CheckEqual(Limiter.BucketCount, 1, 'bucket created lazily by TryAcquire, not by Reset');
+  finally
+    Limiter.Free;
+  end;
+end;
+
+procedure TTestRateLimiter.ResetRestoresFullCapacity;
+var
+  Limiter: TRateLimiter;
+  AcquireIdx: Integer;
+begin
+  Limiter := TRateLimiter.Create('test.reset-full', 4.0, 0.0);
+  try
+    for AcquireIdx := 1 to 4 do
+      Check(Limiter.TryAcquire('client'), 'drain bucket');
+    Check(not Limiter.TryAcquire('client'), 'bucket empty');
+    Limiter.Reset('client');
+    for AcquireIdx := 1 to 4 do
+      Check(Limiter.TryAcquire('client'), 'full burst again after Reset');
+    Check(not Limiter.TryAcquire('client'), 'and exhausted again');
+  finally
+    Limiter.Free;
+  end;
+end;
+
+procedure TTestRateLimiter.TryAcquireNRespectsCost;
+var
+  Limiter: TRateLimiter;
+begin
+  Limiter := TRateLimiter.Create('test.cost', 10.0, 0.0);
+  try
+    Check(Limiter.TryAcquireN('client', 4.0), 'spend 4 of 10');
+    Check(Limiter.TryAcquireN('client', 4.0), 'spend 4 more (8 of 10)');
+    Check(not Limiter.TryAcquireN('client', 4.0), 'only 2 left, cannot spend 4');
+    Check(Limiter.TryAcquireN('client', 2.0), 'remaining 2 are spendable');
+    Check(not Limiter.TryAcquire('client'), 'fully exhausted now');
+  finally
+    Limiter.Free;
+  end;
+end;
+
 procedure TTestAnalyticsService.GetOverview;
 var
   Overview: TOverviewDto;
@@ -4241,6 +4499,7 @@ begin
   AddCase(TTestBlogAggregation);
   AddCase(TTestBlogResilience);
   AddCase(TTestCircuitBreaker);
+  AddCase(TTestRateLimiter);
   AddCase(TTestAnalyticsService);
   AddCase(TTestAnalyticsResilience);
   AddCase(TTestConfigService);

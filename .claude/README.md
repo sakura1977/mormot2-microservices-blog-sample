@@ -28,6 +28,7 @@ Microservice-based blog system with **Delphi 13** and **mORMot2**.
 | [media-and-markdown.md](media-and-markdown.md) | Media upload flow, `GET /media/:id` binary passthrough route, safe Markdown subset renderer (headings, bold, italic, images) |
 | [posts-search.md](posts-search.md) | SQLite FTS5 full-text search on posts: parallel virtual table, transactional write sync, backfill, frontend search bar and `/search?q=...` route |
 | [circuit-breaker.md](circuit-breaker.md) | `TCircuitBreaker` (Closed/Open/HalfOpen state machine), where it is used (`TBlogService`, `TAnalyticsService`), tuning, tests, and the manual reproduction steps |
+| [rate-limiting.md](rate-limiting.md) | `TRateLimiter` token bucket, two-layer auth defence (per-IP at the gateway + per-email in `ms.auth`), refund-on-success, tuning, tests, and the manual reproduction steps |
 
 ## Architecture
 
@@ -75,7 +76,7 @@ Microservice-based blog system with **Delphi 13** and **mORMot2**.
 BlogMicroservices.groupproj    IDE project group
 start-all.cmd / stop-all.cmd   Operations scripts
 seed-data.cmd / status.cmd     Demo data / health checks
-shared/                        6 shared units
+shared/                        8 shared units
   ms.shared.pas                  Constants, config, slug generation
   ms.shared.api.pas              SOA interface definitions (IAuth, IUser, ...,
                                    ILogIngestion, ILogQuery)
@@ -87,6 +88,10 @@ shared/                        6 shared units
   ms.shared.service.pas          TMicroService base class, RegisterService,
                                    OrmGetById, OrmGetAll,
                                    HandleRequestWithCorrelation wrapper
+  ms.shared.circuitbreaker.pas   TCircuitBreaker for upstream call protection
+                                   (see circuit-breaker.md)
+  ms.shared.ratelimiter.pas      TRateLimiter token bucket for brute-force
+                                   defence (see rate-limiting.md)
 ms.gateway/                    Gateway + www/ frontend (includes /logs UI)
 ms.auth/                       Auth service (model + server)
 ms.users/                      Users service (model + server)

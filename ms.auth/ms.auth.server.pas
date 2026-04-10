@@ -57,6 +57,7 @@ uses
   ms.shared,
   ms.shared.api,
   ms.shared.jwt,
+  ms.shared.ratelimiter,
   ms.shared.service;
 
 const
@@ -142,6 +143,14 @@ type
     FChallengeSafe: TLightLock;
 
     /// <summary>
+    ///   Per-email token-bucket rate limiter for failed <c>Authenticate</c> attempts. Decremented on every
+    ///   failed proof verification; refunded in full on successful login so honest users with the right
+    ///   password are never throttled. Complements the per-IP limiter the gateway runs in front of all
+    ///   <c>/api/Auth/*</c> endpoints, so a brute-force attacker rotating IPs still hits this gate.
+    /// </summary>
+    FLoginLimiter: TRateLimiter;
+
+    /// <summary>
     ///   Finds a user record by email address.
     /// </summary>
     /// <param name="aEmail">
@@ -215,6 +224,11 @@ type
       const aOrm: IRestOrm;
       aJwt: TBlogJwt
       );
+
+    /// <summary>
+    ///   Releases the per-email rate limiter.
+    /// </summary>
+    destructor Destroy; override;
 
     // IAuth
 
@@ -372,6 +386,15 @@ begin
   inherited Create;
   FOrm := aOrm;
   FJwt := aJwt;
+  // Burst of 10 failed attempts per email, refilling at 1 token every 30 seconds (~2/min sustained).
+  // Successful logins refund the bucket via Reset, so a typo-prone honest user is never locked out.
+  FLoginLimiter := TRateLimiter.Create('auth.email', 10.0, 1.0 / 30.0);
+end;
+
+destructor TAuthService.Destroy;
+begin
+  FreeAndNil(FLoginLimiter);
+  inherited Destroy;
 end;
 
 function TAuthService.FindUserByEmail(
@@ -516,12 +539,17 @@ begin
   aToken := '';
   aUserId := 0;
   aServerProof := '';
-  // Consume the pending challenge
+  // Consume the pending challenge first: an invalid/expired nonce is rejected without spending a
+  // rate-limit token, so a stale tab does not contribute to the brute-force budget.
   if not ConsumeChallenge(aServerNonce, Chal) then
     Exit;
   if Chal.Email <> aEmail then
     Exit;
   if not Chal.IsReal then
+    Exit;
+  // Per-email throttle: every reachable proof verification costs one token. Honest logins refund the
+  // bucket below; brute-force attempts pay for every guess.
+  if not FLoginLimiter.TryAcquire(aEmail) then
     Exit;
   // Verify client proof using SCRAM
   aServerProof := ScramServerProof(Chal.PersistedKey, aClientProof, [aEmail, aServerNonce]);
@@ -530,6 +558,8 @@ begin
   // Authentication successful
   aUserId := Chal.UserId;
   aToken := FJwt.CreateToken(aUserId);
+  // Refund the rate-limit budget so a previously typo-prone honest user starts fresh next time.
+  FLoginLimiter.Reset(aEmail);
   // Update last login
   User := FindUserByEmail(aEmail);
   if User <> nil then
