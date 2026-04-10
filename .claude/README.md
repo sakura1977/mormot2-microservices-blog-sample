@@ -24,6 +24,7 @@ Microservice-based blog system with **Delphi 13** and **mORMot2**.
 | [correlation-ids.md](correlation-ids.md) | `X-Correlation-Id` propagation, threadvar, `OnBeforeCall` hook, logging |
 | [central-logging.md](central-logging.md) | `ms.logs` service, `EchoCustom` shipper, SQLite FTS5, `ILogIngestion` / `ILogQuery` |
 | [event-driven.md](event-driven.md) | Interface-based callbacks over WebSockets, live log tail, `ILogStream`, broker pattern, `synopsebin` / `synopsejson` |
+| [spa-routing.md](spa-routing.md) | Client-side routing via the History API, SPA fallback in the gateway, route table, link interceptor for shareable URLs |
 
 ## Architecture
 

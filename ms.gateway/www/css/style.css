@@ -73,7 +73,9 @@ main { flex: 1; padding: 2rem 0; }
 .post-full .post-body { line-height: 1.8; }
 
 /* === Tags === */
-.tag { display: inline-block; background: #e0e7ff; color: var(--primary-dark); padding: .15rem .6rem; border-radius: 1rem; font-size: .8rem; margin-right: .3rem; }
+.tag { display: inline-block; background: #e0e7ff; color: var(--primary-dark); padding: .15rem .6rem; border-radius: 1rem; font-size: .8rem; margin-right: .3rem; text-decoration: none; cursor: pointer; }
+a.tag:hover, .tag-cloud-item:hover { background: var(--primary); color: #fff; }
+.tag-cloud-item { text-decoration: none; }
 
 .tag-list { display: flex; flex-wrap: wrap; gap: .5rem; list-style: none; margin: 1rem 0; }
 .tag-list .tag { font-size: .9rem; padding: .3rem .8rem; cursor: pointer; }

@@ -7,17 +7,86 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 const app = $('#app');
 
+// === Router ===
+// Real path routing via the History API. The gateway serves index.html for any
+// unmatched path (SPA fallback in ms.gateway.server.pas), so deep-links reload cleanly.
+const routes = [
+  { re: /^\/$/,                             handler: ()  => loadPosts(1) },
+  { re: /^\/page\/(\d+)$/,                  handler: (m) => loadPosts(parseInt(m[1])) },
+  { re: /^\/posts\/(\d+)$/,                 handler: (m) => loadPost(parseInt(m[1])) },
+  { re: /^\/tags$/,                         handler: ()  => loadTags() },
+  { re: /^\/tags\/(\d+)$/,                  handler: (m) => loadPostsByTag(parseInt(m[1])) },
+  { re: /^\/authors\/(\d+)$/,               handler: (m) => loadAuthor(parseInt(m[1])) },
+  { re: /^\/dashboard$/,                    handler: ()  => loadDashboard() },
+  { re: /^\/dashboard\/moderation$/,        handler: ()  => loadModeration() },
+  { re: /^\/dashboard\/profile$/,           handler: ()  => loadProfileEditor() },
+  { re: /^\/analytics$/,                    handler: ()  => loadAnalytics() },
+  { re: /^\/analytics\/authors$/,           handler: ()  => loadAuthorStats() },
+  { re: /^\/analytics\/tags$/,              handler: ()  => loadTagCloudView() },
+  { re: /^\/analytics\/comments$/,          handler: ()  => loadCommentActivityView() },
+  { re: /^\/analytics\/recent$/,            handler: ()  => loadRecentPostsFullView() },
+  { re: /^\/logs$/,                         handler: ()  => loadLogs() },
+  { re: /^\/logs\/correlation\/([^/]+)$/,   handler: (m) => loadLogsByCorrelation(decodeURIComponent(m[1])) }
+];
+
+function navigate(path, opts) {
+  const current = location.pathname + location.search;
+  if (path !== current) {
+    if (opts && opts.replace)
+      history.replaceState({}, '', path);
+    else
+      history.pushState({}, '', path);
+  }
+  dispatchRoute(path);
+}
+
+function dispatchRoute(path) {
+  const pathname = path.split('?')[0];
+  // Only the /logs view keeps a live WebSocket. Close it when navigating anywhere else.
+  if (!pathname.startsWith('/logs'))
+    closeActiveLogStream();
+  for (const r of routes) {
+    const m = pathname.match(r.re);
+    if (m) { r.handler(m); return; }
+  }
+  // Unknown path: fall back to the home list.
+  loadPosts(1);
+}
+
+window.addEventListener('popstate', () => dispatchRoute(location.pathname + location.search));
+
+// Global link interceptor: turn every same-origin <a href="/..."> into a
+// pushState navigation while keeping the real href so right-click > "Copy link"
+// and sharing work the normal way.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a');
+  if (!a) return;
+  const href = a.getAttribute('href');
+  if (!href || href.startsWith('#') || /^[a-z]+:\/\//i.test(href) || a.target === '_blank') return;
+  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+  e.preventDefault();
+  navigate(href);
+});
+
+function setPageMeta(title, description) {
+  document.title = title ? `${title} — Blog` : 'Blog';
+  if (description) {
+    const m = document.querySelector('meta[name="description"]');
+    if (m) m.setAttribute('content', description);
+  }
+}
+
 // === Initialization ===
 document.addEventListener('DOMContentLoaded', () => {
   updateAuthNav();
-  loadPosts();
+  dispatchRoute(location.pathname + location.search);
 });
 
 function updateAuthNav() {
   const nav = $('#auth-nav');
   if (API.isLoggedIn()) {
     nav.innerHTML = `
-      <a href="#" onclick="loadDashboard(); return false;">Dashboard</a>
+      <a href="/dashboard">Dashboard</a>
       <a href="#" onclick="doLogout(); return false;">Sign Out</a>
     `;
   } else {
@@ -29,8 +98,8 @@ function updateAuthNav() {
 let currentPage = 1;
 
 async function loadPosts(page = 1) {
-  closeActiveLogStream();
   currentPage = page;
+  setPageMeta('Home', 'Blog - Microservices Demo');
   app.innerHTML = '<div class="loading">Loading posts...</div>';
   const r = await API.getPosts(page);
   if (!r.ok) { app.innerHTML = '<p class="error">Failed to load posts.</p>'; return; }
@@ -49,7 +118,7 @@ async function loadPosts(page = 1) {
     const date = p.PublishedAt ? new Date(p.PublishedAt).toLocaleDateString('en') : '';
     html += `
       <li class="post-card">
-        <h2><a href="#" onclick="loadPost(${p.ID}); return false;">${esc(p.Title)}</a></h2>
+        <h2><a href="/posts/${p.ID}">${esc(p.Title)}</a></h2>
         <div class="post-meta">${date}</div>
         <p class="post-excerpt">${esc(p.Excerpt || '')}</p>
       </li>`;
@@ -59,10 +128,10 @@ async function loadPosts(page = 1) {
   if (totalPages > 1) {
     html += '<div class="pagination">';
     if (page > 1)
-      html += `<button class="btn-outline btn-sm" onclick="loadPosts(${page - 1})">&laquo; Previous</button>`;
+      html += `<a class="btn-outline btn-sm" href="/page/${page - 1}">&laquo; Previous</a>`;
     html += `<span style="padding:.5rem">Page ${page} / ${totalPages}</span>`;
     if (page < totalPages)
-      html += `<button class="btn-outline btn-sm" onclick="loadPosts(${page + 1})">Next &raquo;</button>`;
+      html += `<a class="btn-outline btn-sm" href="/page/${page + 1}">Next &raquo;</a>`;
     html += '</div>';
   }
 
@@ -77,6 +146,7 @@ async function loadPost(id) {
 
   const p = r.data;
   const postId = p.ID || id;
+  setPageMeta(p.MetaTitle || p.Title, p.MetaDescription || p.Excerpt);
   const date = p.PublishedAt ? new Date(p.PublishedAt).toLocaleDateString('en') : '';
   const author = p.Author || {};
   const tags = p.Tags || [];
@@ -87,14 +157,14 @@ async function loadPost(id) {
     tagsHtml = '<p class="error" style="margin:.5rem 0">Tags could not be loaded.</p>';
   else if (tags.length > 0)
     tagsHtml = '<div style="margin:.5rem 0">' +
-      tags.map(t => `<span class="tag" onclick="loadPostsByTag(${t.ID})">${esc(t.Name || '')}</span>`).join('') +
+      tags.map(t => `<a class="tag" href="/tags/${t.ID}">${esc(t.Name || '')}</a>`).join('') +
       '</div>';
 
   let authorHtml = '';
   if (p.AuthorUnavailable)
     authorHtml = ' &mdash; <span style="color:var(--text-light)">(Author unavailable)</span>';
   else if (author.DisplayName)
-    authorHtml = ' &mdash; <a href="#" onclick="loadAuthor(' + (author.ID) + '); return false;">' + esc(author.DisplayName) + '</a>';
+    authorHtml = ' &mdash; <a href="/authors/' + author.ID + '">' + esc(author.DisplayName) + '</a>';
 
   let commentsHtml = '';
   if (p.CommentsUnavailable) {
@@ -144,7 +214,7 @@ async function loadPost(id) {
       ${commentsFormHtml}
     </section>
 
-    <p style="margin-top:2rem"><a href="#" onclick="loadPosts(); return false;">&laquo; Back to overview</a></p>
+    <p style="margin-top:2rem"><a href="/">&laquo; Back to overview</a></p>
   `;
 }
 
@@ -172,7 +242,7 @@ async function submitComment(e, postId) {
 
 // === Tags ===
 async function loadTags() {
-  closeActiveLogStream();
+  setPageMeta('Tags');
   app.innerHTML = '<div class="loading">Loading tags...</div>';
   const r = await API.getTags();
   if (!r.ok) { app.innerHTML = '<p class="error">Error.</p>'; return; }
@@ -184,7 +254,7 @@ async function loadTags() {
   }
   let html = '<h2>Tags</h2><ul class="tag-list">';
   for (const t of tags)
-    html += `<li><span class="tag" onclick="loadPostsByTag(${t.ID})">${esc(t.Name)}</span></li>`;
+    html += `<li><a class="tag" href="/tags/${t.ID}">${esc(t.Name)}</a></li>`;
   html += '</ul>';
   app.innerHTML = html;
 }
@@ -200,6 +270,7 @@ async function loadPostsByTag(tagId) {
   const tag = r.data.Tag;
   const posts = r.data.Posts || [];
   const tagName = tag.Name || '';
+  setPageMeta('Tag: ' + tagName, tag.Description || '');
 
   let html = `<h2>Tag: ${esc(tagName)}</h2>`;
   if (tag.Description)
@@ -214,7 +285,7 @@ async function loadPostsByTag(tagId) {
       const author = p.Author ? p.Author.DisplayName : '';
       html += `
         <li class="post-card">
-          <h2><a href="#" onclick="loadPost(${p.ID}); return false;">${esc(p.Title)}</a></h2>
+          <h2><a href="/posts/${p.ID}">${esc(p.Title)}</a></h2>
           <div class="post-meta">${date}${author ? ' &mdash; ' + esc(author) : ''}</div>
           <p class="post-excerpt">${esc(p.Excerpt || '')}</p>
         </li>`;
@@ -222,7 +293,7 @@ async function loadPostsByTag(tagId) {
     html += '</ul>';
   }
 
-  html += '<p style="margin-top:1rem"><a href="#" onclick="loadTags(); return false;">&laquo; All Tags</a></p>';
+  html += '<p style="margin-top:1rem"><a href="/tags">&laquo; All Tags</a></p>';
   app.innerHTML = html;
 }
 
@@ -233,6 +304,7 @@ async function loadAuthor(id) {
   if (!r.ok) { app.innerHTML = '<p class="error">Author not found.</p>'; return; }
 
   const a = r.data;
+  setPageMeta(a.DisplayName, a.Bio || '');
   app.innerHTML = `
     <div class="author-card">
       <div class="author-info">
@@ -243,7 +315,7 @@ async function loadAuthor(id) {
     </div>
     <h3>Posts</h3>
     <div id="author-posts"><div class="loading">Loading...</div></div>
-    <p style="margin-top:1rem"><a href="#" onclick="loadPosts(); return false;">&laquo; Back</a></p>
+    <p style="margin-top:1rem"><a href="/">&laquo; Back</a></p>
   `;
 
   const pr = await soaCall('Post', 'GetList', [1, 50, 0, id]);
@@ -255,7 +327,7 @@ async function loadAuthor(id) {
     if (items.length > 0) {
       let ph = '<ul class="post-list">';
       for (const p of items)
-        ph += `<li class="post-card"><h2><a href="#" onclick="loadPost(${p.ID}); return false;">${esc(p.Title)}</a></h2></li>`;
+        ph += `<li class="post-card"><h2><a href="/posts/${p.ID}">${esc(p.Title)}</a></h2></li>`;
       ph += '</ul>';
       postsDiv.innerHTML = ph;
     } else {
@@ -281,7 +353,7 @@ async function doLogin(e) {
     if (r.ok) {
       hideLogin();
       updateAuthNav();
-      loadDashboard();
+      navigate('/dashboard');
     } else {
       const err = $('#login-error');
       err.textContent = r.data?.error || 'Login failed.';
@@ -296,21 +368,21 @@ async function doLogin(e) {
 function doLogout() {
   API.logout();
   updateAuthNav();
-  loadPosts();
+  navigate('/');
 }
 
 // === Dashboard (authenticated) ===
 async function loadDashboard() {
   if (!API.isLoggedIn()) { showLogin(); return; }
-  closeActiveLogStream();
+  setPageMeta('Dashboard');
   app.innerHTML = '<div class="loading">Loading dashboard...</div>';
 
   let html = `
     <h2>Dashboard</h2>
     <div class="dashboard-actions">
       <button onclick="clearEditor(); showEditor()">New Post</button>
-      <button class="btn-outline" onclick="loadModeration()">Comment Moderation</button>
-      <button class="btn-outline" onclick="loadProfileEditor()">Edit Profile</button>
+      <button class="btn-outline" onclick="navigate('/dashboard/moderation')">Comment Moderation</button>
+      <button class="btn-outline" onclick="navigate('/dashboard/profile')">Edit Profile</button>
     </div>
     <h3>My Posts</h3>
   `;
@@ -443,7 +515,7 @@ async function savePost(e) {
       await API.setPostTags(postId, tagIds);
     }
     hideEditor();
-    loadDashboard();
+    navigate('/dashboard');
   } else {
     alert('Error: ' + (r.data?.error || 'Save failed.'));
   }
@@ -457,6 +529,7 @@ async function deletePostConfirm(id) {
 
 // === Comment Moderation ===
 async function loadModeration() {
+  setPageMeta('Comment Moderation');
   app.innerHTML = '<div class="loading">Loading pending comments...</div>';
   const r = await API.getPendingComments();
   if (!r.ok) { app.innerHTML = '<p class="error">Error.</p>'; return; }
@@ -483,7 +556,7 @@ async function loadModeration() {
         </div>`;
     }
   }
-  html += '<p style="margin-top:1rem"><a href="#" onclick="loadDashboard(); return false;">&laquo; Dashboard</a></p>';
+  html += '<p style="margin-top:1rem"><a href="/dashboard">&laquo; Dashboard</a></p>';
   app.innerHTML = html;
 }
 
@@ -497,6 +570,7 @@ async function moderateComment(id, action) {
 
 // === Edit Profile ===
 async function loadProfileEditor() {
+  setPageMeta('Edit Profile');
   app.innerHTML = '<div class="loading">Loading profile...</div>';
   const r = await API.getUser(API.userId);
 
@@ -515,7 +589,7 @@ async function loadProfileEditor() {
       <button type="submit">Save</button>
       <p id="p-msg" class="success hidden" style="margin-top:.5rem"></p>
     </form>
-    <p style="margin-top:1rem"><a href="#" onclick="loadDashboard(); return false;">&laquo; Dashboard</a></p>
+    <p style="margin-top:1rem"><a href="/dashboard">&laquo; Dashboard</a></p>
   `;
 }
 
@@ -539,7 +613,7 @@ async function saveProfile(e) {
 
 // === Analytics ===
 async function loadAnalytics() {
-  closeActiveLogStream();
+  setPageMeta('Analytics');
   app.innerHTML = '<div class="loading">Loading analytics...</div>';
   const r = await API.getOverview();
   if (!r.ok) { app.innerHTML = '<p class="error">Analytics service unavailable.</p>'; return; }
@@ -558,10 +632,10 @@ async function loadAnalytics() {
   // Sub-navigation
   html += `
     <div class="analytics-nav">
-      <button onclick="loadAuthorStats()">Author Stats</button>
-      <button class="btn-outline" onclick="loadTagCloudView()">Tag Cloud</button>
-      <button class="btn-outline" onclick="loadCommentActivityView()">Comment Activity</button>
-      <button class="btn-outline" onclick="loadRecentPostsFullView()">Recent Posts</button>
+      <button onclick="navigate('/analytics/authors')">Author Stats</button>
+      <button class="btn-outline" onclick="navigate('/analytics/tags')">Tag Cloud</button>
+      <button class="btn-outline" onclick="navigate('/analytics/comments')">Comment Activity</button>
+      <button class="btn-outline" onclick="navigate('/analytics/recent')">Recent Posts</button>
     </div>`;
 
   app.innerHTML = html;
@@ -574,6 +648,7 @@ function renderCard(label, value, unavailable) {
 }
 
 async function loadAuthorStats() {
+  setPageMeta('Author Stats');
   app.innerHTML = '<div class="loading">Loading author stats...</div>';
   const r = await API.getAuthorStats();
   if (!r.ok) { app.innerHTML = '<p class="error">Failed to load author stats.</p>'; return; }
@@ -586,18 +661,19 @@ async function loadAuthorStats() {
     html += '<table class="analytics-table"><thead><tr><th>Author</th><th>Posts</th><th>Comments</th></tr></thead><tbody>';
     for (const a of authors) {
       html += `<tr>
-        <td><a href="#" onclick="loadAuthor(${a.AuthorId}); return false;">${esc(a.DisplayName)}</a></td>
+        <td><a href="/authors/${a.AuthorId}">${esc(a.DisplayName)}</a></td>
         <td>${a.PostCount ?? 0}</td>
         <td>${a.CommentCount ?? 0}</td>
       </tr>`;
     }
     html += '</tbody></table>';
   }
-  html += '<p style="margin-top:1rem"><a href="#" onclick="loadAnalytics(); return false;">&laquo; Analytics</a></p>';
+  html += '<p style="margin-top:1rem"><a href="/analytics">&laquo; Analytics</a></p>';
   app.innerHTML = html;
 }
 
 async function loadTagCloudView() {
+  setPageMeta('Tag Cloud');
   app.innerHTML = '<div class="loading">Loading tag cloud...</div>';
   const r = await API.getTagCloud();
   if (!r.ok) { app.innerHTML = '<p class="error">Failed to load tag cloud.</p>'; return; }
@@ -611,15 +687,16 @@ async function loadTagCloudView() {
     html += '<div class="tag-cloud">';
     for (const t of tags) {
       const size = 0.8 + (t.PostCount || 0) / maxCount * 1.2;
-      html += `<span class="tag-cloud-item" style="font-size:${size.toFixed(2)}rem" onclick="loadPostsByTag(${t.TagId})">${esc(t.Name)} <sup>${t.PostCount || 0}</sup></span> `;
+      html += `<a class="tag-cloud-item" href="/tags/${t.TagId}" style="font-size:${size.toFixed(2)}rem">${esc(t.Name)} <sup>${t.PostCount || 0}</sup></a> `;
     }
     html += '</div>';
   }
-  html += '<p style="margin-top:1rem"><a href="#" onclick="loadAnalytics(); return false;">&laquo; Analytics</a></p>';
+  html += '<p style="margin-top:1rem"><a href="/analytics">&laquo; Analytics</a></p>';
   app.innerHTML = html;
 }
 
 async function loadCommentActivityView() {
+  setPageMeta('Comment Activity');
   app.innerHTML = '<div class="loading">Loading comment activity...</div>';
   const r = await API.getCommentActivity();
   if (!r.ok) { app.innerHTML = '<p class="error">Failed to load comment activity.</p>'; return; }
@@ -636,17 +713,18 @@ async function loadCommentActivityView() {
     html += '<table class="analytics-table"><thead><tr><th>Post</th><th>Comments</th></tr></thead><tbody>';
     for (const p of top) {
       html += `<tr>
-        <td><a href="#" onclick="loadPost(${p.PostId}); return false;">${esc(p.Title)}</a></td>
+        <td><a href="/posts/${p.PostId}">${esc(p.Title)}</a></td>
         <td>${p.CommentCount ?? 0}</td>
       </tr>`;
     }
     html += '</tbody></table>';
   }
-  html += '<p style="margin-top:1rem"><a href="#" onclick="loadAnalytics(); return false;">&laquo; Analytics</a></p>';
+  html += '<p style="margin-top:1rem"><a href="/analytics">&laquo; Analytics</a></p>';
   app.innerHTML = html;
 }
 
 async function loadRecentPostsFullView() {
+  setPageMeta('Recent Posts');
   app.innerHTML = '<div class="loading">Loading recent posts...</div>';
   const r = await API.getRecentPostsFull(10);
   if (!r.ok) { app.innerHTML = '<p class="error">Failed to load recent posts.</p>'; return; }
@@ -666,7 +744,7 @@ async function loadRecentPostsFullView() {
       let authorHtml = '';
       if (p.Author && p.Author.DisplayName) {
         const a = p.Author;
-        authorHtml = `<div class="enriched-author"><a href="#" onclick="loadAuthor(${a.ID}); return false;">${esc(a.DisplayName)}</a>`;
+        authorHtml = `<div class="enriched-author"><a href="/authors/${a.ID}">${esc(a.DisplayName)}</a>`;
         if (a.Bio) authorHtml += ` <span class="enriched-author-bio">&mdash; ${esc(a.Bio)}</span>`;
         authorHtml += '</div>';
       } else {
@@ -679,7 +757,7 @@ async function loadRecentPostsFullView() {
         tagsHtml = '<p class="error" style="margin:.3rem 0">Tags unavailable</p>';
       } else if (tags.length > 0) {
         tagsHtml = '<div class="enriched-tags">' + tags.map(t =>
-          `<span class="tag" onclick="loadPostsByTag(${t.ID})">${esc(t.Name)}</span>`
+          `<a class="tag" href="/tags/${t.ID}">${esc(t.Name)}</a>`
         ).join('') + '</div>';
       }
 
@@ -705,7 +783,7 @@ async function loadRecentPostsFullView() {
 
       html += `
         <div class="post-card enriched-post">
-          <h2><a href="#" onclick="loadPost(${postId}); return false;">${esc(p.Title)}</a></h2>
+          <h2><a href="/posts/${postId}">${esc(p.Title)}</a></h2>
           <div class="post-meta">${date}</div>
           ${authorHtml}
           ${tagsHtml}
@@ -713,7 +791,7 @@ async function loadRecentPostsFullView() {
         </div>`;
     }
   }
-  html += '<p style="margin-top:1rem"><a href="#" onclick="loadAnalytics(); return false;">&laquo; Analytics</a></p>';
+  html += '<p style="margin-top:1rem"><a href="/analytics">&laquo; Analytics</a></p>';
   app.innerHTML = html;
 }
 
@@ -752,6 +830,7 @@ function closeActiveLogStream() {
 
 async function loadLogs() {
   closeActiveLogStream();
+  setPageMeta('Logs');
   app.innerHTML = '<div class="loading">Loading logs...</div>';
   // Render the static page chrome (filters + results placeholder), then fire the initial query.
   app.innerHTML = `
@@ -807,7 +886,7 @@ function prependLogEntry(entry) {
   const lvl = LOG_LEVEL_NAMES[entry.Level] || String(entry.Level);
   const cls = logLevelClass(entry.Level);
   const corrLink = entry.CorrelationId
-    ? `<a href="#" class="log-corr" onclick="loadLogsByCorrelation('${esc(entry.CorrelationId)}'); return false;">${esc(entry.CorrelationId).substring(0, 8)}...</a>`
+    ? `<a href="/logs/correlation/${encodeURIComponent(entry.CorrelationId)}" class="log-corr">${esc(entry.CorrelationId).substring(0, 8)}...</a>`
     : '';
   const tr = document.createElement('tr');
   tr.className = cls + ' log-new';
@@ -891,7 +970,7 @@ function renderLogEntries(entries) {
     const lvl = LOG_LEVEL_NAMES[e.Level] || String(e.Level);
     const cls = logLevelClass(e.Level);
     const corrLink = e.CorrelationId
-      ? `<a href="#" class="log-corr" onclick="loadLogsByCorrelation('${esc(e.CorrelationId)}'); return false;">${esc(e.CorrelationId).substring(0, 8)}...</a>`
+      ? `<a href="/logs/correlation/${encodeURIComponent(e.CorrelationId)}" class="log-corr">${esc(e.CorrelationId).substring(0, 8)}...</a>`
       : '';
     html += `<tr class="${cls}">
       <td class="log-ts">${formatTimestamp(e.Timestamp)}</td>
@@ -906,6 +985,7 @@ function renderLogEntries(entries) {
 }
 
 async function loadLogsByCorrelation(corrId) {
+  setPageMeta('Correlation Trace');
   app.innerHTML = '<div class="loading">Loading correlation trace...</div>';
   const r = await API.logsByCorrelationId(corrId);
   if (!r.ok) {
@@ -931,7 +1011,7 @@ async function loadLogsByCorrelation(corrId) {
     }
     html += '</tbody></table>';
   }
-  html += '<p style="margin-top:1rem"><a href="#" onclick="loadLogs(); return false;">&laquo; Back to logs</a></p>';
+  html += '<p style="margin-top:1rem"><a href="/logs">&laquo; Back to logs</a></p>';
   app.innerHTML = html;
 }
 
