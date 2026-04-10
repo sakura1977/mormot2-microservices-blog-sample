@@ -206,6 +206,21 @@ type
     LogLevel: RawUtf8;
 
     /// <summary>
+    ///   Directory for log files. Relative paths are resolved against the executable directory. Default: 'logs'.
+    /// </summary>
+    LogPath: RawUtf8;
+
+    /// <summary>
+    ///   Number of rotated log files to keep. Default: 5.
+    /// </summary>
+    LogRotateCount: integer;
+
+    /// <summary>
+    ///   Maximum log file size in kilobytes before rotation. Default: 5120 (5 MB).
+    /// </summary>
+    LogRotateSizeKB: integer;
+
+    /// <summary>
     ///   URL of the auth service (reserved for gateway use).
     /// </summary>
     AuthUrl: RawUtf8;
@@ -390,6 +405,12 @@ begin
     Result.Database := 'data.db';
   if Result.LogLevel = '' then
     Result.LogLevel := 'debug';
+  if Result.LogPath = '' then
+    Result.LogPath := 'logs';
+  if Result.LogRotateCount = 0 then
+    Result.LogRotateCount := 5;
+  if Result.LogRotateSizeKB = 0 then
+    Result.LogRotateSizeKB := 5 * 1024;
   if Result.AuthUrl = '' then
     Result.AuthUrl := 'http://localhost:' + PORT_AUTH;
   if Result.UsersUrl = '' then

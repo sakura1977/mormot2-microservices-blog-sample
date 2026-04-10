@@ -171,6 +171,19 @@ A new `/logs` view in the SPA frontend:
 
 The view talks only to the gateway, which proxies `ILogQuery` exactly like the other backend services.
 
+## Log configuration via ms.config
+
+Every service's local log file behavior is fully configurable through `ms.config.master.json`. The relevant fields in `TMicroServiceConfig`:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `LogLevel` | string | `"debug"` | Verbosity: `trace`, `debug`, `info`, or `error` |
+| `LogPath` | string | `"logs"` | Directory for log files (relative to executable, or absolute) |
+| `LogRotateCount` | integer | `5` | Number of rotated backup files to keep |
+| `LogRotateSizeKB` | integer | `5120` | Max file size in KB before rotation (5 MB) |
+
+These values are fetched from `ms.config` at startup and merged over the local config. To give a specific service different settings (e.g. `ms.logs` with larger retention), just change its section in the master JSON.
+
 ## Failure handling
 
 The log client is **best-effort**: if `ms.logs` is down, the queue drops oldest entries when it overflows (capped at 10 000 in memory). The local file logging configured in `TMicroService.InitLogging` keeps running unchanged, so nothing is ever permanently lost. When `ms.logs` comes back up, new entries flow again automatically -- no reconnect logic needed because each batch creates a fresh HTTP call.

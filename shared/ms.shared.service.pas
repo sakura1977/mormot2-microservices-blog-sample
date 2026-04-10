@@ -478,19 +478,23 @@ end;
 
 procedure TMicroService.InitLogging;
 var
-  LogPath: TFileName;
+  LogDir: TFileName;
 begin
-  LogPath := Executable.ProgramFilePath + 'logs';
-  if not DirectoryExists(LogPath) then
-    CreateDir(LogPath);
+  // Resolve log directory: absolute paths (with drive letter or UNC prefix) are used as-is,
+  // relative paths are resolved against the executable directory.
+  LogDir := Utf8ToString(FConfig.LogPath);
+  if ExtractFileDrive(LogDir) = '' then
+    LogDir := Executable.ProgramFilePath + LogDir;
+  if not DirectoryExists(LogDir) then
+    CreateDir(LogDir);
   // TSynLog.Family is a singleton that configures logging for the
   // entire process. Each service gets its own log file via CustomFileName.
   FLogFamily := TSynLog.Family;
-  FLogFamily.DestinationPath := LogPath + PathDelim;
+  FLogFamily.DestinationPath := LogDir + PathDelim;
   FLogFamily.CustomFileName := Utf8ToString(FServiceName);
-  // Rotate after 5 MB, keep 5 old files
-  FLogFamily.RotateFileCount := 5;
-  FLogFamily.RotateFileSizeKB := 5 * 1024;
+  // Rotation settings from config (defaults: 5 files, 5 MB each)
+  FLogFamily.RotateFileCount := FConfig.LogRotateCount;
+  FLogFamily.RotateFileSizeKB := FConfig.LogRotateSizeKB;
   // All threads log to one file (identified by thread name)
   FLogFamily.PerThreadLog := ptIdentifiedInOneFile;
   // Map config string to mORMot2 log level sets
@@ -739,6 +743,12 @@ begin
     Result.Database := aRemote.Database;
   if aRemote.LogLevel <> '' then
     Result.LogLevel := aRemote.LogLevel;
+  if aRemote.LogPath <> '' then
+    Result.LogPath := aRemote.LogPath;
+  if aRemote.LogRotateCount > 0 then
+    Result.LogRotateCount := aRemote.LogRotateCount;
+  if aRemote.LogRotateSizeKB > 0 then
+    Result.LogRotateSizeKB := aRemote.LogRotateSizeKB;
   if aRemote.AuthUrl <> '' then
     Result.AuthUrl := aRemote.AuthUrl;
   if aRemote.UsersUrl <> '' then
