@@ -14,6 +14,7 @@ const routes = [
   { re: /^\/$/,                             handler: ()  => loadPosts(1) },
   { re: /^\/page\/(\d+)$/,                  handler: (m) => loadPosts(parseInt(m[1])) },
   { re: /^\/posts\/(\d+)$/,                 handler: (m) => loadPost(parseInt(m[1])) },
+  { re: /^\/search$/,                       handler: ()  => loadSearch(new URLSearchParams(location.search).get('q') || '') },
   { re: /^\/tags$/,                         handler: ()  => loadTags() },
   { re: /^\/tags\/(\d+)$/,                  handler: (m) => loadPostsByTag(parseInt(m[1])) },
   { re: /^\/authors\/(\d+)$/,               handler: (m) => loadAuthor(parseInt(m[1])) },
@@ -238,6 +239,50 @@ async function submitComment(e, postId) {
     msg.textContent = 'Failed to submit comment.';
     msg.className = 'error';
   }
+}
+
+// === Search ===
+function submitSearch(e) {
+  e.preventDefault();
+  const query = $('#site-search-input').value.trim();
+  if (!query) return;
+  navigate('/search?q=' + encodeURIComponent(query));
+}
+
+async function loadSearch(query) {
+  setPageMeta(query ? `Search: ${query}` : 'Search');
+  // Reflect the query in the header input so the user sees what they just searched for.
+  const input = $('#site-search-input');
+  if (input) input.value = query;
+  if (!query) {
+    app.innerHTML = '<h2>Search</h2><p>Type a query in the search box above to find posts.</p>';
+    return;
+  }
+  app.innerHTML = `<h2>Search results for "${esc(query)}"</h2><div class="loading">Searching...</div>`;
+  const r = await API.searchPosts(query, 50);
+  if (!r.ok) {
+    app.innerHTML = `<h2>Search results for "${esc(query)}"</h2><p class="error">Search failed.</p>`;
+    return;
+  }
+  const posts = Array.isArray(r.data) ? r.data : [];
+  let html = `<h2>Search results for "${esc(query)}"</h2>`;
+  if (posts.length === 0) {
+    html += '<p>No posts matched your query.</p>';
+  } else {
+    html += `<p style="color:var(--text-light)">${posts.length} match${posts.length === 1 ? '' : 'es'}</p>`;
+    html += '<ul class="post-list">';
+    for (const p of posts) {
+      const date = p.PublishedAt ? new Date(p.PublishedAt).toLocaleDateString('en') : '';
+      html += `
+        <li class="post-card">
+          <h2><a href="/posts/${p.ID}">${esc(p.Title)}</a></h2>
+          <div class="post-meta">${date}</div>
+          <p class="post-excerpt">${esc(p.Excerpt || '')}</p>
+        </li>`;
+    }
+    html += '</ul>';
+  }
+  app.innerHTML = html;
 }
 
 // === Tags ===
@@ -1078,62 +1123,6 @@ function esc(str) {
   return div.innerHTML;
 }
 
-// === Markdown subset renderer ===
-// Supports only: h1-h6 (#), bold (**), italic (*), and images limited to our
-// own /media/:id endpoint. Everything else is treated as plain text. The input
-// is HTML-escaped *first*, so no raw HTML can slip through -- the transforms
-// below only re-introduce the specific tags we whitelist.
-//
-// Why hand-rolled instead of a markdown library? This is a demo repo with a
-// strict "no external JS dependencies" rule. The supported surface is tiny,
-// so a handful of regexes over escaped text is both safer and smaller than
-// pulling in a parser.
-function renderMarkdown(src) {
-  if (!src) return '';
-  const escaped = esc(src);
-  const lines = escaped.split(/\r?\n/);
-  const out = [];
-  let paragraph = [];
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return;
-    const joined = paragraph.join(' ');
-    out.push('<p>' + applyInline(joined) + '</p>');
-    paragraph = [];
-  };
-
-  for (const line of lines) {
-    if (line.trim() === '') {
-      flushParagraph();
-      continue;
-    }
-    // # Heading, ## Heading, ... ###### Heading (1-6 hashes, then at least one space)
-    const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) {
-      flushParagraph();
-      const level = heading[1].length;
-      out.push(`<h${level}>${applyInline(heading[2])}</h${level}>`);
-      continue;
-    }
-    paragraph.push(line);
-  }
-  flushParagraph();
-  return out.join('\n');
-}
-
-// Inline transforms run on already-escaped text. Order matters: images first
-// (they contain parentheses that could confuse bold/italic), then bold (**)
-// before italic (*) because ** would otherwise be read as two * markers.
-function applyInline(text) {
-  // ![alt](/media/42) -- only our own media endpoint is allowed; anything else
-  // is left as plain escaped text. The alt text was already escaped.
-  text = text.replace(
-    /!\[([^\]]*)\]\(\/media\/(\d+)\)/g,
-    (_m, alt, id) => `<img src="/media/${id}" alt="${alt}" class="md-img">`
-  );
-  // **bold**
-  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  // *italic*
-  text = text.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
-  return text;
-}
+// renderMarkdown() lives in markdown.js so it can be unit-tested from Node
+// (see test/js/renderMarkdown.test.js). It is loaded via a <script> tag in
+// index.html before app.js and attaches itself to the window object.

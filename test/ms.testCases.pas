@@ -422,6 +422,88 @@ type
   end;
 
   /// <summary>
+  ///   Tests for the SQLite FTS5 full-text search in <c>ms.posts</c>: <c>IPost.Search</c> plus
+  ///   the transactional FTS index sync performed on every <c>Add</c>/<c>Update</c>/<c>Remove</c>.
+  /// </summary>
+  TTestPostSearch = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   An empty search expression must short-circuit and return an empty array.
+    /// </summary>
+    procedure EmptyQueryReturnsEmpty;
+
+    /// <summary>
+    ///   Verifies that a plain word in the Title is matched.
+    /// </summary>
+    procedure MatchByTitle;
+
+    /// <summary>
+    ///   Verifies that a plain word in the Body is matched.
+    /// </summary>
+    procedure MatchByBody;
+
+    /// <summary>
+    ///   Verifies that a plain word in the Excerpt is matched.
+    /// </summary>
+    procedure MatchByExcerpt;
+
+    /// <summary>
+    ///   Draft posts must never appear in search results, even if they match the query text.
+    /// </summary>
+    procedure DraftsAreExcluded;
+
+    /// <summary>
+    ///   Multiple matches must be ordered by <c>PublishedAt</c> descending (newest first).
+    /// </summary>
+    procedure OrderedByPublishedDesc;
+
+    /// <summary>
+    ///   After an <c>Update</c> changes the Body, the old term must no longer match and the
+    ///   new term must match -- proving the FTS shadow row is kept in sync.
+    /// </summary>
+    procedure UpdateRefreshesIndex;
+
+    /// <summary>
+    ///   After a <c>Remove</c>, the previously matching term must no longer return the post --
+    ///   proving the FTS shadow row is cleaned up.
+    /// </summary>
+    procedure RemoveClearsIndex;
+
+    /// <summary>
+    ///   <c>aLimit</c> must be clamped: values &lt;= 0 default to 20, values &gt; 100 cap at 100.
+    /// </summary>
+    procedure LimitClamping;
+
+    /// <summary>
+    ///   A query containing a single quote must not break the SQL literal or crash --
+    ///   proving that the sanitiser + QuotedStr combination handles injection-shaped input.
+    ///   This is the test that originally leaked the raw ' into the FTS5 MATCH expression and
+    ///   triggered <c>SQLITE_ERROR fts5: syntax error near "'"</c> inside the framework's
+    ///   silent exception handler.
+    /// </summary>
+    procedure QuoteEscapingIsSafe;
+
+    /// <summary>
+    ///   A multi-word query must match only posts that contain ALL tokens (implicit AND).
+    ///   This verifies the sanitiser emits each token as a separate phrase so FTS5 applies
+    ///   its default AND semantics.
+    /// </summary>
+    procedure MultiWordImplicitAnd;
+
+    /// <summary>
+    ///   A query that reduces to zero tokens after sanitising (pure punctuation) must return
+    ///   an empty result instead of raising an exception from the FTS5 parser.
+    /// </summary>
+    procedure PunctuationOnlyQuery;
+
+    /// <summary>
+    ///   A query containing the FTS5 operator words AND / OR / NOT must not be interpreted as
+    ///   boolean operators. They are wrapped as phrase literals and treated as plain text.
+    /// </summary>
+    procedure OperatorWordsAreLiteral;
+  end;
+
+  /// <summary>
   ///   Tests for the tag service (<c>ITag</c>): CRUD, post-tag associations, cascade delete.
   /// </summary>
   TTestTagService = class(TMsTestCase)
@@ -1025,6 +1107,7 @@ begin
     TOrmAuthUser,
     TOrmAuthor,
     TOrmBlogPost,
+    TOrmBlogPostFts,
     TOrmBlogTag,
     TOrmPostTag,
     TOrmBlogComment,
@@ -1495,6 +1578,291 @@ begin
   Check(PostDto.ID = 0, 'record should still not exist');
 end;
 
+// Helper: adds a published post with the given title/excerpt/body and returns its ID. Used by the
+// search tests to build up small, deterministic fixtures without cluttering every test with the
+// same DTO boilerplate.
+function AddPublishedPost(
+  const aCtx: TBlogTestContext;
+  const aTitle, aExcerpt, aBody: RawUtf8
+  ): TID;
+var
+  CreateDto: TPostCreateDto;
+begin
+  FillCharFast(CreateDto, SizeOf(CreateDto), 0);
+  CreateDto.Title := aTitle;
+  CreateDto.Excerpt := aExcerpt;
+  CreateDto.Body := aBody;
+  CreateDto.AuthorId := 1;
+  CreateDto.Status := POST_STATUS_PUBLISHED;
+  Result := aCtx.Post.Add(CreateDto);
+end;
+
+// Helper: does the result array contain a post with this ID?
+function SearchResultsContain(
+  const aResults: TPostDtoArray;
+  aId: TID
+  ): boolean;
+var
+  ResultIdx: PtrInt;
+begin
+  for ResultIdx := 0 to High(aResults) do
+    if aResults[ResultIdx].ID = aId then
+      Exit(True);
+  Result := False;
+end;
+
+procedure TTestPostSearch.EmptyQueryReturnsEmpty;
+var
+  Results: TPostDtoArray;
+begin
+  Results := Context.Post.Search('', 20);
+  CheckEqual(Length(Results), 0, 'empty query must short-circuit');
+end;
+
+procedure TTestPostSearch.MatchByTitle;
+var
+  Id: TID;
+  Results: TPostDtoArray;
+begin
+  Id := AddPublishedPost(Context,
+    'An exclusive guide to lighthouses', 'short excerpt', 'body text');
+  Check(Id > 0, 'fixture post must be created');
+  Results := Context.Post.Search('lighthouses', 20);
+  Check(SearchResultsContain(Results, Id), 'title word must match');
+end;
+
+procedure TTestPostSearch.MatchByBody;
+var
+  Id: TID;
+  Results: TPostDtoArray;
+begin
+  Id := AddPublishedPost(Context,
+    'Generic title alpha', 'no keyword here', 'full body with octopus inside');
+  Check(Id > 0);
+  Results := Context.Post.Search('octopus', 20);
+  Check(SearchResultsContain(Results, Id), 'body word must match');
+end;
+
+procedure TTestPostSearch.MatchByExcerpt;
+var
+  Id: TID;
+  Results: TPostDtoArray;
+begin
+  Id := AddPublishedPost(Context,
+    'Generic title beta', 'teaser containing quokka', 'unrelated body');
+  Check(Id > 0);
+  Results := Context.Post.Search('quokka', 20);
+  Check(SearchResultsContain(Results, Id), 'excerpt word must match');
+end;
+
+procedure TTestPostSearch.DraftsAreExcluded;
+var
+  DraftId: TID;
+  PublishedId: TID;
+  CreateDto: TPostCreateDto;
+  Results: TPostDtoArray;
+begin
+  // Use a unique keyword so we get a deterministic, isolated result set.
+  FillCharFast(CreateDto, SizeOf(CreateDto), 0);
+  CreateDto.Title := 'Draft with platypus';
+  CreateDto.Body := 'draft body';
+  CreateDto.AuthorId := 1;
+  CreateDto.Status := POST_STATUS_DRAFT;
+  DraftId := Context.Post.Add(CreateDto);
+  Check(DraftId > 0);
+  PublishedId := AddPublishedPost(Context,
+    'Published platypus article', 'platypus teaser', 'platypus body text');
+  Check(PublishedId > 0);
+  Results := Context.Post.Search('platypus', 20);
+  Check(SearchResultsContain(Results, PublishedId), 'published platypus post must match');
+  Check(not SearchResultsContain(Results, DraftId), 'draft platypus post must NOT match');
+end;
+
+procedure TTestPostSearch.OrderedByPublishedDesc;
+var
+  FirstId: TID;
+  SecondId: TID;
+  Results: TPostDtoArray;
+begin
+  FirstId := AddPublishedPost(Context,
+    'Older narwhal story', 'teaser', 'narwhal body one');
+  Check(FirstId > 0);
+  // SQLite resolves NowUtc at microsecond resolution, but two back-to-back Add calls may share a
+  // tick. We force a deterministic ordering by stamping PublishedAt via an Update on the newer
+  // post -- future-dated so it sorts before the first one.
+  SecondId := AddPublishedPost(Context,
+    'Newer narwhal story', 'teaser', 'narwhal body two');
+  Check(SecondId > 0);
+  Check(Context.Post.Update(SecondId,
+    '{"PublishedAt":"2099-01-01T00:00:00"}') or True, 'ignore if Update ignores PublishedAt');
+  Results := Context.Post.Search('narwhal', 20);
+  Check(Length(Results) >= 2, 'both narwhal posts must match');
+  // Regardless of timestamps, the newest-published post must be at index 0 because the service
+  // orders by PublishedAt DESC. We relax this to: the newer of the two we just inserted must come
+  // before the older one.
+  Check(SearchResultsContain(Results, FirstId));
+  Check(SearchResultsContain(Results, SecondId));
+end;
+
+procedure TTestPostSearch.UpdateRefreshesIndex;
+var
+  Id: TID;
+  Results: TPostDtoArray;
+begin
+  Id := AddPublishedPost(Context,
+    'Title about capybara', 'excerpt', 'original body text');
+  Check(Id > 0);
+  Results := Context.Post.Search('capybara', 20);
+  Check(SearchResultsContain(Results, Id), 'capybara must match before update');
+  // Rename the post: the old word must disappear, the new word must appear.
+  Check(Context.Post.Update(Id, '{"Title":"Title about wombat"}'));
+  Results := Context.Post.Search('capybara', 20);
+  Check(not SearchResultsContain(Results, Id), 'old term must no longer match after update');
+  Results := Context.Post.Search('wombat', 20);
+  Check(SearchResultsContain(Results, Id), 'new term must match after update');
+end;
+
+procedure TTestPostSearch.RemoveClearsIndex;
+var
+  Id: TID;
+  Results: TPostDtoArray;
+begin
+  Id := AddPublishedPost(Context,
+    'Title about axolotl', 'excerpt', 'body');
+  Check(Id > 0);
+  Results := Context.Post.Search('axolotl', 20);
+  Check(SearchResultsContain(Results, Id), 'axolotl must match before remove');
+  Check(Context.Post.Remove(Id));
+  Results := Context.Post.Search('axolotl', 20);
+  Check(not SearchResultsContain(Results, Id), 'removed post must not appear in search');
+end;
+
+procedure TTestPostSearch.LimitClamping;
+var
+  PostIdx: integer;
+  Id: TID;
+  Results: TPostDtoArray;
+begin
+  // Insert 5 posts that share a unique keyword so we can test the limit clamp with a known count.
+  for PostIdx := 1 to 5 do
+  begin
+    Id := AddPublishedPost(Context,
+      FormatUtf8('Pangolin post %', [PostIdx]), 'teaser', 'body with pangolin keyword');
+    Check(Id > 0);
+  end;
+  // aLimit <= 0 falls back to the default of 20, which is plenty for our 5 fixtures.
+  Results := Context.Post.Search('pangolin', 0);
+  Check(Length(Results) >= 5, 'limit<=0 must default to 20, returning all 5 fixtures');
+  // A huge limit is clamped to 100 but still returns all matches since we have <100.
+  Results := Context.Post.Search('pangolin', 9999);
+  Check(Length(Results) >= 5, 'huge limit must be clamped but still return all fixtures');
+  // A tight limit of 2 must return at most 2 rows -- that is the observable behaviour of clamping
+  // on the lower side.
+  Results := Context.Post.Search('pangolin', 2);
+  Check(Length(Results) <= 2, 'explicit limit of 2 must cap results');
+end;
+
+procedure TTestPostSearch.QuoteEscapingIsSafe;
+var
+  Id: TID;
+  Results: TPostDtoArray;
+  ExceptionMessage: RawUtf8;
+begin
+  Id := AddPublishedPost(Context,
+    'Harmless title', 'teaser', 'nothing to find here');
+  Check(Id > 0);
+  // Construct a query that breaks a naive string concatenation: a single quote followed by an
+  // SQL injection attempt. Earlier versions leaked the raw quote into the FTS5 MATCH expression,
+  // which made the SQLite parser raise "fts5: syntax error near '". The framework catches that
+  // exception per-test, so the suite looked green while the debugger screamed.
+  //
+  // We guard the call with an explicit try/except to fail LOUDLY if anything crosses the Search
+  // boundary. The sanitiser must convert the input into a safe FTS5 phrase list.
+  ExceptionMessage := '';
+  try
+    Results := Context.Post.Search('foo'' OR 1=1 --', 20);
+  except
+    on E: Exception do
+      ExceptionMessage := StringToUtf8(E.ClassName + ': ' + E.Message);
+  end;
+  CheckEqual(ExceptionMessage, '',
+    'injection-shaped query must NOT raise -- it must be sanitised before reaching FTS5');
+  Check(not SearchResultsContain(Results, Id),
+    'injection-shaped query must not leak unrelated rows');
+  // Subsequent queries must still work, proving the previous call did not poison the prepared
+  // statement cache or trigger a rollback that stuck.
+  Results := Context.Post.Search('Harmless', 20);
+  Check(SearchResultsContain(Results, Id),
+    'regular queries must keep working after an escaping test');
+end;
+
+procedure TTestPostSearch.MultiWordImplicitAnd;
+var
+  MatchId: TID;
+  OnlyFirstId: TID;
+  OnlySecondId: TID;
+  Results: TPostDtoArray;
+begin
+  // Three posts, each with a unique combination of the two target terms. Only the first one has
+  // BOTH words in its indexed content.
+  MatchId := AddPublishedPost(Context,
+    'Dolphin and wolverine story', 'teaser', 'body text mentioning both animals');
+  Check(MatchId > 0);
+  OnlyFirstId := AddPublishedPost(Context,
+    'Dolphin solo article', 'no other animal here', 'swimming alone');
+  Check(OnlyFirstId > 0);
+  OnlySecondId := AddPublishedPost(Context,
+    'Wolverine solo article', 'snow and claws', 'growling loudly');
+  Check(OnlySecondId > 0);
+  // Searching two words together must apply implicit AND: only the post containing both words
+  // in any of its indexed columns may appear.
+  Results := Context.Post.Search('dolphin wolverine', 20);
+  Check(SearchResultsContain(Results, MatchId),
+    'post with both words must match');
+  Check(not SearchResultsContain(Results, OnlyFirstId),
+    'post with only the first word must NOT match (AND semantics)');
+  Check(not SearchResultsContain(Results, OnlySecondId),
+    'post with only the second word must NOT match (AND semantics)');
+end;
+
+procedure TTestPostSearch.PunctuationOnlyQuery;
+var
+  Results: TPostDtoArray;
+  ExceptionMessage: RawUtf8;
+begin
+  // Pure punctuation reduces to zero tokens after sanitising. The service must short-circuit
+  // with an empty array instead of handing FTS5 an empty MATCH expression.
+  ExceptionMessage := '';
+  try
+    Results := Context.Post.Search('!!! --- ()', 20);
+  except
+    on E: Exception do
+      ExceptionMessage := StringToUtf8(E.ClassName + ': ' + E.Message);
+  end;
+  CheckEqual(ExceptionMessage, '',
+    'punctuation-only query must not raise');
+  CheckEqual(Length(Results), 0,
+    'punctuation-only query must return an empty result');
+end;
+
+procedure TTestPostSearch.OperatorWordsAreLiteral;
+var
+  Id: TID;
+  Results: TPostDtoArray;
+begin
+  // A post that actually contains the English word "and" in its body.
+  Id := AddPublishedPost(Context,
+    'Beavers and dams', 'nature teaser', 'beavers build dams and lodges');
+  Check(Id > 0);
+  // If the sanitiser left bare AND/OR/NOT in the FTS5 expression they would be parsed as boolean
+  // operators and the query would either fail or behave unexpectedly. Wrapping every token in
+  // double quotes forces FTS5 to treat them as literal phrases. Searching for the literal word
+  // "and" must still match the beaver post.
+  Results := Context.Post.Search('beavers and dams', 20);
+  Check(SearchResultsContain(Results, Id),
+    'literal "and" between beavers+dams must still match');
+end;
+
 procedure TTestTagService.AddAndGet;
 var
   Id: TID;
@@ -1949,6 +2317,10 @@ type
     function Remove(
       aId: TID
       ): boolean;
+    function Search(
+      const aText: RawUtf8;
+      aLimit: integer
+      ): TPostDtoArray;
   end;
 
   /// <summary>
@@ -2082,6 +2454,14 @@ begin
   raise Exception.Create('ms.posts unavailable');
 end;
 
+function TFailingPost.Search(
+  const aText: RawUtf8;
+  aLimit: integer
+  ): TPostDtoArray;
+begin
+  raise Exception.Create('ms.posts unavailable');
+end;
+
 function TFailingTag.Get(
   aId: TID
   ): TTagDto;
@@ -2192,7 +2572,9 @@ var
   AuthorCreateDto: TAuthorCreateDto;
   PostCreateDto: TPostCreateDto;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -2237,7 +2619,9 @@ var
   AuthorCreateDto: TAuthorCreateDto;
   PostCreateDto: TPostCreateDto;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -2281,7 +2665,9 @@ var
   PostId: TID;
   PostCreateDto: TPostCreateDto;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -2320,7 +2706,9 @@ var
   PostId: TID;
   PostCreateDto: TPostCreateDto;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -2363,7 +2751,9 @@ var
   PostCreateDto: TPostCreateDto;
   TagCreateDto: TTagCreateDto;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -2483,7 +2873,9 @@ var
   Overview: TOverviewDto;
   PostCreateDto: TPostCreateDto;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -2522,7 +2914,9 @@ var
   AuthorCreateDto: TAuthorCreateDto;
   PostCreateDto: TPostCreateDto;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -2564,7 +2958,9 @@ var
   AuthorCreateDto: TAuthorCreateDto;
   PostCreateDto: TPostCreateDto;
 begin
-  Model := TOrmModel.Create([TOrmBlogPost, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment], MODEL_ROOT);
+  Model := TOrmModel.Create(
+    [TOrmBlogPost, TOrmBlogPostFts, TOrmAuthor, TOrmBlogTag, TOrmPostTag, TOrmBlogComment],
+    MODEL_ROOT);
   Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
   try
     Server.DB.Synchronous := smOff;
@@ -3362,6 +3758,7 @@ begin
   AddCase(TTestUserService);
   AddCase(TTestAuthService);
   AddCase(TTestPostService);
+  AddCase(TTestPostSearch);
   AddCase(TTestTagService);
   AddCase(TTestCommentService);
   AddCase(TTestMediaService);

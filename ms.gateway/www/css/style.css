@@ -44,6 +44,16 @@ a:hover { text-decoration: underline; }
 .logo:hover { text-decoration: none; }
 #main-nav a { margin-left: 1.5rem; color: var(--text-light); font-size: .9rem; }
 #main-nav a:hover { color: var(--primary); text-decoration: none; }
+.site-search { flex: 1; max-width: 360px; margin: 0 1.5rem; }
+.site-search input {
+  width: 100%;
+  padding: .4rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: .9rem;
+  background: #f9fafb;
+}
+.site-search input:focus { outline: none; border-color: var(--primary); background: var(--surface); }
 
 /* === Main === */
 main { flex: 1; padding: 2rem 0; }

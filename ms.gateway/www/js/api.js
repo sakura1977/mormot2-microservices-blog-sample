@@ -270,6 +270,12 @@ const API = {
   async deletePost(id) {
     return soaCall('Post', 'Remove', [id]);
   },
+  async searchPosts(text, limit = 20) {
+    const r = await soaCall('Post', 'Search', [text, limit]);
+    if (r.ok) r.data = typeof r.data.Result === 'string'
+      ? JSON.parse(r.data.Result) : r.data.Result;
+    return r;
+  },
 
   // --- Tags ---
   async getTags() {

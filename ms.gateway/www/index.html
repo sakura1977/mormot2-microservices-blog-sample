@@ -11,6 +11,9 @@
   <header class="site-header">
     <div class="container">
       <a href="/" class="logo">Blog</a>
+      <form class="site-search" onsubmit="submitSearch(event)">
+        <input type="search" id="site-search-input" placeholder="Search posts..." aria-label="Search posts">
+      </form>
       <nav id="main-nav">
         <a href="/">Home</a>
         <a href="/tags">Tags</a>
@@ -100,6 +103,7 @@
   </footer>
 
   <script src="/js/api.js"></script>
+  <script src="/js/markdown.js"></script>
   <script src="/js/app.js"></script>
 </body>
 </html>

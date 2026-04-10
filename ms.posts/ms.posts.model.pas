@@ -8,6 +8,10 @@
 ///     resolved at the gateway level, not in the ORM.
 ///   - Integer status codes (draft/published/archived) as a simple
 ///     state machine alternative to enums.
+///   - Parallel <c>TOrmBlogPostFts</c> SQLite FTS5 virtual table over
+///     Title, Excerpt and Body for full-text search. Kept in sync with
+///     <c>TOrmBlogPost</c> by the service layer inside a single
+///     transaction per write.
 ///
 ///   Named <c>TOrmBlogPost</c> (not TOrmPost) to avoid a routing
 ///   conflict with the <c>IPost</c> SOA interface.
@@ -125,6 +129,41 @@ type
     /// </summary>
     property UpdatedAt: TDateTime
       read FUpdatedAt write FUpdatedAt;
+  end;
+
+  /// <summary>
+  ///   Parallel FTS5 virtual table indexing <c>Title</c>, <c>Excerpt</c> and <c>Body</c> of every
+  ///   <c>TOrmBlogPost</c>. Rows share the same <c>RowID</c> as the backing post record, so a join
+  ///   is a straight <c>RowID IN (...)</c> subquery.
+  ///
+  ///   mORMot2 maps this class to <c>CREATE VIRTUAL TABLE BlogPostFts USING fts5(Title, Excerpt, Body)</c>
+  ///   automatically because the class derives from <c>TOrmFts5</c>. A MATCH without a column prefix
+  ///   searches all three columns; <c>Title: word</c> restricts the match to the title.
+  /// </summary>
+  TOrmBlogPostFts = class(TOrmFts5)
+  private
+    FTitle: RawUtf8;
+    FExcerpt: RawUtf8;
+    FBody: RawUtf8;
+  published
+
+    /// <summary>
+    ///   Indexed title text. Mirrors <c>TOrmBlogPost.Title</c>.
+    /// </summary>
+    property Title: RawUtf8
+      read FTitle write FTitle;
+
+    /// <summary>
+    ///   Indexed excerpt text. Mirrors <c>TOrmBlogPost.Excerpt</c>.
+    /// </summary>
+    property Excerpt: RawUtf8
+      read FExcerpt write FExcerpt;
+
+    /// <summary>
+    ///   Indexed body text. Mirrors <c>TOrmBlogPost.Body</c>.
+    /// </summary>
+    property Body: RawUtf8
+      read FBody write FBody;
   end;
 
 implementation

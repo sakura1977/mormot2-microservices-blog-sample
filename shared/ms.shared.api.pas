@@ -1293,6 +1293,28 @@ type
     function Remove(
       aId: TID
       ): boolean;
+
+    /// <summary>
+    ///   Full-text search across the Title, Excerpt and Body columns using SQLite FTS5.
+    ///   Only published posts are returned. Matches are ordered by post publication date
+    ///   descending (newest first), not by FTS rank, to keep the UX consistent with the
+    ///   home feed.
+    /// </summary>
+    /// <param name="aText">
+    ///   The FTS5 match expression. Callers typically pass plain words or phrases;
+    ///   the service quotes and sanitises the input before handing it to FTS5.
+    /// </param>
+    /// <param name="aLimit">
+    ///   Maximum rows to return. Clamped to 1..100.
+    /// </param>
+    /// <returns>
+    ///   Matching posts sorted by <c>PublishedAt</c> descending. Empty array if
+    ///   <c>aText</c> is empty or no matches were found.
+    /// </returns>
+    function Search(
+      const aText: RawUtf8;
+      aLimit: integer
+      ): TPostDtoArray;
   end;
 
   /// <summary>
