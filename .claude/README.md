@@ -24,6 +24,7 @@ Microservice-based blog system with **Delphi 13** and **mORMot2**.
 | [correlation-ids.md](correlation-ids.md) | `X-Correlation-Id` propagation, threadvar, `OnBeforeCall` hook, logging |
 | [central-logging.md](central-logging.md) | `ms.logs` service, `EchoCustom` shipper, SQLite FTS5, `ILogIngestion` / `ILogQuery` |
 | [event-driven.md](event-driven.md) | Interface-based callbacks over WebSockets, live log tail, `ILogStream`, broker pattern, `synopsebin` / `synopsejson` |
+| [event-bus.md](event-bus.md) | `ms.events` domain-event bus: persistent outbox, consumer cursors, replay, buffered producer client, cross-service cascade pipeline (`PostDeleted` → `ms.comments`), failure modes, test layers |
 | [spa-routing.md](spa-routing.md) | Client-side routing via the History API, SPA fallback in the gateway, route table, link interceptor for shareable URLs |
 | [media-and-markdown.md](media-and-markdown.md) | Media upload flow, `GET /media/:id` binary passthrough route, safe Markdown subset renderer (headings, bold, italic, images) |
 | [posts-search.md](posts-search.md) | SQLite FTS5 full-text search on posts: parallel virtual table, transactional write sync, backfill, frontend search bar and `/search?q=...` route |

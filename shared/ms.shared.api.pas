@@ -731,6 +731,13 @@ type
     ///   True if the comments service was unreachable.
     /// </summary>
     CommentsUnavailable: boolean;
+
+    /// <summary>
+    ///   Number of <c>PostPublished</c> events observed on the event bus since analytics started
+    ///   (SPEC #22 / PLAN #23 task T12). Resets to 0 on every analytics process restart because
+    ///   the stage-1 bus is in-memory. Stage 2 will keep the counter durable across restarts.
+    /// </summary>
+    PostsPublishedViaEvents: Int64;
   end;
 
   /// <summary>
@@ -1857,6 +1864,185 @@ type
       );
   end;
 
+  /// <summary>
+  ///   Event-bus payload record transported across service boundaries and WebSocket fan-out.
+  ///   Introduced with SPEC #22 / PLAN #23 (task T06). The <c>SchemaVersion</c> field is mandatory
+  ///   from day one so that later payload-shape changes have a migration path.
+  /// </summary>
+  TEventDto = packed record
+  public
+    /// <summary>
+    ///   Outbox row identifier. Zero before persistence (stage 1 / in-memory buffer), assigned by
+    ///   SQLite when the event is written to <c>TOrmEventOutbox</c> (stage 2).
+    /// </summary>
+    ID: TID;
+
+    /// <summary>
+    ///   Logical event type, e.g. <c>'PostPublished'</c>. Free-form string; consumers dispatch on it.
+    /// </summary>
+    EventType: RawUtf8;
+
+    /// <summary>
+    ///   Opaque JSON payload. Shape is owned by the producing service and versioned via
+    ///   <c>SchemaVersion</c>.
+    /// </summary>
+    PayloadJson: RawJson;
+
+    /// <summary>
+    ///   Name of the producing service (<c>SERVICE_POSTS</c>, <c>SERVICE_COMMENTS</c>, ...), used
+    ///   for filtering, auditing and log correlation.
+    /// </summary>
+    ProducerService: RawUtf8;
+
+    /// <summary>
+    ///   Timestamp when the event was accepted by the bus (UTC).
+    /// </summary>
+    CreatedAt: TDateTime;
+
+    /// <summary>
+    ///   Correlation ID of the originating request, propagated so downstream log lines can be joined
+    ///   with the producer's trace. Empty if no request context was active at publish time.
+    /// </summary>
+    CorrelationId: RawUtf8;
+
+    /// <summary>
+    ///   Payload schema revision. Start at 1; increment on breaking payload changes and handle the
+    ///   old value explicitly on the consumer side.
+    /// </summary>
+    SchemaVersion: Integer;
+  end;
+
+  /// <summary>
+  ///   Dynamic array of <c>TEventDto</c> used for catch-up replies (stage 2).
+  /// </summary>
+  TEventDtoArray = array of TEventDto;
+
+const
+  /// <summary>
+  ///   Canonical event-type name for "a blog post was just published". Producer:
+  ///   <c>ms.posts</c>. Payload schema v1: <c>{ "postId": TID, "title": string, "slug": string,
+  ///   "authorId": TID }</c>. Consumers: <c>ms.analytics</c> (publish counter).
+  /// </summary>
+  EVENT_POST_PUBLISHED = 'PostPublished';
+
+  /// <summary>
+  ///   Canonical event-type name for "a blog post was deleted". Producer: <c>ms.posts</c>.
+  ///   Payload schema v1: <c>{ "postId": TID, "slug": string, "deletedAt": ISO-8601-UTC }</c>.
+  ///   Consumers must treat replays as no-ops -- the cascade in <c>ms.comments</c> uses
+  ///   <c>DELETE WHERE PostId=?</c> which is naturally idempotent. Introduced by ADR-0001
+  ///   (cross-service cascades via domain events).
+  /// </summary>
+  EVENT_POST_DELETED = 'PostDeleted';
+
+  /// <summary>
+  ///   Current schema version emitted by <c>ms.posts</c> for both <c>EVENT_POST_PUBLISHED</c>
+  ///   and <c>EVENT_POST_DELETED</c>. Bump on breaking payload changes; consumers must keep
+  ///   handling the old version explicitly during the transition.
+  /// </summary>
+  EVENT_SCHEMA_POSTS_V1 = 1;
+
+type
+
+  /// <summary>
+  ///   Producer-side API of the event bus. Services call <c>Publish</c> synchronously; the bus assigns
+  ///   an <c>ID</c> (stage 1: ring-buffer sequence, stage 2: outbox RowID) and fans the event out to
+  ///   all current subscribers. Not auto-installed into every service -- producers instantiate their
+  ///   own client on demand (decision M0/T03).
+  /// </summary>
+  IEventPublisher = interface(IInvokable)
+    ['{3C4D5E6F-7A8B-9C0D-1E2F-3A4B5C6D7E8F}']
+
+    /// <summary>
+    ///   Publishes a new event. Returns the bus-assigned <c>ID</c> so callers can reference the
+    ///   event later (e.g. for debugging via the correlation trail).
+    /// </summary>
+    /// <param name="aEventType">
+    ///   Logical type name, e.g. <c>'PostPublished'</c>.
+    /// </param>
+    /// <param name="aPayloadJson">
+    ///   JSON payload. The bus does not validate the shape.
+    /// </param>
+    /// <param name="aProducerService">
+    ///   Name of the calling service (<c>SERVICE_POSTS</c>, ...). Used for traceability and stage-2
+    ///   outbox metadata.
+    /// </param>
+    /// <param name="aSchemaVersion">
+    ///   Payload schema version. Producers start at 1 and bump on breaking changes.
+    /// </param>
+    /// <returns>
+    ///   The event <c>ID</c> assigned by the bus.
+    /// </returns>
+    function Publish(
+      const aEventType: RawUtf8;
+      const aPayloadJson: RawJson;
+      const aProducerService: RawUtf8;
+      aSchemaVersion: Integer
+      ): TID;
+  end;
+
+  /// <summary>
+  ///   Server-to-client callback used by <c>IEventStream</c> to push events to subscribers over
+  ///   the persistent WebSocket connection (binary protocol for service-to-service, JSON for
+  ///   browsers). Same lifecycle contract as <c>ILogStreamCallback</c>.
+  /// </summary>
+  IEventStreamCallback = interface(IInvokable)
+    ['{4D5E6F7A-8B9C-0D1E-2F3A-4B5C6D7E8F90}']
+
+    /// <summary>
+    ///   Invoked once per fan-out event. The subscriber runs on its own thread; the service uses
+    ///   <c>optExecLockedPerInterface</c> so events for a given subscriber are serialized.
+    /// </summary>
+    procedure OnEvent(
+      const aEvent: TEventDto
+      );
+  end;
+
+  /// <summary>
+  ///   Pub/sub interface of the event bus. Subscribers name themselves (so stage-2 cursors can be
+  ///   persisted per consumer) and indicate from which event ID they want to receive.
+  ///   <list>
+  ///     <item><c>aFromEventId = 0</c> -- live-only, no catch-up.</item>
+  ///     <item><c>aFromEventId &gt; 0</c> -- catch-up from that ID, then live. Raises on stage 1 if the
+  ///       ID is no longer in the ring buffer.</item>
+  ///     <item><c>aFromEventId = -1</c> (stage 2) -- resume from the stored consumer cursor.</item>
+  ///   </list>
+  ///   <c>Acknowledge</c> advances the consumer cursor in stage 2; stage 1 ignores it (the method
+  ///   exists from the start so consumers do not have to change when persistence is added).
+  /// </summary>
+  IEventStream = interface(IServiceWithCallbackReleased)
+    ['{5E6F7A8B-9C0D-1E2F-3A4B-5C6D7E8F9012}']
+
+    /// <summary>
+    ///   Registers a callback to receive events. The consumer name is free-form but must be stable
+    ///   across reconnects (used as cursor key in stage 2).
+    /// </summary>
+    procedure Subscribe(
+      const aConsumerName: RawUtf8;
+      aFromEventId: TID;
+      const aCallback: IEventStreamCallback
+      );
+
+    /// <summary>
+    ///   Batched acknowledgement: the consumer confirms it has durably processed every event up to
+    ///   and including <c>aLastAckedId</c>. Stage 1 (ring buffer) treats this as a no-op; stage 2
+    ///   upserts <c>TOrmConsumerCursor</c> for <c>aConsumerName</c> so a later
+    ///   <c>Subscribe(name, -1, cb)</c> resumes from <c>aLastAckedId + 1</c>. The consumer name
+    ///   is passed explicitly because the SOA call frame has no callback identity to correlate.
+    /// </summary>
+    procedure Acknowledge(
+      const aConsumerName: RawUtf8;
+      aLastAckedId: TID
+      );
+
+    /// <summary>
+    ///   Explicit unsubscribe. Framework-driven cleanup on WebSocket disconnect is the norm; this is
+    ///   provided for tests and deterministic shutdown.
+    /// </summary>
+    procedure Unsubscribe(
+      const aCallback: IEventStreamCallback
+      );
+  end;
+
 implementation
 
 initialization
@@ -1906,5 +2092,14 @@ initialization
   TInterfaceFactory.RegisterInterfaces([
     TypeInfo(ILogStream),
     TypeInfo(ILogStreamCallback)]);
+
+  // Event bus (SPEC #22 / PLAN #23). Same pre-registration requirement as the log stream: the
+  // callback parameter type must be known to TInterfaceFactory before the first Subscribe call.
+  Rtti.RegisterType(TypeInfo(TEventDto));
+  Rtti.RegisterType(TypeInfo(TEventDtoArray));
+  TInterfaceFactory.RegisterInterfaces([
+    TypeInfo(IEventPublisher),
+    TypeInfo(IEventStream),
+    TypeInfo(IEventStreamCallback)]);
 
 end.

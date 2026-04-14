@@ -92,6 +92,14 @@ type
     FCommentsBreaker: TCircuitBreaker;
 
     /// <summary>
+    ///   Number of <c>PostPublished</c> events observed on the event bus since process start.
+    ///   Mutated from the WebSocket worker thread, read from the REST request thread, therefore
+    ///   incremented with <c>AtomicIncrement</c> in <c>IncrementPostsPublishedCount</c>. Exposed
+    ///   through <c>GetOverview.PostsPublishedViaEvents</c>.
+    /// </summary>
+    FPostsPublishedCount: Int64;
+
+    /// <summary>
     ///   Copies all scalar fields from a <c>TPostDto</c> into a <c>TPostFullDto</c>. The nested Author, Tags,
     ///   Comments and *Unavailable flags are left at their default (zero/empty/false) values.
     /// </summary>
@@ -132,6 +140,11 @@ type
     ///   Releases the per-backend circuit breakers.
     /// </summary>
     destructor Destroy; override;
+
+    /// <summary>
+    ///   Thread-safe counter bump invoked from <c>TPostPublishedConsumer.OnEvent</c>.
+    /// </summary>
+    procedure IncrementPostsPublishedCount;
 
     /// <summary>
     ///   Returns aggregate counts from all services.
@@ -177,6 +190,28 @@ type
     ///   Array of tag cloud items sorted descending by usage.
     /// </returns>
     function GetTagCloud: TTagCloudItemDtoArray;
+  end;
+
+  /// <summary>
+  ///   Event-bus subscriber that counts <c>PostPublished</c> events by forwarding each one to
+  ///   <c>TAnalyticsService.IncrementPostsPublishedCount</c>. Other event types are ignored so the
+  ///   counter stays meaningful as new producers come online.
+  /// </summary>
+  TPostPublishedConsumer = class(TInterfacedObject, IEventStreamCallback)
+  strict private
+    /// <summary>
+    ///   Weak reference back to the analytics service. Not owned: <c>TAnalyticsServer</c> owns
+    ///   both this consumer (via the <c>IEventStreamCallback</c> subscription) and the analytics
+    ///   service instance, and always frees the subscription before the service.
+    /// </summary>
+    FAnalytics: TAnalyticsService;
+  public
+    constructor Create(
+      aAnalytics: TAnalyticsService
+      );
+    procedure OnEvent(
+      const aEvent: TEventDto
+      );
   end;
 
   /// <summary>
@@ -235,6 +270,31 @@ type
     ///   The analytics service implementation instance.
     /// </summary>
     FAnalyticsImpl: TAnalyticsService;
+
+    /// <summary>
+    ///   Long-lived WebSocket client to ms.events. Nil when the bus is disabled or unreachable
+    ///   at startup -- in that case <c>FEventCallback</c> stays nil too and no events are
+    ///   counted. Freed in <c>DoFinalize</c>.
+    /// </summary>
+    FEventsClient: TRestHttpClientWebsockets;
+
+    /// <summary>
+    ///   Resolved <c>IEventStream</c> proxy used to issue <c>Subscribe</c>/<c>Unsubscribe</c>.
+    /// </summary>
+    FEventStream: IEventStream;
+
+    /// <summary>
+    ///   Strong reference to the callback while the subscription is active; dropped in
+    ///   <c>DoFinalize</c> after <c>Unsubscribe</c> so the framework can release the pair.
+    /// </summary>
+    FEventCallback: IEventStreamCallback;
+
+    /// <summary>
+    ///   Subscribes to <c>PostPublished</c> events on ms.events. Best-effort: any failure
+    ///   (WebSocket upgrade, resolve, subscribe) leaves <c>FEventsClient</c>/<c>FEventStream</c>
+    ///   nil so the analytics service still starts with a zero counter.
+    /// </summary>
+    procedure TrySubscribeToEvents;
 
     /// <summary>
     ///   Creates an HTTP client connected to a backend service and registers the given SOA interfaces on it.
@@ -322,6 +382,27 @@ begin
   FreeAndNil(FUsersBreaker);
   FreeAndNil(FPostsBreaker);
   inherited Destroy;
+end;
+
+procedure TAnalyticsService.IncrementPostsPublishedCount;
+begin
+  AtomicIncrement(FPostsPublishedCount);
+end;
+
+constructor TPostPublishedConsumer.Create(
+  aAnalytics: TAnalyticsService
+  );
+begin
+  inherited Create;
+  FAnalytics := aAnalytics;
+end;
+
+procedure TPostPublishedConsumer.OnEvent(
+  const aEvent: TEventDto
+  );
+begin
+  if (FAnalytics <> nil) and (aEvent.EventType = EVENT_POST_PUBLISHED) then
+    FAnalytics.IncrementPostsPublishedCount;
 end;
 
 function TAnalyticsService.PostDtoToFull(
@@ -557,6 +638,9 @@ begin
     Result.PendingComments := -1;
     Result.CommentsUnavailable := True;
   end;
+  // Event-bus counter: direct read of an aligned Int64 is atomic on x86/x64, matching how
+  // AtomicIncrement produces the value in IncrementPostsPublishedCount.
+  Result.PostsPublishedViaEvents := FPostsPublishedCount;
 end;
 
 function TAnalyticsService.GetRecentPostsFull(
@@ -767,6 +851,16 @@ end;
 
 procedure TAnalyticsServer.DoFinalize;
 begin
+  // Unsubscribe first so the server stops invoking OnEvent on a callback we are about to drop.
+  if (FEventStream <> nil) and (FEventCallback <> nil) then
+    try
+      FEventStream.Unsubscribe(FEventCallback);
+    except
+      // Best-effort shutdown: bus already gone is fine.
+    end;
+  FEventStream := nil;
+  FEventCallback := nil;
+  FreeAndNil(FEventsClient);
   FPosts := nil;
   FUsers := nil;
   FTags := nil;
@@ -775,6 +869,57 @@ begin
   FreeAndNil(FTagsClient);
   FreeAndNil(FPostsClient);
   FreeAndNil(FUsersClient);
+end;
+
+procedure TAnalyticsServer.TrySubscribeToEvents;
+var
+  EventsHost, EventsPort: RawUtf8;
+  ClientModel: TOrmModel;
+  UpgradeError: RawUtf8;
+begin
+  if Config.EventsUrl = '' then
+    Exit;
+  EventsHost := Config.EventsUrl;
+  if IdemPChar(pointer(EventsHost), 'HTTP://') then
+    Delete(EventsHost, 1, 7)
+  else if IdemPChar(pointer(EventsHost), 'HTTPS://') then
+    Delete(EventsHost, 1, 8);
+  EventsPort := Split(EventsHost, ':', EventsHost);
+  if EventsPort = '' then
+  begin
+    EventsPort := EventsHost;
+    EventsHost := 'localhost';
+  end;
+  try
+    ClientModel := TOrmModel.Create([], MODEL_ROOT);
+    FEventsClient := TRestHttpClientWebsockets.Create(EventsHost, EventsPort, ClientModel);
+    FEventsClient.Model.Owner := FEventsClient;
+    UpgradeError := FEventsClient.WebSocketsUpgrade(WEBSOCKETS_KEY);
+    if UpgradeError <> '' then
+    begin
+      FreeAndNil(FEventsClient);
+      Exit;
+    end;
+    FEventsClient.ServiceRegister([TypeInfo(IEventStream)], sicShared);
+    TServiceFactoryClient(FEventsClient.Services.Info(TypeInfo(IEventStream)))
+      .ResultAsJsonObjectWithoutResult := True;
+    if not FEventsClient.Services.Resolve(IEventStream, FEventStream) then
+    begin
+      FreeAndNil(FEventsClient);
+      FEventStream := nil;
+      Exit;
+    end;
+    FEventCallback := TPostPublishedConsumer.Create(FAnalyticsImpl);
+    // Pass 0 for aFromEventId: stage 1 live-only, no catch-up on boot. Stage 2 will use -1 to
+    // resume from the persisted consumer cursor.
+    FEventStream.Subscribe(SERVICE_ANALYTICS, 0, FEventCallback);
+  except
+    // Bus unreachable -- let analytics start with a zero counter; the emit path in ms.posts is
+    // similarly best-effort so both sides stay functional when the bus is offline.
+    FreeAndNil(FEventsClient);
+    FEventStream := nil;
+    FEventCallback := nil;
+  end;
 end;
 
 function TAnalyticsServer.RegistryLookup(
@@ -863,6 +1008,8 @@ begin
   // Create analytics service with injected interfaces
   FAnalyticsImpl := TAnalyticsService.Create(FPosts, FUsers, FTags, FComments);
   RegisterService(FAnalyticsImpl, TypeInfo(IAnalytics));
+  // Event-bus subscription runs last so a bus outage does not delay the HTTP listener.
+  TrySubscribeToEvents;
 end;
 
 end.

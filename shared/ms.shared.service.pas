@@ -761,6 +761,8 @@ begin
     Result.CommentsUrl := aRemote.CommentsUrl;
   if aRemote.MediaUrl <> '' then
     Result.MediaUrl := aRemote.MediaUrl;
+  if aRemote.EventsUrl <> '' then
+    Result.EventsUrl := aRemote.EventsUrl;
   if aRemote.JwtSecret <> '' then
     Result.JwtSecret := aRemote.JwtSecret;
   if aRemote.Host <> '' then

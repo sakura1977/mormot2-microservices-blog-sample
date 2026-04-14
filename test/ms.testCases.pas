@@ -1,4 +1,4 @@
-/// <summary>
+﻿/// <summary>
 ///   Integration tests for all blog microservices.
 ///
 ///   Demonstrates mORMot2's key testing advantage: all 7 microservices
@@ -88,6 +88,8 @@ uses
   ms.analytics.server,
   ms.logs.model,
   ms.logs.server,
+  ms.events.model,
+  ms.events.server,
   ms.gateway.server;
 
 type
@@ -1087,6 +1089,161 @@ type
   end;
 
   /// <summary>
+  ///   Minimal test subscriber for <c>ms.events</c>. Records every <c>OnEvent</c> call and can be
+  ///   configured to raise up to <c>aFailTimes</c> consecutive exceptions -- used to exercise the
+  ///   failure-threshold eviction in <c>TEventStreamService</c>.
+  /// </summary>
+  TTestEventStreamRecorder = class(TInterfacedObject, IEventStreamCallback)
+  strict private
+    FReceived: TEventDtoArray;
+    FFailRemaining: Integer;
+  public
+    constructor Create(
+      aFailTimes: Integer = 0
+      );
+    procedure OnEvent(
+      const aEvent: TEventDto
+      );
+    function ReceivedCount: Integer;
+    function ReceivedEvent(
+      aIdx: Integer
+      ): TEventDto;
+  end;
+
+  /// <summary>
+  ///   Tests for <c>TEventStreamService</c> / <c>TEventPublisherService</c> (stage 1 of PLAN #23).
+  ///   Exercises the in-memory ring buffer, WebSocket-style fan-out, catch-up replay, overrun
+  ///   detection, and the 3-failure eviction threshold -- all without the HTTP stack, analogous
+  ///   to <c>TTestLogStream</c>.
+  /// </summary>
+  TTestEventStream = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   A single subscriber receives exactly one event per <c>Publish</c>.
+    /// </summary>
+    procedure SingleSubscriberReceivesEvent;
+
+    /// <summary>
+    ///   Every subscriber sees every broadcast event, regardless of registration order.
+    /// </summary>
+    procedure MultipleSubscribersAllReceive;
+
+    /// <summary>
+    ///   Subscribing with <c>aFromEventId &gt; 0</c> replays matching buffered events before live
+    ///   traffic resumes.
+    /// </summary>
+    procedure CatchUpReplaysBufferedEvents;
+
+    /// <summary>
+    ///   Subscribing with a <c>fromEventId</c> older than the oldest event still in the ring buffer
+    ///   raises <c>EEventBufferOverrun</c>.
+    /// </summary>
+    procedure OverrunRaisesException;
+
+    /// <summary>
+    ///   A subscriber is evicted only after <c>FailureThreshold</c> consecutive failures; a single
+    ///   transient exception does not drop an otherwise healthy viewer.
+    /// </summary>
+    procedure FailingSubscriberDroppedAfterThreshold;
+
+    /// <summary>
+    ///   After <c>Unsubscribe</c> the recorder no longer receives new events.
+    /// </summary>
+    procedure UnsubscribeStopsReceiving;
+  end;
+
+  /// <summary>
+  ///   Stage-2 tests for the event bus (SPEC #22 / PLAN #23 task T18). Each test wires its own
+  ///   in-memory <c>TRestServerDB</c> with <c>TOrmEventOutbox</c> + <c>TOrmConsumerCursor</c> so
+  ///   the persistence path of <c>TEventStreamService</c> is exercised end-to-end without
+  ///   touching the shared blog test context.
+  /// </summary>
+  TTestEventStreamPersistence = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   Verifies that <c>Publish</c> writes a row to <c>TOrmEventOutbox</c> with all DTO fields
+    ///   intact and that the assigned ID equals the SQLite <c>RowID</c>.
+    /// </summary>
+    procedure PublishPersistsToOutbox;
+
+    /// <summary>
+    ///   Verifies that a subscriber requesting a <c>fromEventId</c> older than the ring buffer
+    ///   is served from the outbox (replaces the stage-1 <c>EEventBufferOverrun</c>).
+    /// </summary>
+    procedure CatchUpFromOutboxBeyondRingBuffer;
+
+    /// <summary>
+    ///   Verifies that <c>Acknowledge</c> creates a <c>TOrmConsumerCursor</c> row on first call
+    ///   and updates it on subsequent calls.
+    /// </summary>
+    procedure AcknowledgeUpsertsCursor;
+
+    /// <summary>
+    ///   Verifies that an out-of-order ACK with a smaller ID does not rewind the cursor.
+    /// </summary>
+    procedure AcknowledgeIsMonotonic;
+
+    /// <summary>
+    ///   Verifies that <c>Subscribe</c> with <c>aFromEventId = -1</c> resumes from
+    ///   <c>cursor.LastEventId + 1</c>.
+    /// </summary>
+    procedure ResumeFromCursorReplaysAfterLastAcked;
+  end;
+
+  /// <summary>
+  ///   End-to-end cascade test (PLAN cross-service-cascades, T8). Spins up one
+  ///   <c>TRestHttpServer</c> with both the event-bus services (<c>IEventPublisher</c> +
+  ///   <c>IEventStream</c>) and the comments table on the same in-memory DB, then drives a
+  ///   real WebSocket subscribe + remote <c>Publish(PostDeleted)</c> through the bus and
+  ///   verifies that <c>TCommentCascadeConsumer</c> deletes the matching comment rows.
+  /// </summary>
+  TTestCascadeDelete = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   Verifies that publishing a <c>PostDeleted</c> event over the live bus removes the
+    ///   matching comments via the cascade consumer within the timeout.
+    /// </summary>
+    procedure PostDeleteRemovesComments;
+
+    /// <summary>
+    ///   Verifies that a replayed <c>PostDeleted</c> -- delivered to a fresh consumer that
+    ///   subscribes with <c>aFromEventId = 1</c> after the original cascade already ran --
+    ///   does not raise and does not corrupt the DB. Exercises the cursor / outbox replay
+    ///   path through the real bus (T9, complements the consumer-level T6 test).
+    /// </summary>
+    procedure ReplayedPostDeletedThroughBusIsIdempotent;
+  end;
+
+  /// <summary>
+  ///   Idempotency tests for <c>TCommentCascadeConsumer</c> (ADR-0001 / PLAN
+  ///   cross-service-cascades, T6). Exercises the consumer in-process against an in-memory
+  ///   comments DB, without touching <c>ms.events</c> -- the cascade body must be
+  ///   replay-safe so the at-least-once delivery contract of the event bus does not corrupt
+  ///   the comments table.
+  /// </summary>
+  TTestCommentCascadeConsumer = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   Verifies that a single <c>PostDeleted</c> event removes every matching comment row
+    ///   and leaves comments of unrelated posts untouched.
+    /// </summary>
+    procedure SinglePostDeletedRemovesMatchingComments;
+
+    /// <summary>
+    ///   Verifies that delivering the same <c>PostDeleted</c> event twice (the at-least-once
+    ///   replay scenario) leaves the DB in the same state as a single delivery and does not
+    ///   raise.
+    /// </summary>
+    procedure ReplayedPostDeletedIsNoOp;
+
+    /// <summary>
+    ///   Verifies that events of unrelated types (e.g. <c>PostPublished</c>) are tolerated
+    ///   without touching the comments table.
+    /// </summary>
+    procedure UnrelatedEventTypeIsIgnored;
+  end;
+
+  /// <summary>
   ///   Tests for the central logging service (<c>ms.logs</c>): ingestion, retrieval by correlation ID,
   ///   recent filter, full-text search, and stats. The tests use the in-process REST server with the
   ///   <c>TOrmLogEntry</c> tables wired into <c>TBlogTestContext</c>.
@@ -1181,6 +1338,22 @@ type
     ///   the callback fires within a timeout.
     /// </summary>
     procedure SubscribeIngestReceive;
+  end;
+
+  /// <summary>
+  ///   End-to-end test for the event bus (SPEC #22 / PLAN #23 task T13). Spins up a dedicated
+  ///   <c>TRestHttpServer</c> hosting <c>IEventPublisher</c> + <c>IEventStream</c> on a high test
+  ///   port, opens a real WebSocket upgrade, publishes one <c>PostPublished</c> event and waits
+  ///   (with a 2 s timeout) for the subscriber callback to fire. Covers the full
+  ///   produce-over-HTTP / consume-over-WebSocket chain that stage 1 ships.
+  /// </summary>
+  TTestEventBusRoundtrip = class(TMsTestCase)
+  published
+    /// <summary>
+    ///   Publishes one event and asserts that a separately-subscribed callback receives it over
+    ///   the live WebSocket connection before the timeout elapses.
+    /// </summary>
+    procedure PublishReachesSubscriberViaWebSocket;
   end;
 
   /// <summary>
@@ -4226,6 +4399,916 @@ begin
   FReceived := nil;
 end;
 
+{ TTestEventStreamRecorder }
+
+constructor TTestEventStreamRecorder.Create(
+  aFailTimes: Integer
+  );
+begin
+  inherited Create;
+  FFailRemaining := aFailTimes;
+end;
+
+procedure TTestEventStreamRecorder.OnEvent(
+  const aEvent: TEventDto
+  );
+begin
+  if FFailRemaining > 0 then
+  begin
+    Dec(FFailRemaining);
+    raise ESynException.Create('intentional event test failure');
+  end;
+  SetLength(FReceived, Length(FReceived) + 1);
+  FReceived[High(FReceived)] := aEvent;
+end;
+
+function TTestEventStreamRecorder.ReceivedCount: Integer;
+begin
+  Result := Length(FReceived);
+end;
+
+function TTestEventStreamRecorder.ReceivedEvent(
+  aIdx: Integer
+  ): TEventDto;
+begin
+  Result := FReceived[aIdx];
+end;
+
+procedure TTestEventStream.SingleSubscriberReceivesEvent;
+var
+  Stream: TEventStreamService;
+  Publisher: TEventPublisherService;
+  Recorder: TTestEventStreamRecorder;
+  CbIntf: IEventStreamCallback;
+  EventId: TID;
+begin
+  Stream := TEventStreamService.Create;
+  try
+    Publisher := TEventPublisherService.Create(Stream);
+    try
+      Recorder := TTestEventStreamRecorder.Create;
+      CbIntf := Recorder;
+      Stream.Subscribe('analytics.test', 0, CbIntf);
+      try
+        EventId := Publisher.Publish('PostPublished',
+          '{"postId":1}', SERVICE_POSTS, 1);
+        CheckEqual(Recorder.ReceivedCount, 1,
+          'subscriber must receive exactly one event');
+        CheckEqual(Recorder.ReceivedEvent(0).EventType, 'PostPublished',
+          'received event type must match published');
+        Check(Recorder.ReceivedEvent(0).ID = EventId,
+          'received event ID must match assigned ID');
+      finally
+        Stream.Unsubscribe(CbIntf);
+        CbIntf := nil;
+      end;
+    finally
+      Publisher.Free;
+    end;
+  finally
+    Stream.Free;
+  end;
+end;
+
+procedure TTestEventStream.MultipleSubscribersAllReceive;
+var
+  Stream: TEventStreamService;
+  Publisher: TEventPublisherService;
+  RecA, RecB, RecC: TTestEventStreamRecorder;
+  IntfA, IntfB, IntfC: IEventStreamCallback;
+begin
+  Stream := TEventStreamService.Create;
+  try
+    Publisher := TEventPublisherService.Create(Stream);
+    try
+      RecA := TTestEventStreamRecorder.Create;
+      RecB := TTestEventStreamRecorder.Create;
+      RecC := TTestEventStreamRecorder.Create;
+      IntfA := RecA;
+      IntfB := RecB;
+      IntfC := RecC;
+      Stream.Subscribe('a', 0, IntfA);
+      Stream.Subscribe('b', 0, IntfB);
+      Stream.Subscribe('c', 0, IntfC);
+      try
+        Publisher.Publish('CommentApproved', '{"id":7}', SERVICE_COMMENTS, 1);
+        CheckEqual(RecA.ReceivedCount, 1, 'A must receive');
+        CheckEqual(RecB.ReceivedCount, 1, 'B must receive');
+        CheckEqual(RecC.ReceivedCount, 1, 'C must receive');
+      finally
+        Stream.Unsubscribe(IntfA);
+        Stream.Unsubscribe(IntfB);
+        Stream.Unsubscribe(IntfC);
+        IntfA := nil; IntfB := nil; IntfC := nil;
+      end;
+    finally
+      Publisher.Free;
+    end;
+  finally
+    Stream.Free;
+  end;
+end;
+
+procedure TTestEventStream.CatchUpReplaysBufferedEvents;
+var
+  Stream: TEventStreamService;
+  Publisher: TEventPublisherService;
+  Recorder: TTestEventStreamRecorder;
+  CbIntf: IEventStreamCallback;
+  FirstId: TID;
+begin
+  Stream := TEventStreamService.Create;
+  try
+    Publisher := TEventPublisherService.Create(Stream);
+    try
+      // Publish three events BEFORE any subscriber exists.
+      FirstId := Publisher.Publish('E1', '{"n":1}', SERVICE_POSTS, 1);
+      Publisher.Publish('E2', '{"n":2}', SERVICE_POSTS, 1);
+      Publisher.Publish('E3', '{"n":3}', SERVICE_POSTS, 1);
+      Recorder := TTestEventStreamRecorder.Create;
+      CbIntf := Recorder;
+      // Subscribe with fromEventId = FirstId (the oldest) -> replays all three.
+      Stream.Subscribe('late-joiner', FirstId, CbIntf);
+      try
+        CheckEqual(Recorder.ReceivedCount, 3,
+          'catch-up must replay all three buffered events');
+        CheckEqual(Recorder.ReceivedEvent(0).EventType, 'E1', 'order preserved: first');
+        CheckEqual(Recorder.ReceivedEvent(2).EventType, 'E3', 'order preserved: last');
+        // A subsequent live publish continues the stream.
+        Publisher.Publish('E4', '{"n":4}', SERVICE_POSTS, 1);
+        CheckEqual(Recorder.ReceivedCount, 4,
+          'live traffic continues seamlessly after replay');
+      finally
+        Stream.Unsubscribe(CbIntf);
+        CbIntf := nil;
+      end;
+    finally
+      Publisher.Free;
+    end;
+  finally
+    Stream.Free;
+  end;
+end;
+
+procedure TTestEventStream.OverrunRaisesException;
+var
+  Stream: TEventStreamService;
+  Publisher: TEventPublisherService;
+  Recorder: TTestEventStreamRecorder;
+  CbIntf: IEventStreamCallback;
+  Overflow, I: Integer;
+  Raised: Boolean;
+begin
+  Stream := TEventStreamService.Create;
+  try
+    Publisher := TEventPublisherService.Create(Stream);
+    try
+      // Fill the ring buffer beyond capacity so event ID 1 is no longer retained.
+      Overflow := EVENT_BUFFER_SIZE + 5;
+      for I := 1 to Overflow do
+        Publisher.Publish('Tick', '{}', SERVICE_POSTS, 1);
+      Recorder := TTestEventStreamRecorder.Create;
+      CbIntf := Recorder;
+      Raised := False;
+      try
+        Stream.Subscribe('stale', 1, CbIntf);
+      except
+        on E: EEventBufferOverrun do
+          Raised := True;
+      end;
+      Check(Raised,
+        'Subscribe with fromEventId older than the ring buffer must raise EEventBufferOverrun');
+      CheckEqual(Recorder.ReceivedCount, 0,
+        'no events must be delivered on overrun');
+      CbIntf := nil;
+    finally
+      Publisher.Free;
+    end;
+  finally
+    Stream.Free;
+  end;
+end;
+
+procedure TTestEventStream.FailingSubscriberDroppedAfterThreshold;
+var
+  Stream: TEventStreamService;
+  Publisher: TEventPublisherService;
+  Failing, Healthy: TTestEventStreamRecorder;
+  IntfFail, IntfHealthy: IEventStreamCallback;
+  I: Integer;
+begin
+  Stream := TEventStreamService.Create;
+  try
+    Stream.FailureThreshold := 3;
+    Publisher := TEventPublisherService.Create(Stream);
+    try
+      // Failing raises on the first 3 events; after that eviction already happened.
+      Failing := TTestEventStreamRecorder.Create({aFailTimes=}3);
+      Healthy := TTestEventStreamRecorder.Create;
+      IntfFail := Failing;
+      IntfHealthy := Healthy;
+      Stream.Subscribe('failing', 0, IntfFail);
+      Stream.Subscribe('healthy', 0, IntfHealthy);
+      try
+        // Publish 5 events; Failing fails 3 times (threshold reached, evicted), then is gone.
+        for I := 1 to 5 do
+          Publisher.Publish('Tick', '{}', SERVICE_POSTS, 1);
+        CheckEqual(Healthy.ReceivedCount, 5,
+          'healthy subscriber must receive every event');
+        CheckEqual(Failing.ReceivedCount, 0,
+          'failing subscriber never successfully received anything');
+      finally
+        Stream.Unsubscribe(IntfHealthy);
+        // Failing has already been evicted; Unsubscribe on a missing callback is a no-op.
+        Stream.Unsubscribe(IntfFail);
+        IntfFail := nil; IntfHealthy := nil;
+      end;
+    finally
+      Publisher.Free;
+    end;
+  finally
+    Stream.Free;
+  end;
+end;
+
+procedure TTestEventStream.UnsubscribeStopsReceiving;
+var
+  Stream: TEventStreamService;
+  Publisher: TEventPublisherService;
+  Recorder: TTestEventStreamRecorder;
+  CbIntf: IEventStreamCallback;
+begin
+  Stream := TEventStreamService.Create;
+  try
+    Publisher := TEventPublisherService.Create(Stream);
+    try
+      Recorder := TTestEventStreamRecorder.Create;
+      CbIntf := Recorder;
+      Stream.Subscribe('once', 0, CbIntf);
+      Publisher.Publish('First', '{}', SERVICE_POSTS, 1);
+      CheckEqual(Recorder.ReceivedCount, 1, 'receives while subscribed');
+      Stream.Unsubscribe(CbIntf);
+      Publisher.Publish('Second', '{}', SERVICE_POSTS, 1);
+      CheckEqual(Recorder.ReceivedCount, 1,
+        'must NOT receive after Unsubscribe');
+      CbIntf := nil;
+    finally
+      Publisher.Free;
+    end;
+  finally
+    Stream.Free;
+  end;
+end;
+
+// Stage-2 helpers: each test is self-contained -- it builds a tiny in-memory REST server with
+// only the event tables so the persistence path of TEventStreamService is exercised without
+// pulling in the shared blog context.
+
+procedure TTestEventStreamPersistence.PublishPersistsToOutbox;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  Stream: TEventStreamService;
+  Publisher: TEventPublisherService;
+  EventId: TID;
+  Outbox: TOrmEventOutbox;
+begin
+  Model := TOrmModel.Create([TOrmEventOutbox, TOrmConsumerCursor], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    Stream := TEventStreamService.Create(Server.Orm);
+    try
+      Publisher := TEventPublisherService.Create(Stream);
+      try
+        EventId := Publisher.Publish('PostPublished', '{"postId":42}', SERVICE_POSTS, 3);
+        Check(EventId > 0, 'Publish must return a positive ID');
+        Outbox := TOrmEventOutbox.Create(Server.Orm, EventId);
+        try
+          Check(Outbox.IDValue = EventId, 'outbox row must exist with the assigned ID');
+          CheckEqual(Outbox.EventType, 'PostPublished', 'EventType persisted');
+          CheckEqual(Outbox.PayloadJson, '{"postId":42}', 'PayloadJson persisted verbatim');
+          CheckEqual(Outbox.ProducerService, SERVICE_POSTS, 'ProducerService persisted');
+          CheckEqual(Outbox.SchemaVersion, 3, 'SchemaVersion persisted');
+        finally
+          Outbox.Free;
+        end;
+      finally
+        Publisher.Free;
+      end;
+    finally
+      Stream.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestEventStreamPersistence.CatchUpFromOutboxBeyondRingBuffer;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  Stream: TEventStreamService;
+  Publisher: TEventPublisherService;
+  Recorder: TTestEventStreamRecorder;
+  CbIntf: IEventStreamCallback;
+  Overflow, I: Integer;
+begin
+  Model := TOrmModel.Create([TOrmEventOutbox, TOrmConsumerCursor], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    Stream := TEventStreamService.Create(Server.Orm);
+    try
+      Publisher := TEventPublisherService.Create(Stream);
+      try
+        // Publish more events than the ring buffer holds. Stage 1 raised on this Subscribe;
+        // stage 2 must serve the historical events from TOrmEventOutbox.
+        Overflow := EVENT_BUFFER_SIZE + 5;
+        for I := 1 to Overflow do
+          Publisher.Publish('Tick', '{}', SERVICE_POSTS, 1);
+        Recorder := TTestEventStreamRecorder.Create;
+        CbIntf := Recorder;
+        try
+          Stream.Subscribe('catchup', 1, CbIntf);
+        except
+          on E: Exception do
+            CheckEqual(RawByteString(E.ClassName), '',
+              'Stage-2 catch-up must not raise on overrun (got ' + RawByteString(E.ClassName) + ')');
+        end;
+        try
+          CheckEqual(Recorder.ReceivedCount, Overflow,
+            'all historical events must be replayed from the outbox');
+          Check(Recorder.ReceivedEvent(0).ID = 1, 'first replayed event has ID=1');
+          Check(Recorder.ReceivedEvent(Overflow - 1).ID = Overflow,
+            'last replayed event has the highest ID');
+        finally
+          Stream.Unsubscribe(CbIntf);
+          CbIntf := nil;
+        end;
+      finally
+        Publisher.Free;
+      end;
+    finally
+      Stream.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestEventStreamPersistence.AcknowledgeUpsertsCursor;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  Stream: TEventStreamService;
+  Cursor: TOrmConsumerCursor;
+begin
+  Model := TOrmModel.Create([TOrmEventOutbox, TOrmConsumerCursor], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    Stream := TEventStreamService.Create(Server.Orm);
+    try
+      // First ACK creates the row.
+      Stream.Acknowledge('analytics', 7);
+      Cursor := TOrmConsumerCursor.Create(Server.Orm, 'ConsumerName=?', ['analytics']);
+      try
+        Check(Cursor.IDValue <> 0, 'cursor row must be created on first ACK');
+        Check(Cursor.LastEventId = 7, 'LastEventId must equal first ACK value');
+      finally
+        Cursor.Free;
+      end;
+      // Second ACK updates in place.
+      Stream.Acknowledge('analytics', 12);
+      Cursor := TOrmConsumerCursor.Create(Server.Orm, 'ConsumerName=?', ['analytics']);
+      try
+        Check(Cursor.LastEventId = 12, 'LastEventId must advance on subsequent ACK');
+      finally
+        Cursor.Free;
+      end;
+    finally
+      Stream.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestEventStreamPersistence.AcknowledgeIsMonotonic;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  Stream: TEventStreamService;
+  Cursor: TOrmConsumerCursor;
+begin
+  Model := TOrmModel.Create([TOrmEventOutbox, TOrmConsumerCursor], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    Stream := TEventStreamService.Create(Server.Orm);
+    try
+      Stream.Acknowledge('c', 10);
+      // Out-of-order / late ACK with smaller ID -- must NOT rewind the cursor.
+      Stream.Acknowledge('c', 5);
+      Cursor := TOrmConsumerCursor.Create(Server.Orm, 'ConsumerName=?', ['c']);
+      try
+        Check(Cursor.LastEventId = 10, 'a smaller ACK must not rewind LastEventId');
+      finally
+        Cursor.Free;
+      end;
+    finally
+      Stream.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestEventStreamPersistence.ResumeFromCursorReplaysAfterLastAcked;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  Stream: TEventStreamService;
+  Publisher: TEventPublisherService;
+  Recorder: TTestEventStreamRecorder;
+  CbIntf: IEventStreamCallback;
+begin
+  Model := TOrmModel.Create([TOrmEventOutbox, TOrmConsumerCursor], MODEL_ROOT);
+  Server := TRestServerDB.Create(Model, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    Server.DB.Synchronous := smOff;
+    Server.Server.CreateMissingTables;
+    Stream := TEventStreamService.Create(Server.Orm);
+    try
+      Publisher := TEventPublisherService.Create(Stream);
+      try
+        Publisher.Publish('E1', '{"n":1}', SERVICE_POSTS, 1);
+        Publisher.Publish('E2', '{"n":2}', SERVICE_POSTS, 1);
+        Publisher.Publish('E3', '{"n":3}', SERVICE_POSTS, 1);
+        Publisher.Publish('E4', '{"n":4}', SERVICE_POSTS, 1);
+        Publisher.Publish('E5', '{"n":5}', SERVICE_POSTS, 1);
+        Stream.Acknowledge('analytics', 3);
+        Recorder := TTestEventStreamRecorder.Create;
+        CbIntf := Recorder;
+        try
+          Stream.Subscribe('analytics', -1, CbIntf);
+        except
+          on E: Exception do
+            CheckEqual(RawByteString(E.ClassName), '',
+              'resume-from-cursor must not raise (got ' + RawByteString(E.ClassName) + ')');
+        end;
+        try
+          CheckEqual(Recorder.ReceivedCount, 2,
+            'resume must replay only events after LastEventId (3): E4 + E5');
+          CheckEqual(Recorder.ReceivedEvent(0).EventType, 'E4', 'first replayed = E4');
+          CheckEqual(Recorder.ReceivedEvent(1).EventType, 'E5', 'second replayed = E5');
+        finally
+          Stream.Unsubscribe(CbIntf);
+          CbIntf := nil;
+        end;
+      finally
+        Publisher.Free;
+      end;
+    finally
+      Stream.Free;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestCascadeDelete.PostDeleteRemovesComments;
+const
+  TEST_PORT = '18791';
+  TIMEOUT_MS = 3000;
+  POLL_MS = 20;
+var
+  ServerModel: TOrmModel;
+  RestServer: TRestServerDB;
+  HttpServer: TRestHttpServer;
+  StreamSvc: TEventStreamService;
+  PublisherSvc: TEventPublisherService;
+  StreamFactory: TServiceFactoryServerAbstract;
+  ClientModel: TOrmModel;
+  Client: TRestHttpClientWebsockets;
+  PublisherRemote: IEventPublisher;
+  StreamRemote: IEventStream;
+  Cascade: TCommentCascadeConsumer;
+  CallbackIntf: IEventStreamCallback;
+  UpgradeError: RawUtf8;
+  PostId1, PostId2: TID;
+  Rec: TOrmBlogComment;
+  WaitedMs: Integer;
+  RemainingCount: Int64;
+begin
+  // Single in-memory DB hosting both the event-bus tables (Outbox + Cursor) and the comments
+  // table. This is a test convenience; production keeps these in separate per-service DBs.
+  ServerModel := TOrmModel.Create([
+    TOrmEventOutbox,
+    TOrmConsumerCursor,
+    TOrmBlogComment], 'api');
+  RestServer := TRestServerDB.Create(ServerModel, SQLITE_MEMORY_DATABASE_NAME);
+  PostId1 := 1;
+  PostId2 := 2;
+  try
+    RestServer.DB.Synchronous := smOff;
+    RestServer.Server.CreateMissingTables;
+
+    // Seed comments: two on the post that will be deleted, one on a survivor post.
+    Rec := TOrmBlogComment.Create;
+    try
+      Rec.PostId := PostId1; Rec.Body := 'p1-a'; Rec.Status := COMMENT_STATUS_APPROVED;
+      Rec.CreatedAt := NowUtc; RestServer.Orm.Add(Rec, True);
+      Rec.PostId := PostId1; Rec.Body := 'p1-b'; RestServer.Orm.Add(Rec, True);
+      Rec.PostId := PostId2; Rec.Body := 'p2-survives'; RestServer.Orm.Add(Rec, True);
+    finally
+      Rec.Free;
+    end;
+    CheckEqual(RestServer.Orm.TableRowCount(TOrmBlogComment), 3,
+      'precondition: three comments seeded');
+
+    // Stream service must be wired with the real ORM so persistence + cursor work.
+    StreamSvc := TEventStreamService.Create(RestServer.Orm);
+    PublisherSvc := TEventPublisherService.Create(StreamSvc);
+    RestServer.ServiceRegister(PublisherSvc, [TypeInfo(IEventPublisher)]).
+      ByPassAuthentication := True;
+    StreamFactory := RestServer.ServiceRegister(StreamSvc, [TypeInfo(IEventStream)]);
+    StreamFactory.SetOptions([], [optExecLockedPerInterface]);
+    StreamFactory.ByPassAuthentication := True;
+
+    HttpServer := TRestHttpServer.Create(
+      TEST_PORT, RestServer, '+', WEBSOCKETS_DEFAULT_MODE, nil, 4, secNone);
+    try
+      HttpServer.WebSocketsEnable(RestServer, WEBSOCKETS_KEY, {ajax=}False);
+
+      // Single client carries both Publish (HTTP) and the cascade subscription (WebSocket).
+      ClientModel := TOrmModel.Create([], 'api');
+      Client := TRestHttpClientWebsockets.Create('localhost', TEST_PORT, ClientModel);
+      try
+        Client.Model.Owner := Client;
+        UpgradeError := Client.WebSocketsUpgrade(WEBSOCKETS_KEY);
+        CheckEqual(UpgradeError, '',
+          'WebSocketsUpgrade must succeed');
+        Client.ServiceRegister(
+          [TypeInfo(IEventPublisher), TypeInfo(IEventStream)], sicShared);
+        Check(Client.Services.Resolve(IEventPublisher, PublisherRemote),
+          'client must resolve IEventPublisher');
+        Check(Client.Services.Resolve(IEventStream, StreamRemote),
+          'client must resolve IEventStream');
+
+        // Cascade consumer talks to the same DB as the bus -- in production these would be
+        // separate DBs, but the cascade contract is identical.
+        Cascade := TCommentCascadeConsumer.Create(RestServer.Orm, StreamRemote);
+        CallbackIntf := Cascade;
+        try
+          // -1 = resume from cursor. No prior cursor -> from ID 1, but the outbox is empty
+          // until the Publish below, so this is effectively live-only.
+          StreamRemote.Subscribe(CONSUMER_COMMENTS_CASCADE, -1, CallbackIntf);
+          try
+            PublisherRemote.Publish(
+              EVENT_POST_DELETED,
+              RawJson(JsonEncode(['postId', PostId1, 'slug', 'p1'])),
+              SERVICE_POSTS,
+              EVENT_SCHEMA_POSTS_V1);
+
+            // The cascade fires asynchronously on the WebSocket worker. Poll until only the
+            // surviving comment is left, or the timeout elapses.
+            WaitedMs := 0;
+            RemainingCount := RestServer.Orm.TableRowCount(TOrmBlogComment);
+            while (RemainingCount > 1) and (WaitedMs < TIMEOUT_MS) do
+            begin
+              SleepHiRes(POLL_MS);
+              Inc(WaitedMs, POLL_MS);
+              RemainingCount := RestServer.Orm.TableRowCount(TOrmBlogComment);
+            end;
+            CheckEqual(RemainingCount, 1,
+              'cascade must remove both p1 comments within timeout');
+            CheckEqual(
+              RestServer.Orm.OneFieldValue(TOrmBlogComment, 'PostId', ''),
+              '2',
+              'survivor must belong to p2');
+          finally
+            try
+              StreamRemote.Unsubscribe(CallbackIntf);
+            except
+              // Already torn down by the framework on disconnect -- ignore.
+            end;
+          end;
+        finally
+          CallbackIntf := nil;
+        end;
+      finally
+        PublisherRemote := nil;
+        StreamRemote := nil;
+        Client.Free;
+      end;
+    finally
+      HttpServer.Free;
+    end;
+  finally
+    RestServer.Free;
+    ServerModel.Free;
+    // StreamSvc + PublisherSvc owned by RestServer once registered.
+  end;
+end;
+
+procedure TTestCascadeDelete.ReplayedPostDeletedThroughBusIsIdempotent;
+const
+  TEST_PORT = '18792';
+  TIMEOUT_MS = 3000;
+  POLL_MS = 20;
+var
+  ServerModel: TOrmModel;
+  RestServer: TRestServerDB;
+  HttpServer: TRestHttpServer;
+  StreamSvc: TEventStreamService;
+  PublisherSvc: TEventPublisherService;
+  StreamFactory: TServiceFactoryServerAbstract;
+  ClientModel: TOrmModel;
+  Client: TRestHttpClientWebsockets;
+  PublisherRemote: IEventPublisher;
+  StreamRemote: IEventStream;
+  CascadeA, CascadeB: TCommentCascadeConsumer;
+  CallbackA, CallbackB: IEventStreamCallback;
+  UpgradeError: RawUtf8;
+  Rec: TOrmBlogComment;
+  WaitedMs: Integer;
+  RemainingCount: Int64;
+  ReplayRaised: boolean;
+begin
+  ServerModel := TOrmModel.Create([
+    TOrmEventOutbox,
+    TOrmConsumerCursor,
+    TOrmBlogComment], 'api');
+  RestServer := TRestServerDB.Create(ServerModel, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    RestServer.DB.Synchronous := smOff;
+    RestServer.Server.CreateMissingTables;
+
+    Rec := TOrmBlogComment.Create;
+    try
+      Rec.PostId := 1; Rec.Body := 'p1-only'; Rec.Status := COMMENT_STATUS_APPROVED;
+      Rec.CreatedAt := NowUtc; RestServer.Orm.Add(Rec, True);
+      Rec.PostId := 9; Rec.Body := 'p9-untouched'; RestServer.Orm.Add(Rec, True);
+    finally
+      Rec.Free;
+    end;
+
+    StreamSvc := TEventStreamService.Create(RestServer.Orm);
+    PublisherSvc := TEventPublisherService.Create(StreamSvc);
+    RestServer.ServiceRegister(PublisherSvc, [TypeInfo(IEventPublisher)]).
+      ByPassAuthentication := True;
+    StreamFactory := RestServer.ServiceRegister(StreamSvc, [TypeInfo(IEventStream)]);
+    StreamFactory.SetOptions([], [optExecLockedPerInterface]);
+    StreamFactory.ByPassAuthentication := True;
+
+    HttpServer := TRestHttpServer.Create(
+      TEST_PORT, RestServer, '+', WEBSOCKETS_DEFAULT_MODE, nil, 4, secNone);
+    try
+      HttpServer.WebSocketsEnable(RestServer, WEBSOCKETS_KEY, {ajax=}False);
+      ClientModel := TOrmModel.Create([], 'api');
+      Client := TRestHttpClientWebsockets.Create('localhost', TEST_PORT, ClientModel);
+      try
+        Client.Model.Owner := Client;
+        UpgradeError := Client.WebSocketsUpgrade(WEBSOCKETS_KEY);
+        CheckEqual(UpgradeError, '', 'WebSocketsUpgrade must succeed');
+        Client.ServiceRegister(
+          [TypeInfo(IEventPublisher), TypeInfo(IEventStream)], sicShared);
+        Check(Client.Services.Resolve(IEventPublisher, PublisherRemote),
+          'client must resolve IEventPublisher');
+        Check(Client.Services.Resolve(IEventStream, StreamRemote),
+          'client must resolve IEventStream');
+
+        // Phase 1: original consumer A processes PostDeleted live.
+        CascadeA := TCommentCascadeConsumer.Create(RestServer.Orm, StreamRemote);
+        CallbackA := CascadeA;
+        StreamRemote.Subscribe('cascade-A', -1, CallbackA);
+        try
+          PublisherRemote.Publish(
+            EVENT_POST_DELETED,
+            RawJson(JsonEncode(['postId', 1, 'slug', 'p1'])),
+            SERVICE_POSTS,
+            EVENT_SCHEMA_POSTS_V1);
+          WaitedMs := 0;
+          RemainingCount := RestServer.Orm.TableRowCount(TOrmBlogComment);
+          while (RemainingCount > 1) and (WaitedMs < TIMEOUT_MS) do
+          begin
+            SleepHiRes(POLL_MS);
+            Inc(WaitedMs, POLL_MS);
+            RemainingCount := RestServer.Orm.TableRowCount(TOrmBlogComment);
+          end;
+          CheckEqual(RemainingCount, 1, 'phase 1: cascade must remove the p1 comment');
+        finally
+          try
+            StreamRemote.Unsubscribe(CallbackA);
+          except
+          end;
+          CallbackA := nil;
+        end;
+
+        // Phase 2: consumer B subscribes with aFromEventId = 1 -> bus replays the same
+        // PostDeleted event from the outbox. The cascade DELETE WHERE PostId=1 matches no
+        // rows (already gone), so the replay must be a silent no-op and the survivor row
+        // for post 9 must remain untouched.
+        CascadeB := TCommentCascadeConsumer.Create(RestServer.Orm, StreamRemote);
+        CallbackB := CascadeB;
+        ReplayRaised := False;
+        try
+          try
+            StreamRemote.Subscribe('cascade-B', 1, CallbackB);
+          except
+            on E: Exception do
+            begin
+              ReplayRaised := True;
+              CheckEqual(RawByteString(E.ClassName), '',
+                'replay subscribe must not raise (got ' + RawByteString(E.ClassName) + ')');
+            end;
+          end;
+          // The Subscribe call above runs the catch-up synchronously inside the stream lock,
+          // so by the time it returns the replay has already been applied.
+          Check(not ReplayRaised, 'replay must complete without raising');
+          CheckEqual(RestServer.Orm.TableRowCount(TOrmBlogComment), 1,
+            'replay must leave the survivor row intact (idempotent DELETE WHERE)');
+          CheckEqual(
+            RestServer.Orm.OneFieldValue(TOrmBlogComment, 'PostId', ''),
+            '9',
+            'survivor must still be the post-9 comment');
+        finally
+          try
+            StreamRemote.Unsubscribe(CallbackB);
+          except
+          end;
+          CallbackB := nil;
+        end;
+      finally
+        PublisherRemote := nil;
+        StreamRemote := nil;
+        Client.Free;
+      end;
+    finally
+      HttpServer.Free;
+    end;
+  finally
+    RestServer.Free;
+    ServerModel.Free;
+  end;
+end;
+
+// In-process helpers for TCommentCascadeConsumer — the tests exercise the cascade body
+// without spinning up the event bus. FStream is intentionally nil: OnEvent guards the
+// Acknowledge call, so the consumer runs the DELETE path and exits cleanly.
+
+function NewCascadeTestServer(out aModel: TOrmModel): TRestServerDB;
+begin
+  aModel := TOrmModel.Create([TOrmBlogComment], MODEL_ROOT);
+  Result := TRestServerDB.Create(aModel, SQLITE_MEMORY_DATABASE_NAME);
+  Result.DB.Synchronous := smOff;
+  Result.Server.CreateMissingTables;
+end;
+
+function AddTestComment(
+  const aOrm: IRestOrm;
+  aPostId: TID;
+  const aBody: RawUtf8): TID;
+var
+  Rec: TOrmBlogComment;
+begin
+  Rec := TOrmBlogComment.Create;
+  try
+    Rec.PostId := aPostId;
+    Rec.Body := aBody;
+    Rec.Status := COMMENT_STATUS_APPROVED;
+    Rec.CreatedAt := NowUtc;
+    Result := aOrm.Add(Rec, True);
+  finally
+    Rec.Free;
+  end;
+end;
+
+function MakePostDeletedEvent(aId: TID; aPostId: TID): TEventDto;
+begin
+  FillCharFast(Result, SizeOf(Result), 0);
+  Result.ID := aId;
+  Result.EventType := EVENT_POST_DELETED;
+  Result.PayloadJson := RawJson(JsonEncode(['postId', aPostId, 'slug', 'p']));
+  Result.ProducerService := SERVICE_POSTS;
+  Result.SchemaVersion := EVENT_SCHEMA_POSTS_V1;
+  Result.CreatedAt := NowUtc;
+end;
+
+procedure TTestCommentCascadeConsumer.SinglePostDeletedRemovesMatchingComments;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  Consumer: TCommentCascadeConsumer;
+  CbIntf: IEventStreamCallback;
+  Event: TEventDto;
+begin
+  Server := NewCascadeTestServer(Model);
+  try
+    AddTestComment(Server.Orm, 1, 'on post 1 -- a');
+    AddTestComment(Server.Orm, 1, 'on post 1 -- b');
+    AddTestComment(Server.Orm, 2, 'on post 2 -- survives');
+    Consumer := TCommentCascadeConsumer.Create(Server.Orm, nil);
+    CbIntf := Consumer;
+    try
+      Event := MakePostDeletedEvent(101, 1);
+      Consumer.OnEvent(Event);
+      CheckEqual(Server.Orm.TableRowCount(TOrmBlogComment), 1,
+        'only the comment for post 2 must remain');
+      CheckEqual(Server.Orm.OneFieldValue(TOrmBlogComment, 'PostId', ''), '2',
+        'surviving row must belong to post 2');
+    finally
+      CbIntf := nil;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestCommentCascadeConsumer.ReplayedPostDeletedIsNoOp;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  Consumer: TCommentCascadeConsumer;
+  CbIntf: IEventStreamCallback;
+  Event: TEventDto;
+begin
+  Server := NewCascadeTestServer(Model);
+  try
+    AddTestComment(Server.Orm, 7, 'first');
+    AddTestComment(Server.Orm, 7, 'second');
+    Consumer := TCommentCascadeConsumer.Create(Server.Orm, nil);
+    CbIntf := Consumer;
+    try
+      Event := MakePostDeletedEvent(202, 7);
+      Consumer.OnEvent(Event);
+      CheckEqual(Server.Orm.TableRowCount(TOrmBlogComment), 0,
+        'first delivery removes both comments');
+      // Same event, redelivered (the at-least-once contract). Must be a silent no-op.
+      try
+        Consumer.OnEvent(Event);
+      except
+        on E: Exception do
+          CheckEqual(RawByteString(E.ClassName), '',
+            'replayed PostDeleted must not raise (got ' + RawByteString(E.ClassName) + ')');
+      end;
+      CheckEqual(Server.Orm.TableRowCount(TOrmBlogComment), 0,
+        'replay must leave the table in the same state');
+    finally
+      CbIntf := nil;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
+procedure TTestCommentCascadeConsumer.UnrelatedEventTypeIsIgnored;
+var
+  Model: TOrmModel;
+  Server: TRestServerDB;
+  Consumer: TCommentCascadeConsumer;
+  CbIntf: IEventStreamCallback;
+  Event: TEventDto;
+begin
+  Server := NewCascadeTestServer(Model);
+  try
+    AddTestComment(Server.Orm, 1, 'untouched');
+    Consumer := TCommentCascadeConsumer.Create(Server.Orm, nil);
+    CbIntf := Consumer;
+    try
+      // PostPublished must NOT trigger a cascade.
+      FillCharFast(Event, SizeOf(Event), 0);
+      Event.ID := 303;
+      Event.EventType := EVENT_POST_PUBLISHED;
+      Event.PayloadJson := RawJson(JsonEncode(['postId', 1]));
+      Event.ProducerService := SERVICE_POSTS;
+      Event.SchemaVersion := EVENT_SCHEMA_POSTS_V1;
+      Event.CreatedAt := NowUtc;
+      Consumer.OnEvent(Event);
+      CheckEqual(Server.Orm.TableRowCount(TOrmBlogComment), 1,
+        'unrelated event types must not delete comments');
+    finally
+      CbIntf := nil;
+    end;
+  finally
+    Server.Free;
+    Model.Free;
+  end;
+end;
+
 procedure TTestLogStream.SingleSubscriberReceivesEntry;
 var
   Recorder: TTestLogStreamRecorder;
@@ -4471,6 +5554,113 @@ begin
   end;
 end;
 
+procedure TTestEventBusRoundtrip.PublishReachesSubscriberViaWebSocket;
+const
+  TEST_PORT = '18790';
+  TIMEOUT_MS = 2000;
+  POLL_MS = 20;
+var
+  ServerModel: TOrmModel;
+  RestServer: TRestServerDB;
+  HttpServer: TRestHttpServer;
+  StreamSvc: TEventStreamService;
+  PublisherSvc: TEventPublisherService;
+  StreamFactory: TServiceFactoryServerAbstract;
+  ClientModel: TOrmModel;
+  Client: TRestHttpClientWebsockets;
+  PublisherRemote: IEventPublisher;
+  StreamRemote: IEventStream;
+  Recorder: TTestEventStreamRecorder;
+  CallbackIntf: IEventStreamCallback;
+  UpgradeError: RawUtf8;
+  PublishedId: TID;
+  WaitedMs: Integer;
+begin
+  // Dedicated empty REST+HTTP server just for the event bus. Mirrors TTestWebSocketRoundtrip.
+  ServerModel := TOrmModel.Create([], 'api');
+  RestServer := TRestServerDB.Create(ServerModel, SQLITE_MEMORY_DATABASE_NAME);
+  try
+    RestServer.DB.Synchronous := smOff;
+    RestServer.Server.CreateMissingTables;
+    StreamSvc := TEventStreamService.Create;
+    PublisherSvc := TEventPublisherService.Create(StreamSvc);
+    RestServer.ServiceRegister(PublisherSvc, [TypeInfo(IEventPublisher)]).
+      ByPassAuthentication := True;
+    StreamFactory := RestServer.ServiceRegister(StreamSvc, [TypeInfo(IEventStream)]);
+    StreamFactory.SetOptions([], [optExecLockedPerInterface]);
+    StreamFactory.ByPassAuthentication := True;
+    HttpServer := TRestHttpServer.Create(
+      TEST_PORT, RestServer, '+', WEBSOCKETS_DEFAULT_MODE, nil, 4, secNone);
+    try
+      HttpServer.WebSocketsEnable(RestServer, WEBSOCKETS_KEY, {ajax=}False);
+      // One client does both roles: issue Publish over HTTP and receive OnEvent over WebSocket.
+      // This is the same pattern TTestWebSocketRoundtrip uses for ILogIngestion + ILogStream.
+      ClientModel := TOrmModel.Create([], 'api');
+      Client := TRestHttpClientWebsockets.Create('localhost', TEST_PORT, ClientModel);
+      try
+        Client.Model.Owner := Client;
+        UpgradeError := Client.WebSocketsUpgrade(WEBSOCKETS_KEY);
+        CheckEqual(UpgradeError, '',
+          'WebSocketsUpgrade must succeed (otherwise the test cannot continue)');
+        Client.ServiceRegister(
+          [TypeInfo(IEventPublisher), TypeInfo(IEventStream)], sicShared);
+        Check(Client.Services.Resolve(IEventPublisher, PublisherRemote),
+          'client must resolve IEventPublisher');
+        Check(Client.Services.Resolve(IEventStream, StreamRemote),
+          'client must resolve IEventStream');
+        Recorder := TTestEventStreamRecorder.Create;
+        CallbackIntf := Recorder;
+        // Subscribe with fromEventId = 0: live only, no replay. Exercises the same
+        // GetFakeCallback path as ILogStream -- regression guard for the
+        // TInterfaceFactory.RegisterInterfaces call in ms.shared.api.
+        StreamRemote.Subscribe('analytics.test', 0, CallbackIntf);
+        try
+          PublishedId := PublisherRemote.Publish(
+            'PostPublished',
+            RawJson('{"postId":42,"title":"hello","slug":"hello","authorId":1}'),
+            SERVICE_POSTS,
+            1);
+          Check(PublishedId > 0, 'Publish must return a non-zero event ID');
+          // Callback fires asynchronously on the WebSocket worker thread; poll until it arrives
+          // or the 2 s timeout elapses (matches the plan's "max 2 s warten, dann Fail").
+          WaitedMs := 0;
+          while (Recorder.ReceivedCount = 0) and (WaitedMs < TIMEOUT_MS) do
+          begin
+            SleepHiRes(POLL_MS);
+            Inc(WaitedMs, POLL_MS);
+          end;
+          Check(Recorder.ReceivedCount > 0,
+            'subscriber must receive the broadcast within 2 s (full WS round-trip path)');
+          if Recorder.ReceivedCount > 0 then
+          begin
+            CheckEqual(Recorder.ReceivedEvent(0).EventType, 'PostPublished',
+              'received event type must match published');
+            Check(Recorder.ReceivedEvent(0).ID = PublishedId,
+              'received event ID must match the one returned by Publish');
+            CheckEqual(Recorder.ReceivedEvent(0).ProducerService, SERVICE_POSTS,
+              'producer service must round-trip verbatim');
+            CheckEqual(Recorder.ReceivedEvent(0).SchemaVersion, 1,
+              'schema version must round-trip verbatim');
+          end;
+        finally
+          StreamRemote.Unsubscribe(CallbackIntf);
+        end;
+      finally
+        PublisherRemote := nil;
+        StreamRemote := nil;
+        CallbackIntf := nil;
+        Client.Free;
+      end;
+    finally
+      HttpServer.Free;
+    end;
+  finally
+    RestServer.Free;
+    ServerModel.Free;
+    // StreamSvc + PublisherSvc are owned by RestServer once registered, so we don't free them.
+  end;
+end;
+
 constructor TBlogTests.Create(
   const Ident: string
   );
@@ -4506,7 +5696,12 @@ begin
   AddCase(TTestCorrelationIds);
   AddCase(TTestLogService);
   AddCase(TTestLogStream);
+  AddCase(TTestEventStream);
+  AddCase(TTestEventStreamPersistence);
+  AddCase(TTestCommentCascadeConsumer);
+  AddCase(TTestCascadeDelete);
   AddCase(TTestWebSocketRoundtrip);
+  AddCase(TTestEventBusRoundtrip);
   AddCase(TTestFullWorkflow);
 end;
 

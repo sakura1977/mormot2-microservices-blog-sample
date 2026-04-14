@@ -52,5 +52,10 @@
     "LogLevel": "info",
     "LogRotateCount": 10,
     "LogRotateSizeKB": 10240
+  },
+  "ms.events": {
+    "Port": "8091",
+    "Database": "ms.events.db",
+    "LogLevel": "info"
   }
 }

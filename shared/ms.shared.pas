@@ -79,6 +79,11 @@ const
   PORT_LOGS      = '8089';
 
   /// <summary>
+  ///   HTTP port for the event-bus service (learning experiment, see SPEC #22 / PLAN #23).
+  /// </summary>
+  PORT_EVENTS    = '8091';
+
+  /// <summary>
   ///   Internal service name for the gateway.
   /// </summary>
   SERVICE_GATEWAY  = 'ms.gateway';
@@ -127,6 +132,11 @@ const
   ///   Internal service name for the central logging service.
   /// </summary>
   SERVICE_LOGS      = 'ms.logs';
+
+  /// <summary>
+  ///   Internal service name for the event-bus service.
+  /// </summary>
+  SERVICE_EVENTS    = 'ms.events';
 
   /// <summary>
   ///   Default HMAC-SHA256 secret for JWT signing. IMPORTANT: override this via the JwtSecret field in the service's
@@ -249,6 +259,13 @@ type
     ///   URL of the media service (reserved for gateway use).
     /// </summary>
     MediaUrl: RawUtf8;
+
+    /// <summary>
+    ///   URL of the event-bus service. Consumed by producers (ms.posts, ...) to publish events
+    ///   and by consumers (ms.analytics, ...) to subscribe. Empty disables the event bus for
+    ///   this service (useful in tests and during bring-up).
+    /// </summary>
+    EventsUrl: RawUtf8;
 
     /// <summary>
     ///   HMAC-SHA256 secret for JWT signing. Override the default in production!
@@ -423,6 +440,8 @@ begin
     Result.CommentsUrl := 'http://localhost:' + PORT_COMMENTS;
   if Result.MediaUrl = '' then
     Result.MediaUrl := 'http://localhost:' + PORT_MEDIA;
+  if Result.EventsUrl = '' then
+    Result.EventsUrl := 'http://localhost:' + PORT_EVENTS;
   if Result.JwtSecret = '' then
     Result.JwtSecret := JWT_SECRET_DEFAULT;
   if Result.Host = '' then

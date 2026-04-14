@@ -44,6 +44,7 @@ uses
   ms.posts.model,
   ms.shared,
   ms.shared.api,
+  ms.shared.events,
   ms.shared.service;
 
 type
@@ -57,6 +58,34 @@ type
     ///   ORM interface used for all database operations on blog posts.
     /// </summary>
     FOrm: IRestOrm;
+
+    /// <summary>
+    ///   Optional buffered event-bus client (Stage 2, ADR-0001). <c>nil</c> disables event
+    ///   emission entirely (default for tests and for runs without an <c>EventsUrl</c>).
+    ///   Owned by <c>TPostsServer</c>; <c>TPostService</c> only enqueues against it.
+    /// </summary>
+    FEvents: TEventPublisher;
+
+    /// <summary>
+    ///   Enqueues a <c>PostPublished</c> event into the buffered publisher. Returns
+    ///   immediately; the worker thread retries on transient failures and ms.events persists
+    ///   the event to <c>TOrmEventOutbox</c> on receipt.
+    /// </summary>
+    procedure EmitPostPublished(
+      aId: TID;
+      const aTitle, aSlug: RawUtf8;
+      aAuthorId: TID
+      );
+
+    /// <summary>
+    ///   Enqueues a <c>PostDeleted</c> event (ADR-0001 cascade source). Called after a
+    ///   successful <c>Remove</c> commit so consumers (e.g. <c>ms.comments</c>) cannot react
+    ///   to a delete that ended up rolled back.
+    /// </summary>
+    procedure EmitPostDeleted(
+      aId: TID;
+      const aSlug: RawUtf8
+      );
 
     /// <summary>
     ///   Inserts or updates the FTS5 row that shadows a <c>TOrmBlogPost</c>. The FTS row uses
@@ -82,13 +111,19 @@ type
   public
 
     /// <summary>
-    ///   Creates a new TPostService instance with the given ORM interface.
+    ///   Creates a new TPostService instance with the given ORM interface and an optional
+    ///   buffered event-bus publisher. When <c>aEvents</c> is <c>nil</c>, event emission is
+    ///   disabled. The publisher is NOT owned -- <c>TPostsServer</c> manages its lifecycle.
     /// </summary>
     /// <param name="aOrm">
     ///   The ORM interface to use for persistence operations.
     /// </param>
+    /// <param name="aEvents">
+    ///   Optional Stage-2 <c>TEventPublisher</c> instance. <c>nil</c> disables event emission.
+    /// </param>
     constructor Create(
-      const aOrm: IRestOrm
+      const aOrm: IRestOrm;
+      aEvents: TEventPublisher = nil
       );
 
     /// <summary>
@@ -218,6 +253,13 @@ type
     FPostImpl: TPostService;
 
     /// <summary>
+    ///   Buffered event-bus publisher (Stage 2). Nil when <c>Config.EventsUrl</c> is empty or
+    ///   construction failed -- in that case <c>TPostService.FEvents</c> stays nil and no
+    ///   events are emitted. Owned and lifecycle-managed here.
+    /// </summary>
+    FEventPublisher: TEventPublisher;
+
+    /// <summary>
     ///   Iterates every <c>TOrmBlogPost</c> row once and inserts a matching <c>TOrmBlogPostFts</c>
     ///   row, sharing the post's <c>RowID</c>. Called on startup when the FTS table is empty but
     ///   the post table is not -- for example after pulling this change on an existing dev DB.
@@ -238,8 +280,17 @@ type
 
     /// <summary>
     ///   Registers the IPost service on the REST server and backfills the FTS5 index if needed.
+    ///   Also constructs and starts the buffered <c>TEventPublisher</c> against ms.events;
+    ///   construction failure leaves <c>TPostService.FEvents</c> nil so Add/Update still work
+    ///   offline.
     /// </summary>
     procedure SetupServices; override;
+  public
+
+    /// <summary>
+    ///   Stops and frees the buffered event publisher, if one was created.
+    /// </summary>
+    destructor Destroy; override;
   end;
 
 implementation
@@ -328,11 +379,57 @@ begin
 end;
 
 constructor TPostService.Create(
-  const aOrm: IRestOrm
+  const aOrm: IRestOrm;
+  aEvents: TEventPublisher
   );
 begin
   inherited Create;
   FOrm := aOrm;
+  FEvents := aEvents;
+end;
+
+procedure TPostService.EmitPostPublished(
+  aId: TID;
+  const aTitle, aSlug: RawUtf8;
+  aAuthorId: TID
+  );
+var
+  Payload: RawUtf8;
+begin
+  if FEvents = nil then
+    Exit;
+  try
+    Payload := JsonEncode([
+      'postId', aId,
+      'title', aTitle,
+      'slug', aSlug,
+      'authorId', aAuthorId]);
+    FEvents.Enqueue(EVENT_POST_PUBLISHED, RawJson(Payload), EVENT_SCHEMA_POSTS_V1);
+  except
+    // Stage-2 belt-and-braces: TEventPublisher.Enqueue itself never blocks on the network, but
+    // a serializer hiccup must not bubble up into the caller's write path.
+  end;
+end;
+
+procedure TPostService.EmitPostDeleted(
+  aId: TID;
+  const aSlug: RawUtf8
+  );
+var
+  Payload: RawUtf8;
+begin
+  if FEvents = nil then
+    Exit;
+  try
+    Payload := JsonEncode([
+      'postId', aId,
+      'slug', aSlug,
+      'deletedAt', DateTimeToIso8601(NowUtc, True)]);
+    FEvents.Enqueue(EVENT_POST_DELETED, RawJson(Payload), EVENT_SCHEMA_POSTS_V1);
+  except
+    // Same belt-and-braces as EmitPostPublished. The bus is buffered + retrying; serializer
+    // failures are the only thing that can land here and they must not break the delete path.
+  end;
 end;
 
 function TPostService.Get(
@@ -429,9 +526,13 @@ function TPostService.Add(
   ): TID;
 var
   PostRecord: TOrmBlogPost;
+  FinalSlug: RawUtf8;
+  WasPublished: Boolean;
 begin
   if aData.Title = '' then
     Exit(0);
+  WasPublished := False;
+  FinalSlug := '';
   // One transaction keeps the post row and its FTS5 shadow in sync: if either write fails the
   // search index and the canonical table cannot drift apart.
   FOrm.TransactionBegin(TOrmBlogPost);
@@ -449,10 +550,14 @@ begin
       PostRecord.MetaKeywords := aData.MetaKeywords;
       PostRecord.Status := aData.Status;
       if PostRecord.Status = POST_STATUS_PUBLISHED then
+      begin
         PostRecord.PublishedAt := NowUtc;
+        WasPublished := True;
+      end;
       PostRecord.CreatedAt := NowUtc;
       PostRecord.UpdatedAt := NowUtc;
       Result := FOrm.Add(PostRecord, True);
+      FinalSlug := PostRecord.Slug;
     finally
       PostRecord.Free;
     end;
@@ -463,6 +568,10 @@ begin
     FOrm.RollBack;
     raise;
   end;
+  // Emit outside the transaction so a bus failure cannot abort the DB write and a slow bus
+  // cannot hold the transaction open.
+  if (Result > 0) and WasPublished then
+    EmitPostPublished(Result, aData.Title, FinalSlug, aData.AuthorId);
 end;
 
 function TPostService.Update(
@@ -472,8 +581,15 @@ function TPostService.Update(
 var
   JsonDoc: TDocVariantData;
   PostRecord: TOrmBlogPost;
+  DidJustPublish: Boolean;
+  SnapshotTitle, SnapshotSlug: RawUtf8;
+  SnapshotAuthorId: TID;
 begin
   Result := False;
+  DidJustPublish := False;
+  SnapshotTitle := '';
+  SnapshotSlug := '';
+  SnapshotAuthorId := 0;
   JsonDoc.InitJson(aData, JSON_FAST_FLOAT);
   // Same transactional rationale as Add: the post row and its FTS5 shadow must move together.
   FOrm.TransactionBegin(TOrmBlogPost);
@@ -507,12 +623,22 @@ begin
         PostRecord.Status := JsonDoc.I['Status'];
         if (PostRecord.Status = POST_STATUS_PUBLISHED) and
            (PostRecord.PublishedAt = 0) then
+        begin
           PostRecord.PublishedAt := NowUtc;
+          DidJustPublish := True;
+        end;
       end;
       PostRecord.UpdatedAt := NowUtc;
       Result := FOrm.Update(PostRecord);
       if Result then
         UpsertFts(aId, PostRecord.Title, PostRecord.Excerpt, PostRecord.Body);
+      // Capture fields needed for the post-commit event emission while the record is still alive.
+      if DidJustPublish then
+      begin
+        SnapshotTitle := PostRecord.Title;
+        SnapshotSlug := PostRecord.Slug;
+        SnapshotAuthorId := PostRecord.AuthorId;
+      end;
     finally
       PostRecord.Free;
     end;
@@ -521,12 +647,27 @@ begin
     FOrm.RollBack;
     raise;
   end;
+  if Result and DidJustPublish then
+    EmitPostPublished(aId, SnapshotTitle, SnapshotSlug, SnapshotAuthorId);
 end;
 
 function TPostService.Remove(
   aId: TID
   ): boolean;
+var
+  Slug: RawUtf8;
+  Rec: TOrmBlogPost;
 begin
+  // Capture the slug before delete -- consumers of PostDeleted may use it for human-readable
+  // logging and we cannot read it back once the row is gone.
+  Slug := '';
+  Rec := TOrmBlogPost.Create(FOrm, aId);
+  try
+    if Rec.IDValue <> 0 then
+      Slug := Rec.Slug;
+  finally
+    Rec.Free;
+  end;
   // Drop both the post row and its FTS5 shadow in the same transaction. If the post does not
   // exist, the post delete returns False and we still roll back -- leaving nothing behind.
   FOrm.TransactionBegin(TOrmBlogPost);
@@ -539,6 +680,9 @@ begin
     FOrm.RollBack;
     raise;
   end;
+  // Emit AFTER commit so a rolled-back delete does not trigger downstream cascades.
+  if Result then
+    EmitPostDeleted(aId, Slug);
 end;
 
 function TPostService.Search(
@@ -658,8 +802,30 @@ procedure TPostsServer.SetupServices;
 var
   PostCount: Int64;
   FtsCount: Int64;
+  EventsHost, EventsPort: RawUtf8;
 begin
-  FPostImpl := TPostService.Create(FRestServer.Orm);
+  // Stage 2 (ADR-0001): construct the buffered TEventPublisher. Enqueue is fire-and-forget,
+  // so Add / Update / Delete on TPostService stay non-blocking even when ms.events is down --
+  // the worker thread retries up to MAX_PUBLISH_ATTEMPTS times with backoff.
+  if Config.EventsUrl <> '' then
+  try
+    EventsHost := Config.EventsUrl;
+    if IdemPChar(pointer(EventsHost), 'HTTP://') then
+      Delete(EventsHost, 1, 7)
+    else if IdemPChar(pointer(EventsHost), 'HTTPS://') then
+      Delete(EventsHost, 1, 8);
+    EventsPort := Split(EventsHost, ':', EventsHost);
+    if EventsPort = '' then
+    begin
+      EventsPort := EventsHost;
+      EventsHost := 'localhost';
+    end;
+    FEventPublisher := TEventPublisher.Create(SERVICE_POSTS, EventsHost, EventsPort);
+    FEventPublisher.Start;
+  except
+    FreeAndNil(FEventPublisher);
+  end;
+  FPostImpl := TPostService.Create(FRestServer.Orm, FEventPublisher);
   RegisterService(FPostImpl, TypeInfo(IPost));
   // One-time backfill: if an older database has posts but no FTS5 rows, index the existing
   // records so /search works immediately after pulling this change. Subsequent writes keep
@@ -668,6 +834,14 @@ begin
   FtsCount := FRestServer.Orm.TableRowCount(TOrmBlogPostFts);
   if (PostCount > 0) and (FtsCount < PostCount) then
     BackfillFtsIndex;
+end;
+
+destructor TPostsServer.Destroy;
+begin
+  if FEventPublisher <> nil then
+    FEventPublisher.Stop;
+  FreeAndNil(FEventPublisher);
+  inherited Destroy;
 end;
 
 end.
