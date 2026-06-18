@@ -13,8 +13,11 @@ Vorlagen — gedacht zum **direkten Anwenden** beim Aufsetzen eines neuen Repos.
 
 - **Sprache:** Deutsch (Prosa); Code-Bezeichner, Schlüsselwörter und mORMot2-Typnamen englisch.
 - **Format:** Erklärung + vollständige, adaptierbare Delphi-Code-Skelette (≤ 120 Spalten).
-- **Stil:** Alle Code-Skelette folgen einem verbindlichen Delphi-Style-Guide
-  (siehe [11-coding-conventions.md](11-coding-conventions.md)).
+- **Stil:** Die Code-Skelette zeigen verbindlich nur **Struktur und Technik**. Ihre konkrete
+  **Formatierung** (Einrückung, Signatur-Layout, Zeilenumbrüche, Doku-Stil, Benennung) ist
+  illustrativ und NICHT verbindlich — sie folgt dem Delphi-Syntax-Styleguide des jeweiligen
+  Projekts. System-/mORMot2-spezifische Konventionen stehen in
+  [11-coding-conventions.md](11-coding-conventions.md).
 - **Diagramme:** ausschließlich [mermaid](https://mermaid.js.org/), nie ASCII-Art.
 - **Durchgängiges Beispiel-Domain** (neutral, nur zur Illustration):
 
@@ -65,13 +68,13 @@ Schritt für Schritt → Code-Skelett → Stolperfallen/Lessons → Querverweise
 | Datei | Inhalt |
 |-------|--------|
 | [10-testing.md](10-testing.md) | `TSynTestCase` in-process mit `:memory:`-SQLite, Test-Aufbau, **Exception-Guard-Muster** (Exceptions werden still verschluckt), Beispiel-Testfall. |
-| [11-coding-conventions.md](11-coding-conventions.md) | Verbindliche Delphi-Conventions: Zeilenlänge 120, ein Parameter je Zeile, `Exit(value)`-Muster, 0 Hints/0 Warnings, Unit-Zuordnungen, XML-Doku, mermaid-Pflicht. |
+| [11-coding-conventions.md](11-coding-conventions.md) | System-/mORMot2-spezifische Konventionen: typed-record-DTOs statt RawJson, `VarIsNull` statt `Doc.IsNull`, mORMot2-Unit-Zuordnungen, verbindliche 0-Hints/0-Warnings-Regel. Persönliche Formatierung/Stil gehört in den Delphi-Syntax-Styleguide des Projekts. |
 
 ## Empfohlene Lesereihenfolge
 
 1. **Erstkontakt / Überblick:** dieses README, dann
    [01-projektstruktur.md](01-projektstruktur.md) und
-   [11-coding-conventions.md](11-coding-conventions.md) (Fundament + Stilregeln).
+   [11-coding-conventions.md](11-coding-conventions.md) (Fundament + systemspezifische Konventionen).
 2. **Ersten Service bauen:** [02-service-erstellen.md](02-service-erstellen.md) →
    [10-testing.md](10-testing.md) (Service direkt testbar aufsetzen).
 3. **Services verbinden:** [03-inter-service-kommunikation.md](03-inter-service-kommunikation.md) →

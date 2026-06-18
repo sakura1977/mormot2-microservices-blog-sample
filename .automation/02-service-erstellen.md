@@ -930,13 +930,12 @@ Keine Warnung ist harmlos. Häufige Quellen: `{$WARN SYMBOL_PLATFORM OFF}` und
 `{$WARN UNIT_PLATFORM OFF}` fehlen; fehlende `uses`-Einträge (z. B. `mormot.core.unicode`
 für `IdemPChar`); unbenutzte Variablen nach einem Refactoring.
 
-**Methoden-Deklarationen: jeder Parameter auf eigener Zeile (§5.2 delphiSyntax.md).**
-Auch bei einem einzigen Parameter wird mehrzeilig formatiert. Diese Regel gilt für
-Deklarationen; Aufrufe im Code-Body folgen nur der 120-Zeichen-Regel.
-
-**`Exit(value)` Pattern durchgängig verwenden.**
-Frühzeitige Rückgaben werden mit `Exit(0)`, `Exit(False)` usw. formuliert — niemals
-`Result := X; Exit;` in zwei Zeilen.
+**Formatierung folgt dem Projekt-Styleguide — nicht dieser Anleitung.**
+Signatur-Layout (z. B. ein Parameter pro Zeile), Exit-Stil (`Exit(value)` vs.
+`Result := …; Exit;`), Zeilenlänge, Einrückung, Benennung und Doku-Stil sind persönlicher
+bzw. Team-Stil und gehören in den Delphi-Syntax-Styleguide des Projekts. Das Skelett oben
+zeigt eine mögliche Formatierung nur illustrativ — verbindlich ist allein dessen Struktur und
+Technik.
 
 **`Rtti.RegisterType` nicht vergessen.**
 Jeder neue DTO-Typ und sein Array-Alias müssen in `initialization` von `ms.shared.api.pas`
@@ -957,5 +956,5 @@ Absturz inkonsistent.
   `Services.Resolve`, Cross-Service-Aufrufe
 - [10-testing.md](10-testing.md) — `TSynTestCase`, `:memory:`-SQLite, In-Process-Tests für
   `TOrderService`
-- [11-coding-conventions.md](11-coding-conventions.md) — delphiSyntax.md-Checkliste,
-  Parameterformat, Exit-Pattern, Zeilenlänge
+- [11-coding-conventions.md](11-coding-conventions.md) — system-/mORMot2-spezifische
+  Konventionen (typed-record-DTOs, `VarIsNull`, Unit-Zuordnungen, 0-Hints/0-Warnings)

@@ -292,5 +292,5 @@ for %%S in (
 
 - [02-service-erstellen.md](02-service-erstellen.md) — konkretes Service-Skelett
 - [10-testing.md](10-testing.md) — Testprojekt-Setup
-- [11-coding-conventions.md](11-coding-conventions.md) — Delphi-Codierungsregeln
+- [11-coding-conventions.md](11-coding-conventions.md) — system-/mORMot2-spezifische Konventionen
 - [09-event-bus.md](09-event-bus.md) — Outbox/Consumer-Cursor-Architektur

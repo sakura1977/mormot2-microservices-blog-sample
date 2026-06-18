@@ -392,5 +392,5 @@ end.
 
 - [01-projektstruktur.md](01-projektstruktur.md) — `test/`-Ordner in der Repo-Struktur
 - [02-service-erstellen.md](02-service-erstellen.md) — Service-Implementierung, die hier getestet wird
-- [11-coding-conventions.md](11-coding-conventions.md) — Delphi-Codierungsregeln
+- [11-coding-conventions.md](11-coding-conventions.md) — system-/mORMot2-spezifische Konventionen
 - [09-event-bus.md](09-event-bus.md) — Event-Kaskaden, die in Integrationstests abgedeckt werden
