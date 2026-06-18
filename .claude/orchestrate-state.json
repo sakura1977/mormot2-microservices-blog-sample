@@ -1,15 +1,48 @@
 {
   "schema_version": 2,
-  "session_id": null,
+  "session_id": 45,
   "workflow_stack": [],
   "adhoc_tasks": [],
   "team_agents": [],
   "state_deltas": 0,
   "last_save": "2026-04-14",
-  "last_reconciliation": "2026-04-14",
+  "last_reconciliation": "2026-04-15T06:04:28.067Z",
   "events_log": [
-    {"ts": "2026-04-14", "type": "init", "wf": null, "detail": "Resume invoked, MCP unavailable, local fallback", "synced": true},
-    {"ts": "2026-04-14", "type": "save", "wf": null, "detail": "/mxSave Session 5: Plan #23 Stufe 2 + cross-service-cascades + shutdown fixes + event-bus.md", "synced": true},
-    {"ts": "2026-04-14", "type": "save", "wf": null, "detail": "/mxSave Session 6: /mxMigrateToDb pushed ADR-0001 (#31), PLAN cross-service-cascades (#32), session-notes (#33)", "synced": true}
-  ]
+    {
+      "ts": "2026-04-14",
+      "type": "init",
+      "wf": null,
+      "detail": "Resume invoked, MCP unavailable, local fallback",
+      "synced": true
+    },
+    {
+      "ts": "2026-04-14",
+      "type": "save",
+      "wf": null,
+      "detail": "/mxSave Session 5: Plan #23 Stufe 2 + cross-service-cascades + shutdown fixes + event-bus.md",
+      "synced": true
+    },
+    {
+      "ts": "2026-04-14",
+      "type": "save",
+      "wf": null,
+      "detail": "/mxSave Session 6: /mxMigrateToDb pushed ADR-0001 (#31), PLAN cross-service-cascades (#32), session-notes (#33)",
+      "synced": true
+    },
+    {
+      "ts": "2026-06-18",
+      "type": "start",
+      "wf": "WF-2026-06-18-001",
+      "detail": "Ad-hoc WF gestartet: Generische mORMot2-Startanleitung .automation (doc #590)",
+      "synced": true
+    },
+    {
+      "ts": "2026-06-18",
+      "type": "completed",
+      "wf": "WF-2026-06-18-001",
+      "detail": "WF completed — .automation guide-lines delivered (12 files: 11 concepts + README.md); doc #590 archived",
+      "synced": true
+    }
+  ],
+  "last_save_deltas": 2
 }

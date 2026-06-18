@@ -1,5 +1,13 @@
 {
   "permissions": {
-    "allow": []
+    "allow": [
+      "Bash(cp -r /tmp/mxLore-skills/mxLore-skills-main/mx* ~/.claude/skills/)",
+      "Bash(mkdir -p ~/.claude/hooks)",
+      "Bash(cp -r /tmp/mxLore-skills/mxLore-skills-main/hooks/* ~/.claude/hooks/)",
+      "Bash(mkdir -p ~/.claude/reference)",
+      "Bash(cp -r /tmp/mxLore-skills/mxLore-skills-main/reference/* ~/.claude/reference/)",
+      "Bash(rm -f /tmp/mxLore-skills-CLAUDE.md \"/d/lw Sources/mormot2-microservices-blog-sample/.claude-new-rules.tmp\")",
+      "Bash(mkdir -p ~/.claude/agent_inbox)"
+    ]
   }
 }
